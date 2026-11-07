@@ -1,0 +1,57 @@
+name: CI
+
+# M1 核心 CI：在无数据库、无密钥的干净环境里跑通构建 / 类型检查 / 单测。
+# AI Gateway 固定走 mock，不产生任何外部模型调用与费用（D-024 约束二）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # 占位连接串仅用于 prisma generate（该命令只生成客户端，不连接数据库），不是真实凭据。
+  DATABASE_URL: postgresql://ci_placeholder:ci_placeholder@127.0.0.1:5432/ci_placeholder?schema=public
+  # 不调用任何外部服务；教学逻辑与模型选择都在后端 mock 模式内完成。
+  AI_GATEWAY_MODE: mock
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        working-directory: services/backend
+        run: npx prisma generate
+
+      # 显式按依赖顺序构建：契约层必须先产出 dist，其余库才能通过
+      # node_modules 里的 workspace 软链解析到 @alg/shared-contracts 的类型声明。
+      # apps/web（Next.js）由 Web 端单独验证，不纳入本核心构建步骤。
+      - name: Build workspace packages
+        run: |
+          npm run build --workspace @alg/shared-contracts
+          npm run build --workspace @alg/ai-provider-sdk
+          npm run build --workspace @alg/curriculum
+          npm run build --workspace @alg/model-router
+          npm run build --workspace @alg/skill-graph
+          npm run build --workspace @alg/backend
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npx tsx --test packages/skill-graph/test/mastery.test.ts packages/model-router/test/router.test.ts

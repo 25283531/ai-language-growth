@@ -1,0 +1,24 @@
+# Dockerfile 专用忽略文件：Docker 在构建 deploy/docker/backend.Dockerfile 时会读取它。
+# 构建上下文是仓库根目录（compose: context: ../..），排除依赖、构建产物、
+# git 元数据与任何凭据文件，避免把 .env 里的口令打进镜像层。
+.git
+**/.git
+**/node_modules
+**/dist
+**/build
+**/.next
+**/coverage
+**/*.log
+**/*.apk
+**/*.aab
+**/.gradle
+**/local.properties
+.env
+**/.env
+**/.env.*
+!**/.env.example
+**/*credentials*
+**/*secret*
+**/*.pem
+**/*.key
+**/github-token.txt

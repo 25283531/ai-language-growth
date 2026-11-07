@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">M1 最小音频链路原型</string>
+
+    <!-- 后端基址：Android 模拟器用 10.0.2.2 指向宿主机；真机改成宿主机局域网 IP。
+         compose 默认把宿主机 3100 映射到容器内 3000。 -->
+    <string name="backend_base_url">http://10.0.2.2:3100/api/v1</string>
+
+    <!-- 演示用固定课堂 / 学习者标识；真实流程应先调 /lessons/start 拿 lessonSessionId。 -->
+    <string name="lesson_id">m1_demo_lesson</string>
+    <string name="learner_id">m1_demo_learner</string>
+</resources>

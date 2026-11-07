@@ -1,0 +1,26 @@
+# 构建上下文（compose: context: ../..）是仓库根目录，Docker 默认只读取
+# 「上下文根目录」下的 .dockerignore，不会自动读取本文件。
+# 因此同目录另附 deploy/docker/backend.Dockerfile.dockerignore（内容一致），
+# 这是 Docker 的「Dockerfile 专用忽略文件」，会被实际生效。
+# 本文件保留用于说明与本地手工构建参考。
+.git
+**/.git
+**/node_modules
+**/dist
+**/build
+**/.next
+**/coverage
+**/*.log
+**/*.apk
+**/*.aab
+**/.gradle
+**/local.properties
+.env
+**/.env
+**/.env.*
+!**/.env.example
+**/*credentials*
+**/*secret*
+**/*.pem
+**/*.key
+**/github-token.txt
