@@ -4,7 +4,7 @@
 
 A patient AI teacher that teaches word by word, like an adult teaching a child to speak — slow TTS with word / syllable / phoneme breakdown, phoneme-level pronunciation assessment, and a teaching state machine (teach → listen → score → break down further / encourage / advance), not a free-chat chatbot.
 
-> **Status: M0 skeleton only.** Monorepo structure + design docs. Implementation has not started. License: TBD (no LICENSE file yet).
+> **Status: M1 complete (pushed to `main`).** M0 delivered the design baseline (V1.1 design brief + `DECISIONS.md` + monorepo skeleton); M1 delivered the Next.js teaching workbench, NestJS backend, five-action teaching loop, Mock Provider Adapter, cost ledger, CI and the Android audio prototype. **Prototype only:** all thresholds are `uncalibrated`, all course content is `pending_review`, and no real model or real child-sample validation has been done — see [`docs/M1-QA-report.md`](docs/M1-QA-report.md) for the conditional Go/No-Go. License: TBD (no LICENSE file yet).
 
 ## Who it is for
 
@@ -21,8 +21,8 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 
 ## Milestones (V1.1)
 
-- **M0 — Teaching system + infra design:** 7 stages, dual track, ability graph, DB design, NestJS modules, Provider Adapter spec, LLM/TTS/ASR unified protocol, fixed teacher persona. *(This repo is at M0.)*
-- **M1 — Web teaching prototype:** Next.js workbench + NestJS backend, basic routing L0+L1+fallback, basic cost stats, minimal learner state, 3 themes (greetings / self-introduction / objects around the child), plus a parallel Android minimal audio prototype. Acceptance: teach / listen / evaluate / adjust / record all run.
+- **M0 — Teaching system + infra design:** 7 stages, dual track, ability graph, DB design, NestJS modules, Provider Adapter spec, LLM/TTS/ASR unified protocol, fixed teacher persona. *(Completed before implementation: `62e28d9`, design docs + skeleton only, no code by design.)*
+- **M1 — Web teaching prototype:** Next.js workbench + NestJS backend, basic routing L0+L1+fallback, basic cost stats, minimal learner state, 3 themes (greetings / self-introduction / objects around the child), plus a parallel Android minimal audio prototype. Acceptance: teach / listen / evaluate / adjust / record all run. *(Completed: 15/15 loop checks, 28/28 unit tests, 5/5 DB constraints, CI + Android workflows green — see `docs/M1-QA-report.md`.)*
 - **M2 — Learner engine + full routing:** multi-dim profile, evidence / mastery, long-term memory, controlled persona, planner, L1–L3 routing, Benchmark, ASR/TTS/pronunciation grading, budget / auto-degrade, review / migration.
 - **M3 — Android formal client:** Kotlin + Jetpack Compose, child UI, voice, parent centre, same backend.
 - **M4 — Curriculum expansion + commercialisation:** 7 stages, phonics / reading / writing, textbook mapping, parent report, membership / usage, privacy / guardian consent, Docker self-deploy, open-source docs.
