@@ -26,6 +26,16 @@ import {
   type MasteryState,
 } from '@alg/shared-contracts';
 
+/** 能力状态的内存表示。 */
+export interface MasteryStateView {
+  masteryState: MasteryState;
+  evidenceIds: string[];
+  independentScenarios: string[];
+  lastUnpromptedRecallAt: string | null;
+  lastIndependentUseAt: string | null;
+  updatedAt: string;
+}
+
 /** 判定输入：能力状态 + 证据流 + 阈值。 */
 export interface MasteryEvaluationInput {
   currentState: MasteryState;

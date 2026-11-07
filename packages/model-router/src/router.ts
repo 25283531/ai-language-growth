@@ -37,6 +37,25 @@ export interface RouterConfig {
   fallbackOrder: ModelLevel[];
 }
 
+/**
+ * Mock 模式下四类服务实际注册的适配器别名。
+ *
+ * M1 用 Mock Provider Adapter 打通闭环（既定执行边界）。若 Router 仍返回
+ * free_llm / lowcost_tts 这类「逻辑别名」，Gateway 会因找不到适配器而每次
+ * fallback 到 mock_*，把「模式配置」误报成「服务降级」；反过来若只在
+ * degradation 里填 false，又会静默掩盖真实发生的切换。
+ *
+ * 传入该映射后，Router 的分级、升级、降级策略完全照常执行
+ * （level / strategy / fellBack 全部真实），只把最终供应商别名指向当前
+ * 确实存在的 Mock 适配器。生产模式不传此映射，别名来自可配置的路由表。
+ */
+export const MOCK_PROVIDER_ALIASES: Record<ServiceKind, string> = {
+  llm: 'mock_llm',
+  tts: 'mock_tts',
+  asr: 'mock_asr',
+  pronunciation: 'mock_pronunciation',
+};
+
 /** 默认路由配置。全部使用配置别名，不含任何厂商或模型名（约束二）。 */
 export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
   rules: [
@@ -208,14 +227,30 @@ export class InMemoryUsageLedger implements UsageLedger {
 export class ModelRouterImpl {
   private readonly config: RouterConfig;
   private readonly ledger: UsageLedger;
+  private readonly mockAliases?: Record<ServiceKind, string>;
 
-  constructor(config: RouterConfig = DEFAULT_ROUTER_CONFIG, ledger?: UsageLedger) {
+  constructor(
+    config: RouterConfig = DEFAULT_ROUTER_CONFIG,
+    ledger?: UsageLedger,
+    mockAliases?: Record<ServiceKind, string>,
+  ) {
     this.config = config;
     this.ledger = ledger ?? new InMemoryUsageLedger();
+    this.mockAliases = mockAliases;
   }
 
   get usageLedger(): UsageLedger {
     return this.ledger;
+  }
+
+  /**
+   * Mock 模式下把供应商别名改指到实际注册的适配器。
+   * 只改别名，不改 level / strategy / fellBack —— 路由决策本身保持真实。
+   */
+  private finalize(decision: RoutingDecision, serviceKind: ServiceKind): RoutingDecision {
+    const alias = this.mockAliases?.[serviceKind];
+    if (!alias) return decision;
+    return { ...decision, providerAlias: alias, modelAlias: alias };
   }
 
   private findRule(taskRoute: string): RouteRule | undefined {
@@ -287,14 +322,17 @@ export class ModelRouterImpl {
 
     for (const candidate of candidates) {
       if (failed.has(candidate.providerAlias)) continue;
-      return {
-        level: candidate.level,
-        providerAlias: candidate.providerAlias,
-        modelAlias: candidate.modelAlias,
-        strategy: candidate.strategy,
-        fellBack: candidate.strategy !== 'primary',
-        escalationSignals: signals,
-      };
+      return this.finalize(
+        {
+          level: candidate.level,
+          providerAlias: candidate.providerAlias,
+          modelAlias: candidate.modelAlias,
+          strategy: candidate.strategy,
+          fellBack: candidate.strategy !== 'primary',
+          escalationSignals: signals,
+        },
+        input.serviceKind,
+      );
     }
 
     // 全部失败 → L0 本地兜底

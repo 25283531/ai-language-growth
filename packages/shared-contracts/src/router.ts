@@ -86,7 +86,7 @@ export const llmRequestSchema = z.object({
   timeoutMs: z.number().int().min(100).default(15000),
 });
 
-export type LlmRequest = z.infer<typeof llmRequestSchema>;
+export type LlmRequest = z.input<typeof llmRequestSchema>;
 
 export const llmResponseSchema = z.object({
   content: z.string(),
@@ -110,7 +110,7 @@ export const ttsRequestSchema = z.object({
   timeoutMs: z.number().int().min(100).default(12000),
 });
 
-export type TtsRequest = z.infer<typeof ttsRequestSchema>;
+export type TtsRequest = z.input<typeof ttsRequestSchema>;
 
 export const ttsResponseSchema = z.object({
   audioRef: z.string(),
@@ -133,7 +133,7 @@ export const asrRequestSchema = z.object({
   highQuality: z.boolean().default(false),
 });
 
-export type AsrRequest = z.infer<typeof asrRequestSchema>;
+export type AsrRequest = z.input<typeof asrRequestSchema>;
 
 export const asrResponseSchema = z.object({
   transcript: z.string(),
@@ -160,7 +160,7 @@ export const pronunciationRequestSchema = z.object({
   timeoutMs: z.number().int().min(100).default(15000),
 });
 
-export type PronunciationRequest = z.infer<typeof pronunciationRequestSchema>;
+export type PronunciationRequest = z.input<typeof pronunciationRequestSchema>;
 
 export const pronunciationResponseSchema = z.object({
   /** 整体得分 0-100 */

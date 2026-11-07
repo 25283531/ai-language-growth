@@ -1,0 +1,138 @@
+/**
+ * 教学接口控制器。
+ *
+ * 路径与任务书第 7 章「核心教学 API」对齐：
+ *   POST /api/v1/lessons/start
+ *   POST /api/v1/lessons/{id}/turn    ← 全局核心接口
+ *   POST /api/v1/lessons/{id}/finish
+ */
+import { Body, Controller, Get, HttpException, Inject, Param, Post, Query } from '@nestjs/common';
+import {
+  lessonFinishRequestSchema,
+  lessonStartRequestSchema,
+  turnRequestSchema,
+} from '@alg/shared-contracts';
+import { OrchestratorService } from '../orchestrator/orchestrator.service';
+import { LearnerModelService } from '../learner-model/learner-model.service';
+import { PrismaService } from '../prisma/prisma.service';
+
+@Controller('api/v1/lessons')
+export class LessonsController {
+  constructor(
+    @Inject(OrchestratorService) private readonly orchestrator: OrchestratorService,
+    @Inject(LearnerModelService) private readonly learnerModel: LearnerModelService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+  ) {}
+
+  @Post('start')
+  async start(@Body() body: unknown) {
+    const parsed = lessonStartRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    return this.orchestrator.startLesson(parsed.data);
+  }
+
+  @Post(':id/turn')
+  async turn(@Param('id') id: string, @Body() body: unknown) {
+    const parsed = turnRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    try {
+      return await this.orchestrator.handleTurn({
+        lessonSessionId: id,
+        learnerId: parsed.data.learnerId,
+        response: parsed.data.response,
+        idempotencyKey: parsed.data.idempotencyKey,
+      });
+    } catch (error) {
+      // 外部服务全不可用时保留固定课程与缓存音频，保证课程不中断（D-015）。
+      // 必须返回完整可渲染的 TurnResponse：只回一个「降级错误体」没有
+      // directive，客户端其实无法继续上课，不算真正的课程不中断。
+      return this.orchestrator.offlineFallback({
+        lessonSessionId: id,
+        learnerId: parsed.data.learnerId,
+        reason: (error as Error).message,
+      });
+    }
+  }
+
+  @Post(':id/finish')
+  async finish(@Param('id') id: string, @Body() body: unknown) {
+    const parsed = lessonFinishRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    return this.orchestrator.finishLesson(id, parsed.data.learnerId);
+  }
+
+  @Get(':id')
+  async detail(@Param('id') id: string) {
+    const session = await this.prisma.lesson_sessions.findUnique({
+      where: { id },
+      include: {
+        interactions: { orderBy: { turnIndex: 'asc' } },
+      },
+    });
+    if (!session) throw new HttpException({ message: '课堂不存在' }, 404);
+    return session;
+  }
+}
+
+/**
+ * 学习者接口。
+ */
+@Controller('api/v1/learners')
+export class LearnersController {
+  constructor(
+    @Inject(LearnerModelService) private readonly learnerModel: LearnerModelService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+  ) {}
+
+  @Get()
+  async list() {
+    return this.prisma.learner_profiles.findMany({
+      select: {
+        id: true,
+        displayName: true,
+        ageGroup: true,
+        entryLevel: true,
+        currentTopic: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  @Get(':id/profile')
+  async profile(@Param('id') id: string) {
+    const profile = await this.prisma.learner_profiles.findUnique({
+      where: { id },
+      include: { preferences: true },
+    });
+    if (!profile) throw new HttpException({ message: '学习者不存在' }, 404);
+    return profile;
+  }
+
+  @Get(':id/abilities')
+  async abilities(@Param('id') id: string) {
+    const states = await this.learnerModel.abilitySnapshot(id);
+    return {
+      learnerId: id,
+      states,
+      // ⚠️ M1 阈值全部未校准，不得对外表述为「已掌握」
+      calibrationNotice:
+        'M1 阈值来自原型示意值，尚未经真实儿童样本校准；状态仅供内部教学决策参考。',
+    };
+  }
+
+  @Get(':id/evidence')
+  async evidence(@Param('id') id: string, @Query('skillNodeId') skillNodeId?: string) {
+    const rows = await this.prisma.learning_evidence.findMany({
+      where: { learnerId: id, ...(skillNodeId ? { skillNodeId } : {}) },
+      orderBy: { occurredAt: 'desc' },
+      take: 100,
+    });
+    return rows;
+  }
+}

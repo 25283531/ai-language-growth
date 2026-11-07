@@ -1,0 +1,637 @@
+// Prisma schema —— PostgreSQL
+//
+// 依据：V1.1 任务书第 7 章「核心数据库表」；D-006 学习者引擎表结构；
+//      D-012 路由十表；D-019 五层记忆；D-023 隐私与安全。
+//
+// ⚠️ 迁移策略：使用 node-pg-migrate 风格的 SQL 迁移文件（prisma/migrations），
+//    禁止依赖 prisma db push 自动同步 —— 线上数据不可被自动同步破坏。
+//    M1 的表结构一经应用即为 M2 的稳定契约。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========== 用户与档案 ==========
+
+model users {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         String   @default("guardian") // guardian | operator | admin
+  displayName  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  learners     learner_profiles[]
+  consents     consent_records[]
+
+  @@map("users")
+}
+
+model learner_profiles {
+  id           String   @id @default(uuid())
+  userId       String
+  displayName  String
+  ageGroup     String   @default("6-9")
+  entryLevel   String   @default("pre_a1")
+  target       String   @default("daily_communication")
+  guardianId   String
+  currentTopic String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         users               @relation(fields: [userId], references: [id])
+  preferences  learner_preferences?
+  skillStates  learner_skill_states[]
+  sessions     lesson_sessions[]
+  evidence     learning_evidence[]
+  assessments  assessment_records[]
+  interactions interaction_events[]
+  reviews      review_schedules[]
+
+  @@index([guardianId])
+  @@map("learner_profiles")
+}
+
+model learner_preferences {
+  id           String   @id @default(uuid())
+  learnerId    String   @unique
+  speechSpeed  Float    @default(0.65)
+  repeatMode   String   @default("patient")
+  feedbackStyle String  @default("encouraging")
+  theme        String   @default("default")
+  updatedAt    DateTime @updatedAt
+
+  learner      learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+
+  @@map("learner_preferences")
+}
+
+// ========== 能力知识图谱 ==========
+
+model skill_nodes {
+  id               String   @id
+  code             String   @unique
+  name             String
+  abilityCategory  String
+  growthStage      Int
+  track            String
+  dimensions       Json     @default("[]")
+  objective        String
+  masteryCriteria  String
+  m1Scope          Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  dependencies     skill_dependencies[] @relation("dependent")
+  dependedOn       skill_dependencies[] @relation("prerequisite")
+  states           learner_skill_states[]
+  evidence         learning_evidence[]
+  assessments      assessment_records[]
+  learningItems    learning_items[]
+
+  @@index([abilityCategory])
+  @@index([growthStage])
+  @@map("skill_nodes")
+}
+
+model skill_dependencies {
+  id                    String  @id @default(uuid())
+  skillNodeId           String
+  dependsOnSkillNodeId  String
+  dependencyType        String  // prerequisite | related | parallel | subsequent
+  required              Boolean @default(true)
+
+  skillNode             skill_nodes @relation("dependent", fields: [skillNodeId], references: [id], onDelete: Cascade)
+  dependsOn             skill_nodes @relation("prerequisite", fields: [dependsOnSkillNodeId], references: [id], onDelete: Cascade)
+
+  @@unique([skillNodeId, dependsOnSkillNodeId, dependencyType])
+  @@index([dependsOnSkillNodeId])
+  @@map("skill_dependencies")
+}
+
+model learner_skill_states {
+  id                     String   @id @default(uuid())
+  learnerId              String
+  skillNodeId            String
+  masteryCode            Int      @default(0) // 0-4，见 shared-contracts MASTERY_STATE_CODES
+  evidenceIds            Json     @default("[]")
+  independentScenarios   Json     @default("[]")
+  lastUnpromptedRecallAt DateTime?
+  lastIndependentUseAt   DateTime?
+  calibrationStatus      String   @default("uncalibrated")
+  updatedAt              DateTime @updatedAt
+
+  learner                learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  skillNode              skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+
+  @@unique([learnerId, skillNodeId])
+  @@index([learnerId])
+  @@map("learner_skill_states")
+}
+
+// ========== 学习内容 ==========
+
+model learning_items {
+  id             String   @id @default(uuid())
+  skillNodeId    String
+  itemType       String   // vocabulary | phoneme | sentence_pattern | letter | phonics_rule
+  refId          String   // 指向 vocabulary_items / phoneme_items 等
+  content        Json
+  topicId        String?
+  reviewStatus   String   @default("pending_review")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  skillNode      skill_nodes          @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+  evidence       learning_evidence[]
+  assessments    assessment_records[]
+
+  @@index([skillNodeId])
+  @@index([itemType])
+  @@map("learning_items")
+}
+
+model curriculum_stages {
+  id          String @id @default(uuid())
+  stage       Int    @unique
+  code        String @unique
+  name        String
+  objective   String
+  description String?
+
+  @@map("curriculum_stages")
+}
+
+model curriculum_units {
+  id          String   @id @default(uuid())
+  topicId     String
+  stage       Int
+  title       String
+  description String?
+  order       Int      @default(0)
+  reviewStatus String  @default("pending_review")
+
+  @@index([topicId])
+  @@map("curriculum_units")
+}
+
+model vocabulary_items {
+  id                  String   @id @default(uuid())
+  topicId             String
+  word                String
+  phonetic            String
+  syllables           Json
+  meaningZh           String
+  imageRef            String?
+  collocations        Json     @default("[]")
+  exampleSentences    Json     @default("[]")
+  difficultPhonemes   Json     @default("[]")
+  skillNodeIds        Json     @default("[]")
+  relatedWords        Json     @default("[]")
+  reviewStatus        String   @default("pending_review")
+  createdAt           DateTime @default(now())
+
+  @@index([topicId])
+  @@map("vocabulary_items")
+}
+
+model phoneme_items {
+  id            String   @id @default(uuid())
+  phoneme       String   @unique
+  ipa           String
+  descriptionZh String
+  difficulty    Int      @default(1)
+  reviewStatus  String   @default("pending_review")
+
+  @@map("phoneme_items")
+}
+
+model sentence_patterns {
+  id           String   @id @default(uuid())
+  topicId      String
+  pattern      String
+  zh           String
+  examples     Json     @default("[]")
+  skillNodeIds Json     @default("[]")
+  reviewStatus String   @default("pending_review")
+
+  @@index([topicId])
+  @@map("sentence_patterns")
+}
+
+model scenarios {
+  id                String  @id @default(uuid())
+  code              String  @unique
+  name              String
+  description       String
+  countsForTransfer Boolean @default(true)
+
+  evidence          learning_evidence[]
+  assessments       assessment_records[]
+
+  @@map("scenarios")
+}
+
+model assessment_thresholds {
+  id                        String   @id @default(uuid())
+  taskType                  String
+  scenario                  String?
+  passScore                 Float
+  minSamplesForming         Int      @default(2)
+  minSamplesMastered        Int      @default(2)
+  minScenariosTransferred   Int      @default(2)
+  minIntervalTransferredMs  Int      @default(86400000)
+  source                    String   @default("m1_provisional")
+  calibrationStatus         String   @default("uncalibrated")
+  version                   String
+  createdAt                 DateTime @default(now())
+
+  @@index([taskType, version])
+  @@map("assessment_thresholds")
+}
+
+// ========== 课堂与证据 ==========
+
+model lesson_sessions {
+  id             String   @id @default(uuid())
+  learnerId      String
+  topicId        String
+  status         String   @default("active")
+  turnCount      Int      @default(0)
+  methodState    Json     @default("{}")
+  currentActivityId String?
+  startedAt      DateTime @default(now())
+  finishedAt     DateTime?
+  summary        String?
+
+  learner        learner_profiles    @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  interactions   interaction_events[]
+  assessments    assessment_records[]
+  evidence       learning_evidence[]
+  usage          ai_usage_logs[]
+
+  @@index([learnerId, startedAt])
+  @@map("lesson_sessions")
+}
+
+model interaction_events {
+  id               String   @id @default(uuid())
+  lessonSessionId  String
+  learnerId        String
+  turnIndex        Int
+  idempotencyKey   String   @unique
+  intent           String
+  input            Json
+  output           Json
+  latencyMs        Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  lessonSession    lesson_sessions @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  learner          learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonSessionId, turnIndex])
+  @@index([learnerId])
+  @@map("interaction_events")
+}
+
+model assessment_records {
+  id               String   @id @default(uuid())
+  learnerId        String
+  lessonSessionId  String
+  skillNodeId      String
+  learningItemId   String?
+  taskType         String
+  scenario         String
+  prompted         Boolean  @default(false)
+  independent      Boolean  @default(false)
+  score            Float?
+  passed           Boolean  @default(false)
+  assessmentSource String
+  evidenceId       String?
+  thresholdVersion String?
+  createdAt        DateTime @default(now())
+
+  learner          learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  lessonSession    lesson_sessions @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  skillNode        skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+  learningItem     learning_items?  @relation(fields: [learningItemId], references: [id])
+  scenarioRef      scenarios        @relation(fields: [scenario], references: [code])
+
+  @@index([learnerId, createdAt])
+  @@index([lessonSessionId])
+  @@map("assessment_records")
+}
+
+// ⚠️ learning_evidence 只允许 INSERT，不允许 UPDATE / DELETE（约束三）。
+//    该约束由数据库触发器强制，不依赖应用层自律。
+model learning_evidence {
+  id                     String   @id @default(uuid())
+  learnerId              String
+  lessonSessionId        String?
+  skillNodeId            String
+  learningItemId         String?
+  abilityCategory        String
+  vocabularyDimension    String?
+  source                 String
+  taskType               String
+  prompted               Boolean  @default(false)
+  independent            Boolean  @default(false)
+  scenario               String
+  occurredAt             DateTime @default(now())
+  credibility            Float    @default(1.0)
+  contributesToPromotion Boolean  @default(true)
+  succeeded              Boolean  @default(false)
+  score                  Float?
+  errorUnits             Json     @default("[]")
+  note                   String?
+  thresholdVersion       String?
+  ruleVersion            String?
+
+  learner                learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  skillNode              skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+  learningItem           learning_items?  @relation(fields: [learningItemId], references: [id])
+  lessonSession          lesson_sessions? @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  scenarioRef            scenarios        @relation(fields: [scenario], references: [code])
+
+  @@index([learnerId, skillNodeId, occurredAt])
+  @@index([lessonSessionId])
+  @@map("learning_evidence")
+}
+
+model review_schedules {
+  id          String   @id @default(uuid())
+  learnerId   String
+  skillNodeId String
+  intervalDays Int     @default(1)
+  dueAt       DateTime
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  learner     learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+
+  @@index([learnerId, dueAt])
+  @@map("review_schedules")
+}
+
+model textbook_mappings {
+  id          String   @id @default(uuid())
+  learnerId   String
+  grade       String
+  publisher   String
+  version     String
+  currentUnit String
+  skillNodeIds Json    @default("[]")
+  updatedAt   DateTime @updatedAt
+
+  @@map("textbook_mappings")
+}
+
+model media_assets {
+  id          String   @id @default(uuid())
+  kind        String   // image | audio
+  ref         String
+  voiceIdentity String?
+  teacherSpeed Float?
+  durationMs  Int?
+  checksum    String?
+  createdAt   DateTime @default(now())
+
+  @@index([checksum])
+  @@map("media_assets")
+}
+
+// ========== 记忆与人格 ==========
+
+model teacher_profiles {
+  id          String   @id @default(uuid())
+  name        String
+  coreTraits  Json
+  adjustable  Json
+  style       String
+  stage       Int      @default(0)
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memories    interaction_memories[]
+  history     persona_history[]
+
+  @@map("teacher_profiles")
+}
+
+model persona_history {
+  id               String   @id @default(uuid())
+  teacherProfileId String
+  learnerId        String?
+  changeContent    String
+  reason           String
+  version          Int
+  rollbackOf       String?
+  createdAt        DateTime @default(now())
+
+  teacherProfile   teacher_profiles @relation(fields: [teacherProfileId], references: [id], onDelete: Cascade)
+
+  @@map("persona_history")
+}
+
+model interaction_memories {
+  id               String   @id @default(uuid())
+  learnerId        String
+  teacherProfileId String?
+  memoryType       String
+  content          String
+  importance       Float    @default(0.5)
+  source           String   @default("batch_extract")
+  expiresAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  teacherProfile   teacher_profiles? @relation(fields: [teacherProfileId], references: [id])
+
+  @@index([learnerId])
+  @@map("interaction_memories")
+}
+
+// ========== 模型路由 ==========
+
+model ai_providers {
+  id          String   @id @default(uuid())
+  alias       String   @unique
+  kind        String   // llm | tts | asr | pronunciation
+  baseUrl     String?
+  enabled     Boolean  @default(true)
+  concurrencyLimit Int  @default(8)
+  circuitBreaker Json  @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  models      ai_models[]
+
+  @@map("ai_providers")
+}
+
+model ai_models {
+  id          String   @id @default(uuid())
+  providerId  String
+  alias       String
+  modelId     String
+  version     String?
+  level       String   // L0 | L1 | L2 | L3
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  provider    ai_providers           @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  capabilities ai_model_capabilities[]
+  prices      ai_model_prices[]
+  limits      ai_model_limits[]
+  benchmarks  ai_model_benchmarks[]
+  usageLogs   ai_usage_logs[]
+  primaryForRoutes ai_task_routes[]
+
+  @@unique([providerId, alias])
+  @@map("ai_models")
+}
+
+model ai_model_capabilities {
+  id          String  @id @default(uuid())
+  modelId     String
+  capability  String
+  score       Float?
+  verified    Boolean @default(false)
+
+  model       ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([modelId, capability])
+  @@map("ai_model_capabilities")
+}
+
+model ai_model_prices {
+  id          String   @id @default(uuid())
+  modelId     String
+  priceType   String   // input_token | output_token | per_byte | per_second | per_call
+  unitPrice   Float
+  checkedAt   DateTime
+
+  model       ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([modelId, priceType])
+  @@map("ai_model_prices")
+}
+
+model ai_model_limits {
+  id           String  @id @default(uuid())
+  modelId      String
+  limitType    String
+  limitValue   Float
+  window       String?
+  enabled      Boolean @default(true)
+
+  model        ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([modelId, limitType])
+  @@map("ai_model_limits")
+}
+
+model ai_task_routes {
+  id          String   @id @default(uuid())
+  taskRoute   String
+  serviceKind String
+  primaryModelId String?
+  fallbackModelIds Json @default("[]")
+  enabled     Boolean  @default(true)
+  updatedAt   DateTime @updatedAt
+
+  primary     ai_models? @relation(fields: [primaryModelId], references: [id])
+
+  @@unique([taskRoute, serviceKind])
+  @@map("ai_task_routes")
+}
+
+model ai_route_rules {
+  id             String   @id @default(uuid())
+  taskRoute      String
+  escalationSignal String
+  targetLevel    String
+  enabled        Boolean  @default(true)
+
+  @@unique([taskRoute, escalationSignal])
+  @@map("ai_route_rules")
+}
+
+model ai_model_benchmarks {
+  id          String   @id @default(uuid())
+  modelId     String
+  benchmarkType String
+  score       Float
+  sampleCount Int      @default(0)
+  notes       String?
+  testedAt    DateTime @default(now())
+
+  model       ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([modelId])
+  @@map("ai_model_benchmarks")
+}
+
+model ai_usage_logs {
+  id             String   @id @default(uuid())
+  learnerId      String?
+  lessonSessionId String?
+  modelId        String?
+  serviceKind    String
+  taskRoute      String
+  level          String
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  ttsCharacters  Int      @default(0)
+  asrSeconds     Float    @default(0)
+  pronunciationCalls Int  @default(0)
+  estimatedCostCny Float  @default(0)
+  latencyMs      Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  lessonSession  lesson_sessions? @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  model          ai_models?       @relation(fields: [modelId], references: [id])
+
+  @@index([learnerId, createdAt])
+  @@index([lessonSessionId])
+  @@map("ai_usage_logs")
+}
+
+model ai_fallback_logs {
+  id           String   @id @default(uuid())
+  learnerId    String?
+  lessonSessionId String?
+  taskRoute    String
+  fromModelId  String?
+  toModelId    String?
+  reason       String
+  createdAt    DateTime @default(now())
+
+  @@index([lessonSessionId])
+  @@map("ai_fallback_logs")
+}
+
+// ========== 隐私与合规 ==========
+
+model consent_records {
+  id          String   @id @default(uuid())
+  userId      String
+  learnerId   String?
+  consentType String   // voice_processing | ai_service | data_retention
+  granted     Boolean  @default(false)
+  scope       Json     @default("{}")
+  grantedAt   DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  user         users @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("consent_records")
+}

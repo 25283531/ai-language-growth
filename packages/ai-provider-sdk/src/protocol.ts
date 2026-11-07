@@ -152,11 +152,11 @@ export class HttpLlmAdapter implements LlmAdapter {
       body: JSON.stringify({
         model: this.options.modelAlias,
         messages: [{ role: 'system', content: request.system }, ...request.messages],
-        temperature: request.temperature,
-        max_tokens: request.maxTokens,
+        temperature: request.temperature ?? 0.6,
+        max_tokens: request.maxTokens ?? 800,
         ...(request.responseSchema ? { response_format: { type: 'json_object' } } : {}),
       }),
-      signal: AbortSignal.timeout(request.timeoutMs),
+      signal: AbortSignal.timeout(request.timeoutMs ?? 15000),
     });
 
     if (!res.ok) {

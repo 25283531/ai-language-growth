@@ -8,6 +8,7 @@
  * 编码一经发布即视为稳定契约，M2 只增不改。
  */
 import { z } from 'zod';
+import { EVIDENCE_SCENARIOS } from './evidence';
 import { ABILITY_CATEGORIES, DEPENDENCY_TYPES, GROWTH_STAGES, VOCABULARY_DIMENSIONS } from './learner';
 
 /**
@@ -153,16 +154,15 @@ export const teachingActivitySchema = z.object({
     'reading_story',
     'free_response',
   ]),
-  /** 场景 */
-  scenario: z.enum([
-    'image_prompt',
-    'audio_prompt',
-    'dialogue_prompt',
-    'story_context',
-    'free_chat',
-    'review_session',
-    'assessment_session',
-  ]),
+  /**
+   * 场景：交际情境，而非媒体形式。
+   *
+   * 与证据契约 EVIDENCE_SCENARIOS 共用同一枚举 —— 教学活动的场景会直接写入
+   * learning_evidence.scenario（该列有外键指向 scenarios.code）。
+   * 早期版本用 audio_prompt / image_prompt 等「媒体形式」值，
+   * 既无法通过外键，也无法支撑「两个不同场景独立使用」的迁移判定。
+   */
+  scenario: z.enum(EVIDENCE_SCENARIOS),
   /** 目标能力节点 */
   skillNodeIds: z.array(z.string()).min(1),
   /** 涉及的目标词 */
