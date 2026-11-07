@@ -65,12 +65,33 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-alg}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_language_growth}?schema=public
       REDIS_URL: redis://redis:6379
       AI_GATEWAY_MODE: ${AI_GATEWAY_MODE:-mock}
+      AI_GATEWAY_LIVE_SERVICES: ${AI_GATEWAY_LIVE_SERVICES:-llm,asr,tts}
+      # 所有 Provider 配置必须在此透传；漏一个就会在容器里静默回落 Mock（约束二）。
+      # 新增配置项时同步更新 .env.example 与本段。
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-}
+      LLM_MIN_MAX_TOKENS: ${LLM_MIN_MAX_TOKENS:-}
+      LLM_EXTRA_BODY_KV: ${LLM_EXTRA_BODY_KV:-}
+      TTS_PROTOCOL: ${TTS_PROTOCOL:-openai_audio}
       TTS_API_KEY: ${TTS_API_KEY:-}
       TTS_BASE_URL: ${TTS_BASE_URL:-}
       TTS_MODEL: ${TTS_MODEL:-}
+      TTS_VOICE: ${TTS_VOICE:-}
+      TTS_SECRET_ID: ${TTS_SECRET_ID:-}
+      TTS_SECRET_KEY: ${TTS_SECRET_KEY:-}
+      TTS_SERVICE: ${TTS_SERVICE:-}
+      TTS_ACTION: ${TTS_ACTION:-}
+      TTS_VERSION: ${TTS_VERSION:-}
+      TTS_REGION: ${TTS_REGION:-}
+      TTS_CODEC: ${TTS_CODEC:-mp3}
+      TTS_SAMPLE_RATE: ${TTS_SAMPLE_RATE:-}
+      TTS_PRIMARY_LANGUAGE: ${TTS_PRIMARY_LANGUAGE:-}
+      TTS_VOLUME: ${TTS_VOLUME:-}
+      TTS_MODEL_TYPE: ${TTS_MODEL_TYPE:-}
+      TTS_AUDIO_FIELD: ${TTS_AUDIO_FIELD:-}
+      TTS_EXTRA_BODY_KV: ${TTS_EXTRA_BODY_KV:-}
+      AI_AUDIO_DIR: ${AI_AUDIO_DIR:-.cache/audio}
       ASR_API_KEY: ${ASR_API_KEY:-}
       ASR_BASE_URL: ${ASR_BASE_URL:-}
       ASR_MODEL: ${ASR_MODEL:-}

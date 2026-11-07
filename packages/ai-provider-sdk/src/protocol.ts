@@ -114,6 +114,13 @@ export interface AdapterFactoryOptions {
   modelAlias?: string;
   pricing: ProviderPricing;
   capabilities?: Partial<ProviderCapabilities>;
+  /**
+   * 额外的请求体字段（由配置注入的 JSON 对象）。
+   * 某些模型需要额外推理参数，写在这里而不是写死厂商特有字段，满足约束二。
+   */
+  extraBody?: Record<string, unknown>;
+  /** 输出 token 下限：推理型模型会先消耗思考预算，上限过低会得到空回复。 */
+  minMaxTokens?: number;
 }
 
 export const DEFAULT_CAPABILITIES: ProviderCapabilities = {
@@ -150,10 +157,18 @@ export class HttpLlmAdapter implements LlmAdapter {
         ...(this.options.apiKey ? { authorization: `Bearer ${this.options.apiKey}` } : {}),
       },
       body: JSON.stringify({
+        // 配置注入的额外字段放在最前，固定业务字段在后：
+        // 配置永远不能覆盖 model / messages / temperature / max_tokens，
+        // 否则一段 .env 就能改写教学 prompt 或绕过 Router 的模型选择（约束一/二）。
+        ...this.options.extraBody,
         model: this.options.modelAlias,
         messages: [{ role: 'system', content: request.system }, ...request.messages],
         temperature: request.temperature ?? 0.6,
-        max_tokens: request.maxTokens ?? 800,
+        // 推理型模型会先消耗思考预算；max_tokens 太低会让 content 为空。
+        max_tokens: Math.max(
+          request.maxTokens ?? 800,
+          this.options.minMaxTokens ?? 0,
+        ),
         ...(request.responseSchema ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: AbortSignal.timeout(request.timeoutMs ?? 15000),
@@ -170,11 +185,19 @@ export class HttpLlmAdapter implements LlmAdapter {
     }
 
     const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
 
-    const content = json.choices?.[0]?.message?.content ?? '';
+    const choice = json.choices?.[0];
+    const content = choice?.message?.content ?? '';
+    if (!content.trim()) {
+      // 空内容不得当作成功：由 Gateway 如实降级并上报 degraded，
+      // 避免「LLM 调通了但老师一句话都没说」被静默掩盖。
+      throw new Error(
+        `adapter ${this.alias} 返回空内容 (usage=${JSON.stringify(json.usage ?? {})})`,
+      );
+    }
     return {
       content,
       schemaValid: request.responseSchema ? isJsonParsable(content) : true,
@@ -183,6 +206,7 @@ export class HttpLlmAdapter implements LlmAdapter {
       latencyMs: Date.now() - started,
       providerAlias: this.alias,
       modelAlias: this.options.modelAlias ?? 'unknown',
+      finishReason: choice?.finish_reason,
     };
   }
 }

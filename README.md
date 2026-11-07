@@ -8,6 +8,8 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 
 > **Live mode added (2026-11-07):** real LLM / ASR / TTS adapters are wired through config only, with Mock kept as the fallback. `AI_GATEWAY_MODE=mock` returns to a zero-call, zero-cost run; `AI_GATEWAY_LIVE_SERVICES` selects which services actually call out. End-to-end results, pricing caveats and the latency shortfall against the 1–2 s target: [`docs/M1-live-API-report.md`](docs/M1-live-API-report.md).
 
+> **Provider hardening:** TTS supports both binary OpenAI-compatible responses (`TTS_PROTOCOL=openai_audio`) and signed JSON/Base64 responses (`TTS_PROTOCOL=signed_json_audio`). Live configuration is checked at startup; an unsupported protocol or incomplete signed-protocol configuration fails fast instead of silently selecting a different adapter. In non-production runs, `GET /api/v1/config/audit` exposes redacted routing details for diagnosis; it never returns credential values.
+
 ## Who it is for
 
 - 6–9-year-old children with zero English basis

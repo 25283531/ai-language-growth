@@ -57,4 +57,9 @@ jobs:
         run: npm run typecheck
 
       - name: Unit tests
-        run: npx tsx --test packages/skill-graph/test/mastery.test.ts packages/model-router/test/router.test.ts
+        # 包含 Provider 协议适配器的签名向量、配置 fail-fast 与约束二静态守卫
+        run: |
+          npx tsx --test \
+            packages/skill-graph/test/mastery.test.ts \
+            packages/model-router/test/router.test.ts \
+            packages/ai-provider-sdk/test/*.test.ts

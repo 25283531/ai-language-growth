@@ -17,6 +17,10 @@ import {
   type HttpServiceOptions,
 } from './http';
 import {
+  SignedJsonTtsAdapter,
+  type SignedTtsOptions,
+} from './signed-tts';
+import {
   MockAsrAdapter,
   MockLlmAdapter,
   MockPronunciationAdapter,
@@ -26,12 +30,67 @@ import {
 /** 网关运行模式。 */
 export type GatewayMode = 'mock' | 'live';
 
+/**
+ * TTS 协议形态。两种都是公开协议，不含任何厂商名：
+ * - openai_audio：POST {baseUrl}/audio/speech，直接返回二进制音频
+ * - signed_json_audio：POST 到配置 host，签名请求头 + JSON 响应里的 Base64 音频
+ */
+export type TtsProtocol = 'openai_audio' | 'signed_json_audio';
+
+export function resolveTtsProtocol(env: NodeJS.ProcessEnv = process.env): TtsProtocol {
+  return (env.TTS_PROTOCOL ?? 'openai_audio') === 'signed_json_audio'
+    ? 'signed_json_audio'
+    : 'openai_audio';
+}
+
+/**
+ * 安全解析配置注入的额外请求字段。
+ *
+ * 环境变量经 shell source 注入时，JSON 里的双引号会被 shell 吃掉，
+ * 因此优先使用无引号的 `key:value;key:value` 形式；同时兼容 JSON 以便容器环境使用。
+ * 非法值直接忽略，不让配置错误拖垮进程。
+ */
+function parseExtraBody(raw: string | undefined): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim().replace(/^['"]|['"]$/g, '');
+  if (trimmed.startsWith('{')) {
+    try {
+      const value: unknown = JSON.parse(trimmed);
+      return value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const result: Record<string, unknown> = {};
+  for (const pair of trimmed.split(';')) {
+    const index = pair.indexOf(':');
+    if (index <= 0) continue;
+    const key = pair.slice(0, index).trim();
+    const token = pair.slice(index + 1).trim();
+    if (!key || !token) continue;
+    if (token === 'true' || token === 'false') result[key] = token === 'true';
+    else if (/^-?\d+(\.\d+)?$/.test(token)) result[key] = Number(token);
+    else result[key] = token;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function optionalNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
 export interface ProviderConfig {
   mode: GatewayMode;
   llm?: HttpServiceOptions;
-  tts?: HttpServiceOptions;
+  tts?: SignedTtsOptions;
   asr?: HttpServiceOptions;
   pronunciation?: HttpServiceOptions;
+  /** TTS 协议选择，由配置注入 */
+  ttsProtocol: TtsProtocol;
   /** 实际启用真实调用的服务种类 */
   liveServices: ServiceKind[];
 }
@@ -63,6 +122,79 @@ const DEFAULT_LIVE_SERVICES = 'llm,asr,tts';
 const DEFAULT_PRICING: ProviderPricing = {
   checkedAt: '2026-11-07',
 };
+
+/**
+ * 启动期 fail-fast：live 模式下必需配置缺失/非法时拒绝启动。
+ *
+ * 目的：不让「配置漏填」在运行期表现为静默回落 Mock 或空回复。
+ * 教学代码不因换模型而调参，配置正确性由这里统一把关（约束二分层）。
+ * mock 模式（含 CI 无密钥环境）直接放行。
+ */
+export function assertLiveProviderConfig(env: NodeJS.ProcessEnv = process.env): void {
+  if ((env.AI_GATEWAY_MODE ?? 'mock') !== 'live') return;
+  const live = new Set(resolveLiveServices(env));
+  if (live.size === 0) return;
+
+  const require = (key: string): void => {
+    if (!env[key]) throw new Error(`live 模式缺少必需配置 ${key}`);
+  };
+  const requireValidExtra = (keys: string[]): void => {
+    const raw = keys.map((key) => env[key]).find(Boolean);
+    if (raw && !parseExtraBody(raw)) {
+      throw new Error(`live 模式额外请求字段格式非法: ${keys.join(' / ')}`);
+    }
+  };
+  const requirePositiveInt = (key: string): void => {
+    const raw = env[key];
+    if (raw !== undefined && raw !== '' && (!Number.isInteger(Number(raw)) || Number(raw) <= 0)) {
+      throw new Error(`live 模式配置 ${key} 必须为正整数`);
+    }
+  };
+
+  if (live.has('llm')) {
+    for (const key of ['LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL']) require(key);
+    requireValidExtra(['LLM_EXTRA_BODY_KV', 'LLM_EXTRA_BODY_JSON']);
+    requirePositiveInt('LLM_MIN_MAX_TOKENS');
+  }
+
+  if (live.has('tts')) {
+    if (env.TTS_PROTOCOL && !['openai_audio', 'signed_json_audio'].includes(env.TTS_PROTOCOL)) {
+      throw new Error(`live 模式 TTS_PROTOCOL 不受支持: ${env.TTS_PROTOCOL}`);
+    }
+    const signed = resolveTtsProtocol(env) === 'signed_json_audio';
+    if (signed) {
+      for (const key of [
+        'TTS_SECRET_ID', 'TTS_SECRET_KEY', 'TTS_SERVICE',
+        'TTS_ACTION', 'TTS_VERSION', 'TTS_VOICE',
+      ]) require(key);
+      // 配了双凭据却没切协议，会静默按二进制协议调用并失败
+      if (!env.TTS_PROTOCOL) {
+        throw new Error('已配置签名双凭据，必须显式设置 TTS_PROTOCOL=signed_json_audio');
+      }
+      // 编码必须显式声明：裸 PCM 无容器头、浏览器不可播放，
+      // 且「未设置」会被静默归一成 mp3，掩盖配置漏填。
+      if (!env.TTS_CODEC) {
+        throw new Error('live 模式必须显式设置 TTS_CODEC (mp3 或 wav)');
+      }
+      if (env.TTS_CODEC !== 'mp3' && env.TTS_CODEC !== 'wav') {
+        throw new Error(`live 模式 TTS_CODEC 只允许 mp3/wav，禁止 ${env.TTS_CODEC}（裸 PCM 无容器头）`);
+      }
+      if (!Number.isInteger(Number(env.TTS_VOICE)) || Number(env.TTS_VOICE) <= 0) {
+        throw new Error('live 模式 TTS_VOICE 必须为有效音色编号');
+      }
+      if (env.TTS_MODEL_TYPE && Number(env.TTS_MODEL_TYPE) !== 1) {
+        throw new Error('live 模式 TTS_MODEL_TYPE 只允许默认值 1，音色档位由 TTS_VOICE 决定');
+      }
+    } else if (env.TTS_SECRET_ID || env.TTS_SECRET_KEY) {
+      throw new Error('检测到签名双凭据但 TTS_PROTOCOL 不是 signed_json_audio');
+    }
+    requireValidExtra(['TTS_EXTRA_BODY_KV', 'TTS_EXTRA_BODY_JSON']);
+  }
+
+  if (live.has('asr')) {
+    for (const key of ['ASR_BASE_URL', 'ASR_API_KEY', 'ASR_MODEL']) require(key);
+  }
+}
 
 /**
  * 计算哪些服务真正走真实调用。
@@ -101,11 +233,11 @@ export function loadProviderConfig(env: NodeJS.ProcessEnv = process.env): Provid
   const build = (
     serviceKind: ServiceKind,
     alias: string,
-  ): HttpServiceOptions | undefined => {
+  ): SignedTtsOptions | undefined => {
     const prefix = serviceKind.toUpperCase();
     const baseUrl = env[`${prefix}_BASE_URL`];
     if (!baseUrl) return undefined;
-    return {
+    const common = {
       alias,
       serviceKind,
       baseUrl,
@@ -115,7 +247,31 @@ export function loadProviderConfig(env: NodeJS.ProcessEnv = process.env): Provid
       audioDir: resolveAudioDir(env),
       pricing: DEFAULT_PRICING,
       capabilities: {},
-    };
+      extraBody: parseExtraBody(
+        env[`${prefix}_EXTRA_BODY_KV`] ?? env[`${prefix}_EXTRA_BODY_JSON`],
+      ),
+      minMaxTokens: optionalNumber(env[`${prefix}_MIN_MAX_TOKENS`]),
+    } satisfies HttpServiceOptions;
+    if (serviceKind !== 'tts') return common;
+
+    // 签名型音频协议的额外参数全部来自配置；换供应商/换音色档位不改代码。
+    return {
+      ...common,
+      secretId: env.TTS_SECRET_ID,
+      secretKey: env.TTS_SECRET_KEY,
+      service: env.TTS_SERVICE,
+      action: env.TTS_ACTION,
+      version: env.TTS_VERSION,
+      region: env.TTS_REGION,
+      // 裸 PCM 无容器头，浏览器无法播放，协议层不开放该选项
+      codec: env.TTS_CODEC === 'wav' ? 'wav' : 'mp3',
+      sampleRate: optionalNumber(env.TTS_SAMPLE_RATE),
+      primaryLanguage: optionalNumber(env.TTS_PRIMARY_LANGUAGE),
+      volume: optionalNumber(env.TTS_VOLUME),
+      modelType: optionalNumber(env.TTS_MODEL_TYPE),
+      extraBody: parseExtraBody(env.TTS_EXTRA_BODY_KV ?? env.TTS_EXTRA_BODY_JSON),
+      audioField: env.TTS_AUDIO_FIELD,
+    } satisfies SignedTtsOptions;
   };
 
   return {
@@ -124,6 +280,7 @@ export function loadProviderConfig(env: NodeJS.ProcessEnv = process.env): Provid
     tts: build('tts', LIVE_PROVIDER_ALIASES.tts),
     asr: build('asr', LIVE_PROVIDER_ALIASES.asr),
     pronunciation: build('pronunciation', LIVE_PROVIDER_ALIASES.pronunciation),
+    ttsProtocol: resolveTtsProtocol(env),
     liveServices: resolveLiveServices(env),
   };
 }
@@ -148,7 +305,12 @@ export function registerAdapters(
     registry.register('llm', new HttpLlmAdapter(config.llm));
   }
   if (live.has('tts') && config.tts?.baseUrl) {
-    registry.register('tts', new HttpTtsAdapter(config.tts));
+    registry.register(
+      'tts',
+      config.ttsProtocol === 'signed_json_audio'
+        ? new SignedJsonTtsAdapter(config.tts)
+        : new HttpTtsAdapter(config.tts),
+    );
   }
   if (live.has('asr') && config.asr?.baseUrl) {
     registry.register('asr', new HttpAsrAdapter(config.asr));

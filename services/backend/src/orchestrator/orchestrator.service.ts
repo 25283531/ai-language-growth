@@ -578,6 +578,9 @@ export class OrchestratorService {
           ].join(''),
           messages: [{ role: 'user', content: input.question.slice(0, 300) }],
           temperature: 0.4,
+          // 业务语义：老师最多说一句短话术。推理型模型需要的最低思考预算
+          // 由 LLM_MIN_MAX_TOKENS 在适配层兜底（两者取大值），此处不因换模型而改。
+          // 必需配置缺失时由启动期 fail-fast 拒绝启动，不靠调大业务上限掩盖。
           maxTokens: 120,
           timeoutMs: 12000,
         },
@@ -595,6 +598,14 @@ export class OrchestratorService {
       };
     }
 
+    // finish_reason=length 表示输出被 token 上限截断，话术可能不完整；
+    // 如实记录，不把「模型调通了」等同于「老师说了一句完整的话」。
+    if (result.finishReason && result.finishReason !== 'stop') {
+      this.logger.warn(
+        `LLM 输出未正常结束: finish_reason=${result.finishReason} model=${result.modelAlias}`,
+      );
+    }
+
     // 输出净化：只保留可朗读的单行短文本，模型不能借话术注入教学结论。
     const cleaned = result.content
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '')
@@ -603,7 +614,14 @@ export class OrchestratorService {
       .trim()
       .slice(0, 120);
     // Gateway 在真实适配器失败时会回落到 Mock；此处如实标记，不静默掩盖。
-    const degraded = result.providerAlias !== decision.providerAlias;
+    // 另外把「真实模型返回空内容、只能用固定兜底话术」也算降级：
+    // 否则推理型模型思考耗尽 token 后，账本会显示 live 成功但老师其实没说话。
+    const degraded =
+      result.providerAlias !== decision.providerAlias ||
+      cleaned.length === 0 ||
+      cleaned === fallbackText ||
+      // 输出被 token 上限截断时话术不完整，不能算一次成功的真实回应
+      (result.finishReason !== undefined && result.finishReason !== 'stop');
 
     await this.router.recordUsage(
       usageRecord({

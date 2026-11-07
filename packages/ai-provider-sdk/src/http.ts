@@ -118,6 +118,14 @@ export class HttpTtsAdapter implements TtsAdapter {
     if (bytes.length < 128) {
       throw new Error(`adapter ${this.alias} 返回音频过短 (${bytes.length} bytes)`);
     }
+    // 回滚到二进制协议时也要防「HTTP 200 但返回 JSON 错误体」被当音频落盘。
+    // 裸 MP3 帧流无 ID3 标签，用帧同步位掩码判断，不能用固定 0xFFFB。
+    const isMp3 = bytes.subarray(0, 3).toString('latin1') === 'ID3' ||
+      (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0);
+    const isWav = bytes.subarray(0, 4).toString('latin1') === 'RIFF';
+    if (!isMp3 && !isWav) {
+      throw new Error(`adapter ${this.alias} 返回的不是可播放音频容器 (head=${bytes.subarray(0, 4).toString('hex')})`);
+    }
 
     const fingerprint = createHash('sha256')
       .update(
@@ -142,7 +150,8 @@ export class HttpTtsAdapter implements TtsAdapter {
 
     return {
       audioRef: `${this.options.audioUrlPrefix ?? resolveAudioUrlPrefix()}/${fileName}`,
-      characters: Buffer.byteLength(request.text, 'utf8'),
+      // 按 Unicode 码点计「字符数」，不用 UTF-8 字节数（中文会高估约 3 倍）
+      characters: [...request.text].length,
       latencyMs: Date.now() - started,
       providerAlias: this.alias,
       modelAlias: modelAlias ?? 'unknown',

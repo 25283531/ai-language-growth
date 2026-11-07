@@ -9,9 +9,12 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { json } from 'express';
 import { AppModule } from './app.module';
+import { assertLiveProviderConfig } from '@alg/ai-provider-sdk';
 import { loadConfig } from './config/config.module';
 
 async function bootstrap(): Promise<void> {
+  // live 模式下配置漏填必须立刻失败，不能等到运行期静默回落 Mock
+  assertLiveProviderConfig();
   const config = loadConfig();
   const app = await NestFactory.create(AppModule, {
     logger: config.nodeEnv === 'development' ? ['log', 'warn', 'error'] : ['warn', 'error'],

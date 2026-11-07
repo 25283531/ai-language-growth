@@ -5,5 +5,6 @@
  */
 export * from './protocol';
 export * from './http';
+export * from './signed-tts';
 export * from './mock';
 export * from './config';

@@ -97,13 +97,16 @@ export const llmResponseSchema = z.object({
   latencyMs: z.number().int().min(0),
   providerAlias: z.string(),
   modelAlias: z.string(),
+  /** 结束原因（如 stop / length）。length 表示输出被 token 上限截断，话术可能不完整。 */
+  finishReason: z.string().optional(),
 });
 
 export type LlmResponse = z.infer<typeof llmResponseSchema>;
 
 /** TTS 统一调用协议。只接受抽象语速，不接受厂商原始 speed（D-014）。 */
 export const ttsRequestSchema = z.object({
-  text: z.string(),
+  // 单次合成有字数上限；在契约层就拦下超长文本，避免静默截断教学话术
+  text: z.string().min(1).max(500),
   voice: teacherVoiceParamsSchema,
   /** 统一音色标识，切换供应商时保持一致 */
   voiceIdentity: z.string().default('teacher_default'),
@@ -114,7 +117,11 @@ export type TtsRequest = z.input<typeof ttsRequestSchema>;
 
 export const ttsResponseSchema = z.object({
   audioRef: z.string(),
-  /** 音频字符量，用于成本账本 */
+  /**
+   * 平台内部的音频计量单位（Unicode 码点数：1 汉字 / 1 字母 / 1 标点 = 1）。
+   * 供成本账本与供应商按字符计费的账单对账使用；它不是字节数，也不等于
+   * 供应商最终账单字符数（不同供应商对 SSML、标点、多字节字符的口径可能不同）。
+   */
   characters: z.number().int().min(0),
   latencyMs: z.number().int().min(0),
   providerAlias: z.string(),

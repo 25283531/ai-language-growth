@@ -212,7 +212,8 @@ export class MockTtsAdapter implements TtsAdapter {
     const ref = `mock://tts/${encodeURIComponent(request.text)}/${request.voice.teacherSpeed}/${request.voice.voiceStyle}`;
     return {
       audioRef: ref,
-      characters: Buffer.byteLength(request.text, 'utf8'),
+      // Mock 也按码点计字符数，保证与真实供应商的计费口径一致
+      characters: [...request.text].length,
       latencyMs: Date.now() - started,
       providerAlias: this.alias,
       modelAlias: 'mock',
