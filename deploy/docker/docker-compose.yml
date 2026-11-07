@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: alg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_language_growth}
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    ports:
+      # 5433 对外暴露，避开服务器上已有的其他服务端口
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alg} -d ${POSTGRES_DB:-ai_language_growth}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - alg-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: alg-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - alg-net
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/backend.Dockerfile
+    container_name: alg-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-alg}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_language_growth}?schema=public
+      REDIS_URL: redis://redis:6379
+      AI_GATEWAY_MODE: ${AI_GATEWAY_MODE:-mock}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      TTS_API_KEY: ${TTS_API_KEY:-}
+      TTS_BASE_URL: ${TTS_BASE_URL:-}
+      TTS_MODEL: ${TTS_MODEL:-}
+      ASR_API_KEY: ${ASR_API_KEY:-}
+      ASR_BASE_URL: ${ASR_BASE_URL:-}
+      ASR_MODEL: ${ASR_MODEL:-}
+      PRONUNCIATION_API_KEY: ${PRONUNCIATION_API_KEY:-}
+      PRONUNCIATION_BASE_URL: ${PRONUNCIATION_BASE_URL:-}
+      PRONUNCIATION_MODEL: ${PRONUNCIATION_MODEL:-}
+    ports:
+      - "${BACKEND_PORT:-3100}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
+    networks:
+      - alg-net
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  alg-net:
+    driver: bridge

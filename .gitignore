@@ -46,3 +46,7 @@ app/build/
 Thumbs.db
 .vscode/
 *.swp
+
+# Runtime artifacts
+*.tsbuildinfo
+/tmp/

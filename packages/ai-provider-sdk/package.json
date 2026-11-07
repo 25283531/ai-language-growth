@@ -1,0 +1,20 @@
+{
+  "name": "@alg/ai-provider-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unified LLM / TTS / ASR / pronunciation provider protocol",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@alg/shared-contracts": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

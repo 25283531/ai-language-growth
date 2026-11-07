@@ -1,0 +1,327 @@
+/**
+ * Model Router —— 多模型分级调度（只选模型，不调用）。
+ *
+ * 依据：D-011「多模型分级调度：L0—L3，提前到 M1」；
+ *      D-012「Router 与 Gateway 分离」；
+ *      D-015「升级机制与成本指标：不信自报置信度」。
+ *
+ * 铁律：
+ *  1. 业务代码只依赖本包的 ModelRouter 接口，不知道任何服务商或模型名称。
+ *  2. 升级依据是多信号（结构化合规、任务完成、ASR 失败、发音困难、
+ *     连续不懂、已换方法、与档案矛盾），绝不使用模型自报置信度。
+ *  3. LLM / TTS / ASR / 发音评估四类服务各自独立路由与故障切换。
+ */
+import type {
+  EscalationSignal,
+  ModelLevel,
+  RouteRule,
+  RoutingDecision,
+  ServiceKind,
+  TaskRoute,
+  UsageRecord,
+} from '@alg/shared-contracts';
+
+/** 路由配置表。可在管理后台调整，换模型不发版（D-012）。 */
+export interface RouterConfig {
+  rules: RouteRule[];
+  /**
+   * 升级判定：出现这些信号时提升服务等级。
+   * 每类服务独立配置升级到哪一级。
+   */
+  escalationTargets: Record<ServiceKind, Partial<Record<EscalationSignal, ModelLevel>>>;
+  /**
+   * 降级链（固定四步，D-015）：
+   *   免费模型优先 → 限流时切付费低价 → 预算上限时保障关键教学交互
+   *   → 外部服务全不可用时保留固定课程与缓存音频
+   */
+  fallbackOrder: ModelLevel[];
+}
+
+/** 默认路由配置。全部使用配置别名，不含任何厂商或模型名（约束二）。 */
+export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
+  rules: [
+    {
+      taskRoute: 'llm.simple_dialogue',
+      primary: { providerAlias: 'free_llm', modelAlias: 'free_llm_01', level: 'L1' },
+      fallback: [
+        { providerAlias: 'lowcost_llm', modelAlias: 'lowcost_llm_01', level: 'L1' },
+        { providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' },
+      ],
+      maxConcurrency: 8,
+      dailyBudgetCny: 50,
+      enabled: true,
+    },
+    {
+      taskRoute: 'llm.teaching_explanation',
+      primary: { providerAlias: 'lowcost_llm', modelAlias: 'lowcost_llm_01', level: 'L1' },
+      fallback: [{ providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' }],
+      maxConcurrency: 6,
+      dailyBudgetCny: 100,
+      enabled: true,
+    },
+    {
+      taskRoute: 'llm.method_adaptation',
+      primary: { providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' },
+      fallback: [{ providerAlias: 'premium_llm', modelAlias: 'premium_llm_01', level: 'L3' }],
+      maxConcurrency: 4,
+      dailyBudgetCny: 200,
+      enabled: true,
+    },
+    {
+      taskRoute: 'llm.learning_plan',
+      primary: { providerAlias: 'premium_llm', modelAlias: 'premium_llm_01', level: 'L3' },
+      fallback: [{ providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' }],
+      maxConcurrency: 2,
+      dailyBudgetCny: 300,
+      enabled: true,
+    },
+    {
+      taskRoute: 'tts.fixed_course',
+      primary: { providerAlias: 'course_audio_cache', modelAlias: 'course_audio_cache', level: 'L0' },
+      fallback: [{ providerAlias: 'lowcost_tts', modelAlias: 'lowcost_tts_01', level: 'L1' }],
+      maxConcurrency: 16,
+      dailyBudgetCny: 20,
+      enabled: true,
+    },
+    {
+      taskRoute: 'tts.dynamic_teaching',
+      primary: { providerAlias: 'lowcost_tts', modelAlias: 'lowcost_tts_01', level: 'L1' },
+      fallback: [{ providerAlias: 'premium_tts', modelAlias: 'premium_tts_01', level: 'L2' }],
+      maxConcurrency: 8,
+      dailyBudgetCny: 60,
+      enabled: true,
+    },
+    {
+      taskRoute: 'asr.free_speech',
+      primary: { providerAlias: 'free_asr', modelAlias: 'free_asr_01', level: 'L1' },
+      fallback: [{ providerAlias: 'paid_asr', modelAlias: 'paid_asr_01', level: 'L1' }],
+      maxConcurrency: 8,
+      dailyBudgetCny: 80,
+      enabled: true,
+    },
+    {
+      taskRoute: 'asr.follow_read',
+      primary: { providerAlias: 'free_asr', modelAlias: 'free_asr_01', level: 'L1' },
+      fallback: [{ providerAlias: 'paid_asr', modelAlias: 'paid_asr_01', level: 'L1' }],
+      maxConcurrency: 8,
+      dailyBudgetCny: 80,
+      enabled: true,
+    },
+    {
+      taskRoute: 'pronunciation.word',
+      primary: { providerAlias: 'pronunciation_svc', modelAlias: 'pronunciation_01', level: 'L1' },
+      fallback: [],
+      maxConcurrency: 6,
+      dailyBudgetCny: 150,
+      enabled: true,
+    },
+    {
+      taskRoute: 'pronunciation.phoneme',
+      primary: { providerAlias: 'pronunciation_svc', modelAlias: 'pronunciation_01', level: 'L1' },
+      fallback: [],
+      maxConcurrency: 6,
+      dailyBudgetCny: 150,
+      enabled: true,
+    },
+  ],
+  escalationTargets: {
+    llm: {
+      schema_invalid: 'L2',
+      task_incomplete: 'L2',
+      child_did_not_understand: 'L2',
+      method_already_changed: 'L3',
+      conflicts_with_profile: 'L3',
+      asr_failed: 'L2',
+      pronunciation_difficulty: 'L2',
+    },
+    tts: {
+      schema_invalid: 'L2',
+      task_incomplete: 'L2',
+    },
+    asr: {
+      asr_failed: 'L1',
+      schema_invalid: 'L2',
+    },
+    pronunciation: {
+      pronunciation_difficulty: 'L2',
+      schema_invalid: 'L2',
+    },
+  },
+  fallbackOrder: ['L1', 'L2', 'L3'],
+};
+
+/** 成本账本条目（内存实现，M1 落库到 ai_usage_logs）。 */
+export interface UsageLedger {
+  add(record: UsageRecord): void;
+  summary(filter?: {
+    learnerId?: string;
+    lessonSessionId?: string;
+  }): {
+    totalCostCny: number;
+    byService: Record<string, { calls: number; costCny: number }>;
+    byLevel: Record<string, { calls: number; costCny: number }>;
+  };
+  list(filter?: { learnerId?: string; lessonSessionId?: string }): UsageRecord[];
+}
+
+/** 内存用量账本。M1 用于单测与本地运行，生产由 Prisma 实现同一接口。 */
+export class InMemoryUsageLedger implements UsageLedger {
+  private readonly records: UsageRecord[] = [];
+
+  add(record: UsageRecord): void {
+    this.records.push(record);
+  }
+
+  list(filter?: { learnerId?: string; lessonSessionId?: string }): UsageRecord[] {
+    return this.records.filter(
+      (r) =>
+        (!filter?.learnerId || r.learnerId === filter.learnerId) &&
+        (!filter?.lessonSessionId || r.lessonSessionId === filter.lessonSessionId),
+    );
+  }
+
+  summary(filter?: { learnerId?: string; lessonSessionId?: string }) {
+    const rows = this.list(filter);
+    const byService: Record<string, { calls: number; costCny: number }> = {};
+    const byLevel: Record<string, { calls: number; costCny: number }> = {};
+    let totalCostCny = 0;
+
+    for (const r of rows) {
+      totalCostCny += r.estimatedCostCny;
+      const s = (byService[r.serviceKind] ??= { calls: 0, costCny: 0 });
+      s.calls += 1;
+      s.costCny += r.estimatedCostCny;
+      const l = (byLevel[r.level] ??= { calls: 0, costCny: 0 });
+      l.calls += 1;
+      l.costCny += r.estimatedCostCny;
+    }
+
+    return { totalCostCny, byService, byLevel };
+  }
+}
+
+/**
+ * Model Router 实现。
+ *
+ * 只做选择，不做调用 —— 调用由 AI Gateway 负责（D-012）。
+ */
+export class ModelRouterImpl {
+  private readonly config: RouterConfig;
+  private readonly ledger: UsageLedger;
+
+  constructor(config: RouterConfig = DEFAULT_ROUTER_CONFIG, ledger?: UsageLedger) {
+    this.config = config;
+    this.ledger = ledger ?? new InMemoryUsageLedger();
+  }
+
+  get usageLedger(): UsageLedger {
+    return this.ledger;
+  }
+
+  private findRule(taskRoute: string): RouteRule | undefined {
+    return this.config.rules.find((r) => r.taskRoute === taskRoute && r.enabled);
+  }
+
+  /**
+   * 选择模型并执行升级判定。
+   *
+   * @param serviceKind 服务类型（四类独立）
+   * @param taskRoute   任务路由标识
+   * @param escalationSignals 升级信号（多信号，不含模型自报置信度）
+   */
+  async route(input: {
+    serviceKind: ServiceKind;
+    taskRoute: TaskRoute | string;
+    escalationSignals?: EscalationSignal[];
+    /** 已失败的备选（由 Gateway 在调用失败后传入，用于选下一个） */
+    failedAliases?: string[];
+  }): Promise<RoutingDecision> {
+    const rule = this.findRule(input.taskRoute);
+    if (!rule) {
+      // 无规则时退到 L0 本地处理，保证流程不中断
+      return {
+        level: 'L0',
+        providerAlias: 'local_rules',
+        modelAlias: 'local_rules',
+        strategy: 'no_rule_local_fallback',
+        fellBack: true,
+        escalationSignals: [],
+      };
+    }
+
+    const signals = input.escalationSignals ?? [];
+    const failed = new Set(input.failedAliases ?? []);
+
+    // —— 升级判定：取所有信号对应目标级别中的最高级 ——
+    const targets = this.config.escalationTargets[input.serviceKind] ?? {};
+    let escalatedLevel: ModelLevel | null = null;
+    for (const signal of signals) {
+      const target = targets[signal];
+      if (target && (!escalatedLevel || levelRank(target) > levelRank(escalatedLevel))) {
+        escalatedLevel = target;
+      }
+    }
+
+    // —— 候选序列：主模型 → 升级模型 → 降级链 ——
+    const candidates: Array<{
+      providerAlias: string;
+      modelAlias: string;
+      level: ModelLevel;
+      strategy: string;
+    }> = [];
+
+    if (escalatedLevel && levelRank(escalatedLevel) > levelRank(rule.primary.level)) {
+      // 升级：主模型同级不可用时，优先使用升级目标的别名
+      candidates.push({
+        providerAlias: `escalated_${escalatedLevel.toLowerCase()}`,
+        modelAlias: `escalated_${escalatedLevel.toLowerCase()}`,
+        level: escalatedLevel,
+        strategy: `escalated_on_${signals.join('+')}`,
+      });
+    }
+
+    candidates.push({ ...rule.primary, strategy: 'primary' });
+    for (const fb of rule.fallback) {
+      candidates.push({ ...fb, strategy: 'fallback' });
+    }
+
+    for (const candidate of candidates) {
+      if (failed.has(candidate.providerAlias)) continue;
+      return {
+        level: candidate.level,
+        providerAlias: candidate.providerAlias,
+        modelAlias: candidate.modelAlias,
+        strategy: candidate.strategy,
+        fellBack: candidate.strategy !== 'primary',
+        escalationSignals: signals,
+      };
+    }
+
+    // 全部失败 → L0 本地兜底
+    return {
+      level: 'L0',
+      providerAlias: 'local_rules',
+      modelAlias: 'local_rules',
+      strategy: 'all_providers_failed_local_fallback',
+      fellBack: true,
+      escalationSignals: signals,
+    };
+  }
+
+  /** 记录一条用量。 */
+  async recordUsage(record: UsageRecord): Promise<void> {
+    this.ledger.add(record);
+  }
+
+  /** 查询用量汇总。 */
+  async usageSummary(filter?: { learnerId?: string; lessonSessionId?: string }) {
+    return this.ledger.summary(filter);
+  }
+}
+
+export function levelRank(level: ModelLevel): number {
+  return { L0: 0, L1: 1, L2: 2, L3: 3 }[level];
+}
+
+/** ModelRouter 接口实现类导出。 */
+export type { ModelRouter } from '@alg/shared-contracts';

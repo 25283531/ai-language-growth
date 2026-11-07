@@ -1,0 +1,21 @@
+{
+  "name": "@alg/skill-graph",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ability knowledge graph: skill nodes, dependencies, and the learner's ability graph",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts"
+  },
+  "dependencies": {
+    "@alg/shared-contracts": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
