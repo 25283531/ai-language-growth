@@ -87,5 +87,25 @@
     "credentialRequired": true,
     "documentationUrl": "https://learn.microsoft.com/azure/ai-services/speech-service/how-to-pronunciation-assessment",
     "documentationUrls": { "pronunciation": "https://learn.microsoft.com/azure/ai-services/speech-service/how-to-pronunciation-assessment" }
+  },
+  {
+    "id": "speechace",
+    "name": "Speechace 英语发音评测",
+    "protocol": "speechace_http",
+    "defaultBaseUrls": { "pronunciation": "https://api.speechace.co" },
+    "services": ["pronunciation"],
+    "credentialRequired": true,
+    "documentationUrl": "https://api-docs.speechace.com/api-reference/score-text.md",
+    "documentationUrls": { "pronunciation": "https://api-docs.speechace.com/api-reference/score-text.md" }
+  },
+  {
+    "id": "chivox",
+    "name": "驰声英语口语评测（百度 AI 市场）",
+    "protocol": "chivox_http",
+    "defaultBaseUrls": { "pronunciation": "https://fc.cloud.chivox.com" },
+    "services": ["pronunciation"],
+    "credentialRequired": true,
+    "documentationUrl": "https://api-account.cloud.chivox.com/zh/docs",
+    "documentationUrls": { "pronunciation": "https://api-account.cloud.chivox.com/zh/docs" }
   }
 ]

@@ -107,6 +107,146 @@ export class AzurePronunciationAdapter implements PronunciationAdapter {
   }
 }
 
+export class SpeechacePronunciationAdapter implements PronunciationAdapter {
+  readonly alias: string;
+  readonly serviceKind = 'pronunciation' as const;
+  readonly capabilities = capabilities;
+  readonly pricing: ProviderPricing;
+
+  constructor(private readonly config: PronunciationProviderOptions) {
+    this.alias = config.alias;
+    this.pricing = config.pricing ?? { checkedAt: new Date().toISOString().slice(0, 10) };
+  }
+
+  async invoke(request: PronunciationRequest): Promise<PronunciationResponse> {
+    const started = Date.now();
+    const apiKey = this.config.credentials.apiKey ?? '';
+    if (!apiKey) throw new Error('Speechace 需要 API Key');
+    const audio = await loadAudio(request.audioRef);
+    const endpoint = new URL(this.config.baseUrl);
+    if (!endpoint.pathname.replace(/\/$/, '').endsWith('/api/scoring/text/v9/json')) {
+      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/api/scoring/text/v9/json`;
+    }
+    endpoint.searchParams.set('key', apiKey);
+    const dialect = String(this.config.options?.dialect ?? (request.language?.toLowerCase().includes('gb') ? 'en-gb' : 'en-us'));
+    endpoint.searchParams.set('dialect', dialect);
+    const form = new FormData();
+    form.set('text', request.targetText);
+    form.set('user_audio_file', new Blob([audio.bytes], { type: audio.mime }), audio.fileName);
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(request.timeoutMs ?? 20000),
+    });
+    if (!response.ok) throw new Error(`Speechace 发音评测失败: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
+    const body = await response.json() as {
+      status?: string;
+      message?: string;
+      text_score?: {
+        speechace_score?: { pronunciation?: number };
+        word_score_list?: Array<{
+          word?: string;
+          quality_score?: number;
+          phone_score_list?: Array<{ phone?: string; quality_score?: number; stress_score?: number; sound_most_like?: string }>;
+          syllable_score_list?: Array<{ letters?: string; quality_score?: number; stress_score?: number }>;
+        }>;
+      };
+    };
+    if (body.status !== 'success' || !body.text_score) throw new Error(`Speechace 返回评测错误: ${body.message ?? body.status ?? 'empty result'}`);
+    const words = body.text_score.word_score_list ?? [];
+    const values = words.map((word) => Number(word.quality_score)).filter(Number.isFinite);
+    const total = score(body.text_score.speechace_score?.pronunciation ?? (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0));
+    const units: PronunciationResponse['units'] = [];
+    for (const word of words) {
+      if (request.granularity === 'word') {
+        const value = score(word.quality_score);
+        units.push({ text: word.word ?? '', kind: 'word', score: value, correct: value >= 60, detail: null });
+      } else if (request.granularity === 'syllable') {
+        for (const syllable of word.syllable_score_list ?? []) {
+          const value = score(syllable.quality_score);
+          units.push({ text: syllable.letters ?? '', kind: 'syllable', score: value, correct: value >= 60, detail: syllable.stress_score === undefined ? null : `stress=${syllable.stress_score}` });
+        }
+      } else {
+        for (const phone of word.phone_score_list ?? []) {
+          const value = score(phone.quality_score);
+          const detail = [phone.sound_most_like ? `heard=${phone.sound_most_like}` : '', phone.stress_score === undefined ? '' : `stress=${phone.stress_score}`].filter(Boolean).join('; ') || null;
+          units.push({ text: phone.phone ?? '', kind: 'phoneme', score: value, correct: value >= 60, detail });
+        }
+      }
+    }
+    return { score: total, passed: total >= 60, units, latencyMs: Date.now() - started, providerAlias: this.alias, modelAlias: this.config.modelAlias ?? 'speechace-v9' };
+  }
+}
+
+export class ChivoxPronunciationAdapter implements PronunciationAdapter {
+  readonly alias: string;
+  readonly serviceKind = 'pronunciation' as const;
+  readonly capabilities = capabilities;
+  readonly pricing: ProviderPricing;
+
+  constructor(private readonly config: PronunciationProviderOptions) {
+    this.alias = config.alias;
+    this.pricing = config.pricing ?? { checkedAt: new Date().toISOString().slice(0, 10) };
+  }
+
+  async invoke(request: PronunciationRequest): Promise<PronunciationResponse> {
+    const started = Date.now();
+    const apiKey = this.config.credentials.apiKey ?? '';
+    if (!apiKey) throw new Error('驰声评测需要 API Key');
+    const audio = await loadAudio(request.audioRef);
+    const endpoint = new URL(this.config.baseUrl);
+    if (!endpoint.pathname.replace(/\/$/, '').endsWith('/v1/call')) {
+      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/v1/call`;
+    }
+    const functionName = request.targetText.trim().split(/\s+/).length === 1 ? 'en_word_eval' : 'en_sentence_eval';
+    const accentValue = String(this.config.options?.accent ?? '3');
+    const accent = accentValue === 'british' ? 1 : accentValue === 'american' ? 2 : Number(accentValue || 3);
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: functionName,
+        arguments: { ref_text: request.targetText, audio_base64: Buffer.from(audio.bytes).toString('base64'), accent, rank: 100 },
+      }),
+      signal: AbortSignal.timeout(request.timeoutMs ?? 20000),
+    });
+    if (!response.ok) throw new Error(`驰声发音评测失败: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
+    const body = await response.json() as {
+      error?: { message?: string };
+      result?: {
+        overall?: number;
+        accuracy?: number;
+        pron?: number;
+        details?: Array<{
+          char?: string;
+          score?: number;
+          phone?: Array<{ phoneme?: string; phone?: string; score?: number }>;
+          stress?: Array<{ char?: string; score?: number }>;
+        }>;
+      };
+    };
+    if (body.error || !body.result) throw new Error(`驰声评测返回错误: ${body.error?.message ?? 'empty result'}`);
+    const result = body.result;
+    const units: PronunciationResponse['units'] = [];
+    for (const detail of result.details ?? []) {
+      if (request.granularity === 'word') {
+        const value = score(detail.score);
+        units.push({ text: detail.char ?? '', kind: 'word', score: value, correct: value >= 60, detail: null });
+      } else if (request.granularity === 'phoneme') {
+        for (const phone of detail.phone ?? []) {
+          const value = score(phone.score);
+          units.push({ text: phone.phoneme ?? phone.phone ?? '', kind: 'phoneme', score: value, correct: value >= 60, detail: null });
+        }
+      } else {
+        const value = score(detail.score);
+        units.push({ text: detail.char ?? '', kind: 'syllable', score: value, correct: value >= 60, detail: null });
+      }
+    }
+    const total = score(result.pron ?? result.accuracy ?? result.overall ?? 0);
+    return { score: total, passed: total >= 60, units, latencyMs: Date.now() - started, providerAlias: this.alias, modelAlias: this.config.modelAlias ?? 'chivox-english-eval' };
+  }
+}
+
 export class TencentSoeAdapter implements PronunciationAdapter {
   readonly alias: string;
   readonly serviceKind = 'pronunciation' as const;

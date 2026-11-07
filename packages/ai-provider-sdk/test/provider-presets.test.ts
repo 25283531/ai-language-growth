@@ -15,6 +15,8 @@ describe('预置模型接入平台', () => {
       'openai-compatible',
       'tencent-soe',
       'azure-speech',
+      'speechace',
+      'chivox',
     ]);
     for (const preset of presets.slice(0, 6)) {
       assert.match(preset.defaultBaseUrls.llm ?? '', /^https?:\/\//);
@@ -22,6 +24,8 @@ describe('预置模型接入平台', () => {
     assert.equal(presets[6]?.defaultBaseUrls.llm, undefined);
     assert.deepEqual(presets[7]?.services, ['pronunciation']);
     assert.deepEqual(presets[8]?.services, ['pronunciation']);
+    assert.deepEqual(presets[9]?.services, ['pronunciation']);
+    assert.deepEqual(presets[10]?.services, ['pronunciation']);
   });
 
   it('Ollama 只声明已验证的 LLM 服务，未知平台安全返回 undefined', () => {

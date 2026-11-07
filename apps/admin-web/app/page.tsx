@@ -43,6 +43,8 @@ const credentialLabels: Record<string, Array<[string, string]>> = {
   'openai-compatible': [['apiKey', 'API Key（可选）']],
   'tencent-soe': [['appId', '腾讯云 AppID'], ['secretId', 'Secret ID'], ['secretKey', 'Secret Key']],
   'azure-speech': [['subscriptionKey', 'Azure Speech 资源密钥']],
+  speechace: [['apiKey', 'Speechace API Key']],
+  chivox: [['apiKey', '驰声评测 API Key']],
 };
 
 function emptyConfig(serviceKind: ServiceKind): Config {
@@ -113,6 +115,8 @@ export default function AdminPage() {
             const defaultEndpoint = /^https:\/\/[^/.]+\.stt\.speech\.microsoft\.com\/?$/i.test(current.baseUrl);
             return { ...old, [active]: { ...current, baseUrl: defaultEndpoint && region ? `https://${region}.stt.speech.microsoft.com` : current.baseUrl, options: { ...current.options, region } } };
           })}/><small>更改区域会同步默认接入地址；自定义 endpoint 会保持原样。</small></label>}
+          {current.providerPresetId === 'speechace' && active === 'pronunciation' && <label>英语口音<select value={String(current.options.dialect ?? 'en-us')} onChange={(event) => setConfigs((old) => ({ ...old, [active]: { ...current, options: { ...current.options, dialect: event.target.value } } }))}><option value="en-us">美式英语 en-us</option><option value="en-gb">英式英语 en-gb</option></select></label>}
+          {current.providerPresetId === 'chivox' && active === 'pronunciation' && <label>英语口音<select value={String(current.options.accent ?? '3')} onChange={(event) => setConfigs((old) => ({ ...old, [active]: { ...current, options: { ...current.options, accent: event.target.value } } }))}><option value="3">自动判断</option><option value="1">英式英语</option><option value="2">美式英语</option></select></label>}
           {credentialFields.length > 0 && <div className="fields credentials">{credentialFields.map(([key, label]) => <label key={key}>{label}<input type="password" autoComplete="new-password" value={credentials[active][key] ?? ''} onChange={(event) => setCredentials((old) => ({ ...old, [active]: { ...old[active], [key]: event.target.value } }))} placeholder={configs[active].credentialConfigured ? '已有凭据；留空保留已保存值' : `输入${label}`}/></label>)}</div>}
           {(active === 'tts' || active === 'pronunciation') && <label>{active === 'tts' ? '默认音色 ID' : '评测粒度'}<input value={String(current.options.voice ?? (active === 'pronunciation' ? 'phoneme' : ''))} onChange={(event) => setConfigs((old) => ({ ...old, [active]: { ...current, options: { ...current.options, [active === 'tts' ? 'voice' : 'granularity']: event.target.value } } }))} placeholder={active === 'tts' ? '使用平台默认音色' : 'phoneme / syllable / word'}/></label>}
           {current.providerPresetId === 'bailian' && (active === 'tts' || active === 'asr') && <label>百炼业务空间 ID<input value={String(current.options.workspaceId ?? '')} onChange={(event) => setConfigs((old) => ({ ...old, [active]: { ...current, options: { ...current.options, workspaceId: event.target.value } } }))} placeholder="仅百炼语音 HTTP 接入需要"/></label>}

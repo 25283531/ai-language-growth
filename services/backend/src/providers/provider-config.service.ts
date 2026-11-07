@@ -103,6 +103,8 @@ export class ProviderConfigService {
       'bailian': ['apiKey'],
       'tencent-soe': ['appId', 'secretId', 'secretKey'],
       'azure-speech': ['subscriptionKey'],
+      speechace: ['apiKey'],
+      chivox: ['apiKey'],
     };
     const required = preset.id === 'iflytek-spark'
       ? value.serviceKind === 'pronunciation' ? ['appId', 'apiKey']

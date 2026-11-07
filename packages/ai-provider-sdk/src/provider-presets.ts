@@ -4,7 +4,7 @@ import entries from './provider-presets.json';
 export interface ProviderPreset {
   id: string;
   name: string;
-  protocol: 'openai_compatible' | 'bailian_http' | 'volcengine_http' | 'baidu_speech' | 'iflytek_signed' | 'minimax_http' | 'tencent_soe' | 'azure_speech';
+  protocol: 'openai_compatible' | 'bailian_http' | 'volcengine_http' | 'baidu_speech' | 'iflytek_signed' | 'minimax_http' | 'tencent_soe' | 'azure_speech' | 'speechace_http' | 'chivox_http';
   defaultBaseUrls: Partial<Record<ServiceKind, string>>;
   services: ServiceKind[];
   credentialRequired: boolean;

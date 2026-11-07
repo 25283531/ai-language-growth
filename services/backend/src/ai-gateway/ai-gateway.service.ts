@@ -27,6 +27,8 @@ import {
   IflytekIseAdapter,
   TencentSoeAdapter,
   AzurePronunciationAdapter,
+  SpeechacePronunciationAdapter,
+  ChivoxPronunciationAdapter,
   IflytekTtsAdapter,
   IflytekAsrAdapter,
 } from '@alg/ai-provider-sdk';
@@ -139,6 +141,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
           this.registry.register('pronunciation', new TencentSoeAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
         } else if (config.providerPresetId === 'azure-speech') {
           this.registry.register('pronunciation', new AzurePronunciationAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
+        } else if (config.providerPresetId === 'speechace') {
+          this.registry.register('pronunciation', new SpeechacePronunciationAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
+        } else if (config.providerPresetId === 'chivox') {
+          this.registry.register('pronunciation', new ChivoxPronunciationAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
         } else {
           throw new Error(`平台 ${config.providerPresetId} 暂无音素评测适配器`);
         }
