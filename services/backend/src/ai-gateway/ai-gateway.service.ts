@@ -124,12 +124,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         break;
       case 'tts':
         this.registry.register('tts', config.providerPresetId === 'iflytek-spark'
-          ? new IflytekTtsAdapter(options)
+          ? new IflytekTtsAdapter({ ...options, baseUrl: config.baseUrl })
           : new HttpTtsAdapter(options));
         break;
       case 'asr':
         this.registry.register('asr', config.providerPresetId === 'iflytek-spark'
-          ? new IflytekAsrAdapter(options)
+          ? new IflytekAsrAdapter({ ...options, baseUrl: config.baseUrl })
           : new HttpAsrAdapter(options));
         break;
       case 'pronunciation':
