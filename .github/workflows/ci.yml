@@ -39,8 +39,8 @@ jobs:
         run: npx prisma generate
 
       # 显式按依赖顺序构建：契约层必须先产出 dist，其余库才能通过
-      # node_modules 里的 workspace 软链解析到 @alg/shared-contracts 的类型声明。
-      # apps/web（Next.js）由 Web 端单独验证，不纳入本核心构建步骤。
+      # node_modules 里的 workspace 软链解析到 @alg/shared-contracts 的类型声明
+      # （npm run build --workspaces 不保证拓扑顺序，直接从干净状态跑会 TS2307）。
       - name: Build workspace packages
         run: |
           npm run build --workspace @alg/shared-contracts
@@ -49,6 +49,9 @@ jobs:
           npm run build --workspace @alg/model-router
           npm run build --workspace @alg/skill-graph
           npm run build --workspace @alg/backend
+
+      - name: Build web workbench
+        run: npm run build --workspace @alg/web
 
       - name: Typecheck
         run: npm run typecheck
