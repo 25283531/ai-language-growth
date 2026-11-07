@@ -34,11 +34,11 @@ describe('预置模型接入平台', () => {
 
   it('调用方修改 catalog 返回值不会污染后续配置', () => {
     const first = listProviderPresets();
-    first[0]!.services.push('asr');
+    first[0]!.services.push('pronunciation');
     first[0]!.defaultBaseUrls.llm = 'https://invalid.example';
 
     const next = getProviderPreset('bailian');
-    assert.equal(next?.services.includes('asr'), false);
+    assert.equal(next?.services.includes('pronunciation'), false);
     assert.notEqual(next?.defaultBaseUrls.llm, 'https://invalid.example');
   });
 });
