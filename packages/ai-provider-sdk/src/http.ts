@@ -319,7 +319,7 @@ export class HttpAsrAdapter implements AsrAdapter {
     const extra = this.options.options ?? {};
     let endpoint = `${baseUrl.replace(/\/$/, '')}/audio/transcriptions`;
     let headers: Record<string, string> = {};
-    let body: BodyInit;
+    let body: string | FormData;
     if (provider === 'bailian') {
       const workspaceId = String(extra.workspaceId ?? '');
       const customBase = baseUrl.replace(/\/$/, '') !== 'https://dashscope.aliyuncs.com';

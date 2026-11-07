@@ -135,7 +135,7 @@ export class TencentSoeAdapter implements PronunciationAdapter {
       score_coeff: '1.0',
       secretid: secretId,
       sentence_info_enabled: '1',
-      server_engine_type: request.language.toLowerCase().startsWith('zh') ? '16k_zh' : '16k_en',
+      server_engine_type: (request.language ?? 'en-US').toLowerCase().startsWith('zh') ? '16k_zh' : '16k_en',
       timestamp: String(now),
       voice_format: audio.fileName.toLowerCase().endsWith('.mp3') ? '2' : audio.fileName.toLowerCase().endsWith('.wav') ? '1' : '0',
       voice_id: randomUUID(),
@@ -189,7 +189,7 @@ export class IflytekIseAdapter implements PronunciationAdapter {
     const category = request.granularity === 'word' || /^[A-Za-z'-]+$/.test(request.targetText.trim()) ? 'read_word' : 'read_sentence';
     const text = category === 'read_word' ? `[word]\n${request.targetText.trim()}` : `[content]\n${request.targetText.trim()}`;
     const params = Buffer.from(JSON.stringify({
-      aue: 'raw', result_level: 'entirety', language: request.language.toLowerCase().startsWith('zh') ? 'zh_cn' : 'en_us', category,
+      aue: 'raw', result_level: 'entirety', language: (request.language ?? 'en-US').toLowerCase().startsWith('zh') ? 'zh_cn' : 'en_us', category,
       ...(request.granularity === 'phoneme' ? { extra_ability: 'multi_dimension' } : {}),
     })).toString('base64');
     const curTime = String(Math.floor(Date.now() / 1000));
