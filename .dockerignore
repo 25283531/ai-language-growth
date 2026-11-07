@@ -1,0 +1,31 @@
+# 构建上下文根忽略文件
+#
+# compose 的 backend.build.context 为 ../..（即仓库根目录），Docker 默认只读取
+# 「构建上下文根」下的 .dockerignore。
+# deploy/docker/backend.Dockerfile.dockerignore 是 Dockerfile 专用忽略文件，
+# 优先级更高；两者内容保持一致，构成双保险：即使某次构建未启用
+# Dockerfile 专用忽略文件，也不会把 node_modules / .git / .env 传进
+# 构建上下文或 COPY 进镜像（Dockerfile 里有 `COPY packages ./packages` 等
+# 目录级拷贝，未忽略时会把各 workspace 的 node_modules 一起带进去）。
+
+.git
+**/.git
+**/node_modules
+**/dist
+**/build
+**/.next
+**/coverage
+**/*.log
+**/*.apk
+**/*.aab
+**/.gradle
+**/local.properties
+.env
+**/.env
+**/.env.*
+!**/.env.example
+**/*credentials*
+**/*secret*
+**/*.pem
+**/*.key
+**/github-token.txt

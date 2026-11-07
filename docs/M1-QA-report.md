@@ -223,24 +223,30 @@ python tools/ssh_run.py "docker exec -i alg-postgres psql -U alg -d ai_language_
 ### 8.2 推送前本机验证
 
 - 两份 workflow YAML **按 YAML 1.2 语义**解析通过，逐项核对触发条件、权限、步骤与 artifact 路径。注意 PyYAML 依 YAML 1.1 会把 `on:` 解析成布尔 `True`，校验脚本必须覆盖 bool 构造器，否则会误判。
-- `npm ci --dry-run`：**EXIT=0**。根 `package-lock.json` 已用 `npm install --package-lock-only` 收录 next/react（88KB → 120KB），满足 `npm ci` 的严格一致性校验——这是 CI 能否跑起来的前置条件。
-- 全量 `npm run typecheck`（7 个 workspace）：**EXIT=0**；5 个共享包构建、后端 `tsc --noEmit` 0 errors、28 项单测全通过。
-- backend Dockerfile 与 compose 的 build context、端口映射、健康检查静态核对一致。
+- 真实 `npm ci`：**PASS**（192 个包）；`npm ci --dry-run` EXIT=0。根 `package-lock.json` 已用 `npm install --package-lock-only` 收录 next/react（88KB → 120KB），满足 `npm ci` 的严格一致性校验——这是 CI 能否跑起来的前置条件。
+- 按 `ci.yml` 的命令顺序做干净环境全链路复现：`prisma generate` → 6 个 workspace build → 全量 `typecheck`（7 个 workspace）→ 28 项单测，**全部 EXIT=0**。
+- Web 生产构建 `next build`：**Compiled successfully**，4/4 静态页生成，0 errors。
+- **唯一本地失败项**：在主工作副本跑 `prisma generate` 报 `EPERM: operation not permitted, rename ... query_engine-windows.dll.node`——Windows 上后端进程占用 Prisma 引擎文件造成的文件锁。在隔离的干净副本中同一步 **PASS**，故判定为本机环境干扰而非工作流缺陷；云端 runner 是干净 Linux 环境，实测也印证了这一点。
+- backend Dockerfile 与 compose 的 `build.context: ../..`、`PORT=3000`、健康检查静态核对一致。构建上下文忽略采用三层：根目录 `.dockerignore`（Docker 默认读取）+ `deploy/docker/backend.Dockerfile.dockerignore`（Dockerfile 专用、优先级更高）+ `deploy/docker/.dockerignore`（说明与本地手工构建参考）。**本机 Docker daemon 未运行，`docker build` 未做实际验证。**
 - Android：Gradle 8.7 / AGP 8.5.2 / Kotlin 1.9.24 / JDK 17 / compileSdk 34 / minSdk 26 静态自检通过。**本机无 Android SDK 与 Gradle，未做本机编译**，真实编译交给 runner。
 
-### 8.3 推送后 GitHub Actions 首轮实测（工作流自行测试）
+### 8.3 推送后 GitHub Actions 实测（工作流自行测试）
 
-推送 `715beca` 到 `main` 后自动触发两个工作流，经 GitHub Actions API 查询：
+分阶段推送共触发多轮 CI，经 GitHub Actions API 查询，关键轮次全部 success：
 
-| 工作流 | Run | 状态 | 结论 |
+| 提交 | 工作流 | Run | 结论 |
 | --- | --- | --- | --- |
-| CI | `42354193275` | completed | **success**（`build-and-test` 11 步全过） |
-| Android Audio Prototype | `42354193269` | completed | **success**（`assemble-debug` 11 步全过） |
+| `715beca` | CI | `42354193275` | **success**（11 步） |
+| `715beca` | Android Audio Prototype | `42354193269` | **success**（11 步） |
+| `d975cbc` | CI | `42354443743` | **success**（11 步） |
+| `413e31f` | CI | `42354578311` | **success**（11 步） |
+| `29e42ec` | CI（新增 `Build web workbench`） | `42354638770` | **success**（12 步） |
 
 Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，`expired=false`，保留 14 天。
 
-即：Android 最小音频原型**已在 GitHub Actions 上真实编译出 APK**，不只是本地配置自检；CI 也在干净的无数据库、无密钥环境中完整跑通构建与测试。
+即：Android 最小音频原型**已在 GitHub Actions 上真实编译出 APK**（不只是本地配置自检）；CI 在干净的无数据库、无密钥环境中完整跑通安装、Prisma 生成、7 个 workspace 构建与类型检查、Web 生产构建、28 项单测。
 
-### 8.4 已知 CI 覆盖缺口
+### 8.4 覆盖演进与剩余验证缺口
 
-`ci.yml` 目前跑 `typecheck` 但未跑 `@alg/web` 的 `next build`（Web 生产构建由本机验证通过）。后续里程碑应把 Web 生产构建纳入 CI。
+- 首轮 `ci.yml` 只跑 `typecheck`、未跑 Web 生产构建，已在 `29e42ec` 补入 `Build web workbench` 步骤，对应 CI run `42354638770` 12 步 success，**缺口已闭合**。
+- **仍未在本机验证**：`docker build`（本机无 Docker daemon）、Android `assembleDebug`（本机无 Android SDK/Gradle）。前者留待部署阶段验证，后者已由云端 runner 编译成功。
