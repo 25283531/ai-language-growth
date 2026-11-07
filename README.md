@@ -6,6 +6,8 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 
 > **Status: M1 complete (pushed to `main`).** M0 delivered the design baseline (V1.1 design brief + `DECISIONS.md` + monorepo skeleton); M1 delivered the Next.js teaching workbench, NestJS backend, five-action teaching loop, Mock Provider Adapter, cost ledger, CI and the Android audio prototype. **Prototype only:** all thresholds are `uncalibrated`, all course content is `pending_review`, and no real model or real child-sample validation has been done — see [`docs/M1-QA-report.md`](docs/M1-QA-report.md) for the conditional Go/No-Go. License: TBD (no LICENSE file yet).
 
+> **Live mode added (2026-11-07):** real LLM / ASR / TTS adapters are wired through config only, with Mock kept as the fallback. `AI_GATEWAY_MODE=mock` returns to a zero-call, zero-cost run; `AI_GATEWAY_LIVE_SERVICES` selects which services actually call out. End-to-end results, pricing caveats and the latency shortfall against the 1–2 s target: [`docs/M1-live-API-report.md`](docs/M1-live-API-report.md).
+
 ## Who it is for
 
 - 6–9-year-old children with zero English basis

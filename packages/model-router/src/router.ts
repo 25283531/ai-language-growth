@@ -227,16 +227,16 @@ export class InMemoryUsageLedger implements UsageLedger {
 export class ModelRouterImpl {
   private readonly config: RouterConfig;
   private readonly ledger: UsageLedger;
-  private readonly mockAliases?: Record<ServiceKind, string>;
+  private readonly providerAliases?: Record<ServiceKind, string>;
 
   constructor(
     config: RouterConfig = DEFAULT_ROUTER_CONFIG,
     ledger?: UsageLedger,
-    mockAliases?: Record<ServiceKind, string>,
+    providerAliases?: Record<ServiceKind, string>,
   ) {
     this.config = config;
     this.ledger = ledger ?? new InMemoryUsageLedger();
-    this.mockAliases = mockAliases;
+    this.providerAliases = providerAliases;
   }
 
   get usageLedger(): UsageLedger {
@@ -248,7 +248,7 @@ export class ModelRouterImpl {
    * 只改别名，不改 level / strategy / fellBack —— 路由决策本身保持真实。
    */
   private finalize(decision: RoutingDecision, serviceKind: ServiceKind): RoutingDecision {
-    const alias = this.mockAliases?.[serviceKind];
+    const alias = this.providerAliases?.[serviceKind];
     if (!alias) return decision;
     return { ...decision, providerAlias: alias, modelAlias: alias };
   }

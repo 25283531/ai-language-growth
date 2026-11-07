@@ -40,6 +40,17 @@ const TOPICS = [
 const IMAGE_IDS = ['img-apple', 'img-ball', 'img-cat', 'img-dog', 'img-cup'];
 
 /**
+ * 真实 TTS 返回平台内音频路径，可直接播放；Mock 返回占位引用，不渲染播放器。
+ * Web 只播放后端给出的音频，不自行合成、不改写教学文本。
+ */
+function playableAudioUrl(ref: string | null | undefined): string | null {
+  if (!ref) return null;
+  if (/^https?:\/\//i.test(ref)) return ref;
+  if (ref.startsWith('/')) return new URL(ref, API_BASE).toString();
+  return null;
+}
+
+/**
  * 场景枚举参考：仅供 UI 展示对照，Web 不据此校验后端数据、不做任何教学判断。
  * 与 shared-contracts 的 EVIDENCE_SCENARIOS 对齐；旧的「媒体形式」场景值已废弃。
  */
@@ -597,6 +608,20 @@ export default function WorkbenchPage() {
                     ]}
                   />
                 </Section>
+                {playableAudioUrl(speech?.audioRef) && (
+                  <div className="card" style={{ marginTop: 10 }}>
+                    <div className="card-title">老师语音 · 真实合成音频</div>
+                    <audio
+                      controls
+                      preload="none"
+                      src={playableAudioUrl(speech?.audioRef) ?? undefined}
+                      style={{ width: '100%', marginTop: 8 }}
+                    />
+                    <div className="hint" style={{ marginTop: 6 }}>
+                      音频由后端 TTS 适配器合成并落盘，Web 只负责播放；Mock 模式的占位引用不显示播放器。
+                    </div>
+                  </div>
+                )}
                 <div className="hint" style={{ marginTop: 8 }}>
                   重播按钮用当前 directive 的文本与同一组语音参数再调一次 /speech/synthesize；相同参数应命中缓存，不重复消耗 TTS 字符量。
                 </div>

@@ -4,7 +4,8 @@
  * 依据 D-016：NestJS 模块化单体，一个项目内的独立领域模块，不是独立部署的服务。
  */
 import { Module } from '@nestjs/common';
-import { MOCK_PROVIDER_ALIASES, ModelRouterImpl } from '@alg/model-router';
+import { ModelRouterImpl } from '@alg/model-router';
+import { resolveProviderAliases } from '@alg/ai-provider-sdk';
 import { ConfigModule } from './config/config.module';
 import { PrismaService } from './prisma/prisma.service';
 import { AiGatewayService } from './ai-gateway/ai-gateway.service';
@@ -17,6 +18,7 @@ import {
   SpeechController,
   UsageController,
 } from './speech/speech.controller';
+import { MediaController } from './media/media.controller';
 
 @Module({
   imports: [ConfigModule],
@@ -26,6 +28,7 @@ import {
     SpeechController,
     UsageController,
     HealthController,
+    MediaController,
   ],
   providers: [
     PrismaService,
@@ -36,14 +39,10 @@ import {
     {
       provide: ModelRouterImpl,
       useFactory: () => {
-        // M1 默认 Mock：让 Router 的供应商别名指向实际注册的 Mock 适配器，
-        // 避免每次调用都被误判为「降级」。live 模式沿用路由表中的逻辑别名。
-        const mode = process.env.AI_GATEWAY_MODE ?? 'mock';
-        return new ModelRouterImpl(
-          undefined,
-          undefined,
-          mode === 'mock' ? MOCK_PROVIDER_ALIASES : undefined,
-        );
+        // Router 的供应商别名必须与 Gateway 实际注册的适配器来自同一份判断：
+        // 未配置 BASE_URL 或被 AI_GATEWAY_LIVE_SERVICES 关闭的服务自动指向 Mock，
+        // 避免出现「别名存在但适配器不存在」的静默降级。
+        return new ModelRouterImpl(undefined, undefined, resolveProviderAliases());
       },
     },
   ],

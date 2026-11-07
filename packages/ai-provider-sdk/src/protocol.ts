@@ -160,7 +160,13 @@ export class HttpLlmAdapter implements LlmAdapter {
     });
 
     if (!res.ok) {
-      throw new Error(`adapter ${this.alias} 调用失败: HTTP ${res.status}`);
+      let detail = '';
+      try {
+        detail = (await res.text()).replace(/\s+/g, ' ').slice(0, 200);
+      } catch {
+        detail = '<unreadable>';
+      }
+      throw new Error(`adapter ${this.alias} 调用失败: HTTP ${res.status} ${detail}`);
     }
 
     const json = (await res.json()) as {

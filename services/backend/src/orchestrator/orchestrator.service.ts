@@ -29,6 +29,7 @@ import type {
   IntentType,
   LearnerResponse,
   LessonStartResponse,
+  LlmResponse,
   RoutingDecision,
   TeachingDirective,
   TurnResponse,
@@ -264,6 +265,24 @@ export class OrchestratorService {
       errorUnits: assessment.errorUnits,
     });
 
+    // —— 第五步半：孩子突然提问时，LLM 只补一句回应话术 ——
+    // 教学决策（评估、证据、状态、下一活动、方法阶梯）已全部在上方由规则完成，
+    // LLM 不参与其中任何一步，输出只追加到老师说的话里，随后一并合成语音。
+    let llmInputTokens = 0;
+    let llmOutputTokens = 0;
+    const llmDegradationReasons: string[] = [];
+    if (intent === 'question') {
+      const answer = await this.answerChildQuestion({
+        question: input.response.text ?? input.response.audioRef ?? '孩子提了一个问题',
+        learnerId: input.learnerId,
+        lessonSessionId: input.lessonSessionId,
+      });
+      llmInputTokens = answer.inputTokens;
+      llmOutputTokens = answer.outputTokens;
+      if (answer.degraded) llmDegradationReasons.push('llm_fell_back_to_mock');
+      directive.teacherUtterance = `${directive.teacherUtterance} ${answer.text}`.trim();
+    }
+
     const routingDecision = await this.router.route({
       serviceKind: 'tts',
       taskRoute: 'tts.dynamic_teaching',
@@ -356,8 +375,8 @@ export class OrchestratorService {
         escalationSignals,
         latencyMs: Date.now() - started,
         cost: {
-          llmInputTokens: 0,
-          llmOutputTokens: 0,
+          llmInputTokens,
+          llmOutputTokens,
           ttsCharacters: speech.characters,
           asrSeconds: 0,
           pronunciationCalls: assessment.performedPronunciationAssessment ? 1 : 0,
@@ -365,8 +384,8 @@ export class OrchestratorService {
         },
       },
       degradation: {
-        degraded: speech.meta.degraded,
-        reasons: speech.meta.reasons,
+        degraded: speech.meta.degraded || llmDegradationReasons.length > 0,
+        reasons: [...speech.meta.reasons, ...llmDegradationReasons],
         offlineFallback: false,
         effectiveLevel: speech.meta.effectiveLevel,
       },
@@ -512,6 +531,104 @@ export class OrchestratorService {
       return 'question';
     }
     return 'learning_answer';
+  }
+
+  /**
+   * 孩子突然提出新问题时的 LLM 回应（D-008 / 八项硬指标第四项）。
+   *
+   * 边界极严：LLM 只贡献一句可朗读的儿童友好话术，
+   * 不参与评估、不写证据、不改掌握状态、不决定下一个活动（约束一 / 约束三）。
+   * 下一步教学仍由 L0 方法阶梯与 Planner 决定，因此模型可随时替换（约束二）。
+   *
+   * M1 之前编排器里根本没有 LLM 调用点，导致成本账本的 token 字段恒为 0；
+   * 接入真实模型后，这条路径才让 LLM 用量可测、可计费、可降级。
+   */
+  private async answerChildQuestion(input: {
+    question: string;
+    learnerId: string;
+    lessonSessionId: string;
+  }): Promise<{
+    text: string;
+    inputTokens: number;
+    outputTokens: number;
+    latencyMs: number;
+    providerAlias: string;
+    degraded: boolean;
+  }> {
+    const decision = await this.router.route({
+      serviceKind: 'llm',
+      taskRoute: 'llm.simple_dialogue',
+    });
+
+    const fallbackText = '这个问题我们先记下来，等一下一起找答案，好吗？';
+    let result: LlmResponse;
+    try {
+      result = await this.gateway.llm(
+        {
+          promptKey: 'teacher.child_question',
+          promptVersion: 'm1.1',
+          system: [
+            '你是面向 6—9 岁英语零基础中国儿童的 AI 英语启蒙老师。',
+            '用简短、温柔、鼓励式的中文回应孩子的提问，最多两句话，不超过 60 个汉字。',
+            '可以自然带出一个简单英文单词，但不要展开讲解。',
+            '不评价孩子说得对不对，不判断掌握程度，不布置新任务，不承诺教学结果。',
+            '不要解释科学原理、不要给事实性答案；温柔回应一两句后把话题带回当前的英语练习。',
+            '如果被问及身份，诚实说明自己是 AI 老师。只用纯文本输出要说的话，',
+            '不要 JSON、不要标题、不要表情符号、不要 markdown。',
+          ].join(''),
+          messages: [{ role: 'user', content: input.question.slice(0, 300) }],
+          temperature: 0.4,
+          maxTokens: 120,
+          timeoutMs: 12000,
+        },
+        decision,
+      );
+    } catch (error) {
+      this.logger.warn(`LLM 回应失败，使用固定兜底话术: ${(error as Error).message}`);
+      return {
+        text: fallbackText,
+        inputTokens: 0,
+        outputTokens: 0,
+        latencyMs: 0,
+        providerAlias: 'mock_llm',
+        degraded: true,
+      };
+    }
+
+    // 输出净化：只保留可朗读的单行短文本，模型不能借话术注入教学结论。
+    const cleaned = result.content
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '')
+      .replace(/\s+/g, ' ')
+      .replace(/[*_`#<>[\]]/g, '')
+      .trim()
+      .slice(0, 120);
+    // Gateway 在真实适配器失败时会回落到 Mock；此处如实标记，不静默掩盖。
+    const degraded = result.providerAlias !== decision.providerAlias;
+
+    await this.router.recordUsage(
+      usageRecord({
+        id: `usage-llm-${input.lessonSessionId}-${Date.now()}`,
+        learnerId: input.learnerId,
+        lessonSessionId: input.lessonSessionId,
+        serviceKind: 'llm',
+        taskRoute: 'llm.simple_dialogue',
+        level: decision.level,
+        providerAlias: result.providerAlias,
+        modelAlias: result.modelAlias,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        latencyMs: result.latencyMs,
+      }),
+    );
+
+    return {
+      text: cleaned || fallbackText,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      latencyMs: result.latencyMs,
+      providerAlias: result.providerAlias,
+      degraded,
+    };
   }
 
   /**
