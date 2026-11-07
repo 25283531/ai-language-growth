@@ -6,7 +6,8 @@
   "workspaces": [
     "packages/*",
     "services/*",
-    "apps/web"
+    "apps/web",
+    "apps/admin-web"
   ],
   "engines": {
     "node": ">=20.0.0"

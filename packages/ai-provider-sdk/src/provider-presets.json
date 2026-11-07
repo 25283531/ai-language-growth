@@ -1,0 +1,91 @@
+[
+  {
+    "id": "bailian",
+    "name": "阿里云百炼",
+    "protocol": "bailian_http",
+    "defaultBaseUrls": { "llm": "https://dashscope.aliyuncs.com/compatible-mode/v1", "tts": "https://dashscope.aliyuncs.com", "asr": "https://dashscope.aliyuncs.com" },
+    "services": ["llm", "tts", "asr"],
+    "credentialRequired": true,
+    "documentationUrl": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions",
+    "documentationUrls": { "llm": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions", "tts": "https://help.aliyun.com/zh/model-studio/qwen-audio-tts-http-api", "asr": "https://help.aliyun.com/zh/model-studio/qwen-audio-asr-http-api" }
+  },
+  {
+    "id": "volcengine",
+    "name": "火山引擎",
+    "protocol": "volcengine_http",
+    "defaultBaseUrls": { "llm": "https://ark.cn-beijing.volces.com/api/v3", "tts": "https://openspeech.bytedance.com/api/v3/tts/unidirectional" },
+    "services": ["llm", "tts"],
+    "credentialRequired": true,
+    "documentationUrl": "https://docs.volcengine.com/docs/ark/base-url-and-authentication",
+    "documentationUrls": { "llm": "https://docs.volcengine.com/docs/ark/base-url-and-authentication?lang=en", "tts": "https://docs.volcengine.com/docs/doubao-voice/http-chunked-sse-unidirectional-streaming-v3?lang=zh" }
+  },
+  {
+    "id": "baidu-qianfan",
+    "name": "百度千帆",
+    "protocol": "baidu_speech",
+    "defaultBaseUrls": { "llm": "https://qianfan.baidubce.com/v2", "tts": "https://aip.baidubce.com/rest/2.0/speech/publiccloudspeech/v1/tts", "asr": "https://vop.baidu.com/server_api" },
+    "services": ["llm", "tts", "asr"],
+    "credentialRequired": true,
+    "documentationUrl": "https://intl.cloud.baidu.com/zh/doc/qianfan/s/qm8qxemze-intl",
+    "documentationUrls": { "llm": "https://intl.cloud.baidu.com/zh/doc/qianfan/s/qm8qxemze-intl", "tts": "https://cloud.baidu.com/doc/SPEECH/s/xmw03avls", "asr": "https://cloud.baidu.com/doc/SPEECH/s/0lbxfnc9b" }
+  },
+  {
+    "id": "iflytek-spark",
+    "name": "科大讯飞星火",
+    "protocol": "iflytek_signed",
+    "defaultBaseUrls": { "llm": "https://spark-api-open.xf-yun.com/v1", "tts": "wss://tts-api.xfyun.cn/v2/tts", "asr": "wss://iat-api.xfyun.cn/v2/iat", "pronunciation": "https://api.xfyun.cn/v1/service/v1/ise" },
+    "services": ["llm", "tts", "asr", "pronunciation"],
+    "credentialRequired": true,
+    "documentationUrl": "https://www.xfyun.cn/doc/voiceservice/ise/API.html",
+    "documentationUrls": { "llm": "https://www.xfyun.cn/doc/spark/HTTP调用文档.html", "tts": "https://www.xfyun.cn/doc/tts/online_tts/API.html", "asr": "https://www.xfyun.cn/doc/spark/spark_zh_iat_new.html", "pronunciation": "https://www.xfyun.cn/doc/voiceservice/ise/API.html" }
+  },
+  {
+    "id": "minimax",
+    "name": "MiniMax 稀宇科技",
+    "protocol": "minimax_http",
+    "defaultBaseUrls": { "llm": "https://api.minimax.chat/v1", "tts": "https://api.minimax.io/v1/t2a_v2" },
+    "services": ["llm", "tts"],
+    "credentialRequired": true,
+    "documentationUrl": "https://platform.minimaxi.com/document/对话",
+    "documentationUrls": { "llm": "https://platform.minimaxi.com/document/对话", "tts": "https://platform.minimaxi.com/document/T2A%20V2?key=66719005a427f0c8a5701643" }
+  },
+  {
+    "id": "ollama",
+    "name": "Ollama",
+    "protocol": "openai_compatible",
+    "defaultBaseUrls": { "llm": "http://localhost:11434/v1" },
+    "services": ["llm"],
+    "credentialRequired": false,
+    "documentationUrl": "https://docs.ollama.com/api/openai-compatibility",
+    "documentationUrls": { "llm": "https://docs.ollama.com/api/openai-compatibility" }
+  },
+  {
+    "id": "openai-compatible",
+    "name": "OpenAI 兼容",
+    "protocol": "openai_compatible",
+    "defaultBaseUrls": {},
+    "services": ["llm", "tts", "asr"],
+    "credentialRequired": false,
+    "documentationUrl": null
+  },
+  {
+    "id": "tencent-soe",
+    "name": "腾讯云智聆 SOE",
+    "protocol": "tencent_soe",
+    "defaultBaseUrls": { "pronunciation": "wss://soe.cloud.tencent.com/soe/api" },
+    "services": ["pronunciation"],
+    "credentialRequired": true,
+    "documentationUrl": "https://cloud.tencent.com/document/product/1774/107497",
+    "documentationUrls": { "pronunciation": "https://cloud.tencent.com/document/product/1774/107497" }
+  },
+  {
+    "id": "azure-speech",
+    "name": "Microsoft Azure 发音评估",
+    "protocol": "azure_speech",
+    "defaultBaseUrls": { "pronunciation": "https://eastus.stt.speech.microsoft.com" },
+    "services": ["pronunciation"],
+    "credentialRequired": true,
+    "documentationUrl": "https://learn.microsoft.com/azure/ai-services/speech-service/how-to-pronunciation-assessment",
+    "documentationUrls": { "pronunciation": "https://learn.microsoft.com/azure/ai-services/speech-service/how-to-pronunciation-assessment" }
+  }
+]

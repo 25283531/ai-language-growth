@@ -227,7 +227,7 @@ export class InMemoryUsageLedger implements UsageLedger {
 export class ModelRouterImpl {
   private readonly config: RouterConfig;
   private readonly ledger: UsageLedger;
-  private readonly providerAliases?: Record<ServiceKind, string>;
+  private providerAliases?: Partial<Record<ServiceKind, string>>;
 
   constructor(
     config: RouterConfig = DEFAULT_ROUTER_CONFIG,
@@ -237,6 +237,12 @@ export class ModelRouterImpl {
     this.config = config;
     this.ledger = ledger ?? new InMemoryUsageLedger();
     this.providerAliases = providerAliases;
+  }
+
+  /** Apply an operator-managed adapter selection without changing task routing rules. */
+  setProviderAlias(serviceKind: ServiceKind, providerAlias: string): void {
+    this.providerAliases ??= {};
+    this.providerAliases[serviceKind] = providerAlias;
   }
 
   get usageLedger(): UsageLedger {

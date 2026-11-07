@@ -475,6 +475,23 @@ model ai_providers {
   @@map("ai_providers")
 }
 
+/// Admin-configured runtime connector. Credentials are AES-GCM ciphertext only.
+model ai_provider_configs {
+  id                    String   @id @default(uuid())
+  serviceKind           String   @unique
+  providerPresetId      String
+  protocol              String
+  baseUrl               String
+  modelAlias            String
+  credentialsCiphertext String?
+  enabled               Boolean  @default(false)
+  options               Json     @default("{}")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("ai_provider_configs")
+}
+
 model ai_models {
   id          String   @id @default(uuid())
   providerId  String

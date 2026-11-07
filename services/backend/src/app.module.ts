@@ -19,6 +19,8 @@ import {
   UsageController,
 } from './speech/speech.controller';
 import { MediaController } from './media/media.controller';
+import { ProviderConfigController } from './providers/provider-config.controller';
+import { ProviderConfigService } from './providers/provider-config.service';
 
 @Module({
   imports: [ConfigModule],
@@ -29,9 +31,11 @@ import { MediaController } from './media/media.controller';
     UsageController,
     HealthController,
     MediaController,
+    ProviderConfigController,
   ],
   providers: [
     PrismaService,
+    ProviderConfigService,
     AiGatewayService,
     LearnerModelService,
     PlannerService,

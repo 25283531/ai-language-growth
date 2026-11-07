@@ -10,15 +10,25 @@
  *  2. 重复播放同一段语音不重新消耗 TTS —— 走本地缓存（D-014 / 验收硬指标一）。
  *  3. 所有降级都必须如实上报，不得静默掩盖。
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import {
   AdapterRegistry,
+  HttpAsrAdapter,
+  HttpLlmAdapter,
+  HttpTtsAdapter,
   loadProviderConfig,
+  resolveProviderAliases,
   registerAdapters,
+  type HttpServiceOptions,
   type AsrAdapter,
   type LlmAdapter,
   type PronunciationAdapter,
   type TtsAdapter,
+  IflytekIseAdapter,
+  TencentSoeAdapter,
+  AzurePronunciationAdapter,
+  IflytekTtsAdapter,
+  IflytekAsrAdapter,
 } from '@alg/ai-provider-sdk';
 import type {
   AiGateway,
@@ -32,6 +42,8 @@ import type {
   TtsRequest,
   TtsResponse,
 } from '@alg/shared-contracts';
+import { ModelRouterImpl } from '@alg/model-router';
+import { ProviderConfigService, type RuntimeProviderConfig } from '../providers/provider-config.service';
 
 /** 一次调用的结果与降级信息。 */
 export interface GatewayCallResult<T> {
@@ -48,13 +60,16 @@ export interface GatewayCallResult<T> {
 }
 
 @Injectable()
-export class AiGatewayService implements AiGateway {
+export class AiGatewayService implements AiGateway, OnModuleInit {
   private readonly logger = new Logger(AiGatewayService.name);
   private readonly registry: AdapterRegistry;
   /** TTS 音频缓存：语音内容 + 参数 → 音频引用。 */
   private readonly ttsCache = new Map<string, { audioRef: string; characters: number }>();
 
-  constructor() {
+  constructor(
+    @Inject(ModelRouterImpl) private readonly modelRouter: ModelRouterImpl,
+    @Inject(ProviderConfigService) private readonly providerConfigs: ProviderConfigService,
+  ) {
     this.registry = registerAdapters(new AdapterRegistry(), loadProviderConfig());
     this.logger.log(
       `AI Gateway 就绪，llm=${this.registry.list('llm').join(',')} tts=${this.registry
@@ -63,6 +78,74 @@ export class AiGatewayService implements AiGateway {
         .list('pronunciation')
         .join(',')}`,
     );
+  }
+
+  async onModuleInit(): Promise<void> {
+    for (const config of await this.providerConfigs.listEnabledRuntimeConfigs()) {
+      this.applyRuntimeProvider(config);
+    }
+  }
+
+  /** Apply an operator-selected provider immediately after a configuration save. */
+  async refreshRuntimeProvider(serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation'): Promise<void> {
+    const config = await this.providerConfigs.getEnabledRuntimeConfig(serviceKind);
+    if (config) {
+      this.applyRuntimeProvider(config);
+      return;
+    }
+    this.modelRouter.setProviderAlias(serviceKind, resolveProviderAliases()[serviceKind]);
+  }
+
+  private applyRuntimeProvider(config: RuntimeProviderConfig): void {
+    const alias = `configured_${config.serviceKind}`;
+    const options: HttpServiceOptions = {
+      alias,
+      serviceKind: config.serviceKind,
+      providerPresetId: config.providerPresetId,
+      protocol: config.protocol,
+      baseUrl: config.baseUrl,
+      apiKey: config.credentials.apiKey,
+      credentials: config.credentials,
+      options: config.options,
+      modelAlias: config.modelAlias,
+      pricing: { checkedAt: new Date().toISOString().slice(0, 10) },
+      ...(typeof config.options.voice === 'string' ? { voice: config.options.voice } : {}),
+      ...(config.options.extraBody && typeof config.options.extraBody === 'object'
+        ? { extraBody: config.options.extraBody as Record<string, unknown> }
+        : {}),
+      ...(typeof config.options.minMaxTokens === 'number'
+        ? { minMaxTokens: config.options.minMaxTokens }
+        : {}),
+    };
+
+    switch (config.serviceKind) {
+      case 'llm':
+        this.registry.register('llm', new HttpLlmAdapter(options));
+        break;
+      case 'tts':
+        this.registry.register('tts', config.providerPresetId === 'iflytek-spark'
+          ? new IflytekTtsAdapter(options)
+          : new HttpTtsAdapter(options));
+        break;
+      case 'asr':
+        this.registry.register('asr', config.providerPresetId === 'iflytek-spark'
+          ? new IflytekAsrAdapter(options)
+          : new HttpAsrAdapter(options));
+        break;
+      case 'pronunciation':
+        if (config.providerPresetId === 'iflytek-spark') {
+          this.registry.register('pronunciation', new IflytekIseAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
+        } else if (config.providerPresetId === 'tencent-soe') {
+          this.registry.register('pronunciation', new TencentSoeAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
+        } else if (config.providerPresetId === 'azure-speech') {
+          this.registry.register('pronunciation', new AzurePronunciationAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
+        } else {
+          throw new Error(`平台 ${config.providerPresetId} 暂无音素评测适配器`);
+        }
+        break;
+    }
+    this.modelRouter.setProviderAlias(config.serviceKind, alias);
+    this.logger.log(`运行时模型连接已更新：${config.serviceKind} → ${alias}`);
   }
 
   // ——————————————————— LLM ———————————————————

@@ -6,7 +6,7 @@
  * 协议形态为通用 OpenAI 兼容风格：/audio/speech 与 /audio/transcriptions。
  * LLM 走 protocol.ts 里的 HttpLlmAdapter（/chat/completions）。
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shared-contracts';
@@ -20,6 +20,10 @@ import {
 } from './protocol';
 
 export interface HttpServiceOptions extends AdapterFactoryOptions {
+  providerPresetId?: string;
+  protocol?: string;
+  credentials?: Record<string, string>;
+  options?: Record<string, unknown>;
   /** TTS 音色标识，由配置注入（代码中不写厂商音色名） */
   voice?: string;
   /** 合成音频落盘目录 */
@@ -94,19 +98,57 @@ export class HttpTtsAdapter implements TtsAdapter {
     const voice = this.options.voice ?? request.voiceIdentity;
     const started = Date.now();
 
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/audio/speech`, {
-      method: 'POST',
-      headers: {
+    const provider = this.options.providerPresetId;
+    const extra = this.options.options ?? {};
+    let requestUrl = `${baseUrl.replace(/\/$/, '')}/audio/speech`;
+    let requestHeaders: Record<string, string> = { 'content-type': 'application/json' };
+    let requestBody: unknown = {
+      model: modelAlias,
+      input: request.text,
+      voice,
+      speed,
+      response_format: 'mp3',
+    };
+    if (provider === 'bailian') {
+      const workspaceId = String(extra.workspaceId ?? '');
+      const customBase = baseUrl.replace(/\/$/, '') !== 'https://dashscope.aliyuncs.com';
+      const hostBase = customBase ? baseUrl : workspaceId ? `https://${workspaceId}.${String(extra.regionHost ?? 'cn-beijing.maas.aliyuncs.com')}` : baseUrl;
+      requestUrl = hostBase.endsWith('/SpeechSynthesizer') ? hostBase : `${hostBase.replace(/\/$/, '')}/api/v1/services/audio/tts/SpeechSynthesizer`;
+      requestBody = { model: modelAlias, input: { text: request.text, voice, format: 'mp3', sample_rate: 24000, rate: speed } };
+    } else if (provider === 'baidu-qianfan') {
+      const credentials = this.options.credentials ?? {};
+      const tokenUrl = new URL('https://aip.baidubce.com/oauth/2.0/token');
+      tokenUrl.searchParams.set('grant_type', 'client_credentials');
+      tokenUrl.searchParams.set('client_id', credentials.apiKey ?? '');
+      tokenUrl.searchParams.set('client_secret', credentials.secretKey ?? '');
+      const tokenResponse = await fetch(tokenUrl, { method: 'POST', signal: AbortSignal.timeout(request.timeoutMs ?? 12000) });
+      if (!tokenResponse.ok) throw new Error(`adapter ${this.alias} 获取百度语音令牌失败: HTTP ${tokenResponse.status}`);
+      const tokenData = await tokenResponse.json() as { access_token?: string; error_description?: string };
+      if (!tokenData.access_token) throw new Error(`adapter ${this.alias} 获取百度语音令牌失败: ${tokenData.error_description ?? 'missing access_token'}`);
+      const url = new URL(baseUrl);
+      url.searchParams.set('access_token', tokenData.access_token);
+      requestUrl = url.toString();
+      requestHeaders = { 'content-type': 'application/json' };
+      requestBody = { text: request.text, voice: String(extra.voiceId ?? extra.voice ?? 5003), lang: String(extra.language ?? 'en'), format: 'mp3', sample_rate: 24000, speed: Math.min(2, Math.max(0.5, speed)), pitch: 0, volume: 1 };
+    } else if (provider === 'volcengine') {
+      requestUrl = baseUrl;
+      requestHeaders = {
         'content-type': 'application/json',
-        ...(this.options.apiKey ? { authorization: `Bearer ${this.options.apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model: modelAlias,
-        input: request.text,
-        voice,
-        speed,
-        response_format: 'mp3',
-      }),
+        'X-Api-Key': this.options.credentials?.apiKey ?? this.options.apiKey ?? '',
+        'X-Api-Resource-Id': String(extra.resourceId ?? 'seed-tts-2.0'),
+        'X-Api-Request-Id': randomUUID(),
+      };
+      requestBody = { user: { uid: 'ai-language-growth' }, req_params: { text: request.text, speaker: voice, audio_params: { format: 'mp3', sample_rate: 24000, speech_rate: Math.round((speed - 1) * 100) } } };
+    } else if (provider === 'minimax') {
+      const groupId = this.options.credentials?.groupId;
+      requestUrl = `${baseUrl}${groupId ? `?GroupId=${encodeURIComponent(groupId)}` : ''}`;
+      requestBody = { model: modelAlias, text: request.text, stream: false, voice_setting: { voice_id: voice || String(extra.voice ?? 'English_Graceful_Lady'), speed, vol: 1, pitch: 0 }, audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 } };
+    }
+    if (this.options.apiKey && provider !== 'volcengine' && provider !== 'baidu-qianfan') requestHeaders.authorization = `Bearer ${this.options.apiKey}`;
+    const res = await fetch(requestUrl, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(request.timeoutMs ?? 12000),
     });
 
@@ -114,7 +156,41 @@ export class HttpTtsAdapter implements TtsAdapter {
       throw new Error(`adapter ${this.alias} 调用失败: HTTP ${res.status} ${await failureBody(res)}`);
     }
 
-    const bytes = Buffer.from(await res.arrayBuffer());
+    let bytes: Buffer;
+    if (provider === 'bailian') {
+      const body = await res.json() as { output?: { audio?: { url?: string; data?: string } } };
+      const audioUrl = body.output?.audio?.url;
+      if (body.output?.audio?.data) bytes = Buffer.from(body.output.audio.data, 'base64');
+      else if (audioUrl) {
+        const audioResponse = await fetch(audioUrl, { signal: AbortSignal.timeout(request.timeoutMs ?? 12000) });
+        if (!audioResponse.ok) throw new Error(`adapter ${this.alias} 音频下载失败: HTTP ${audioResponse.status}`);
+        bytes = Buffer.from(await audioResponse.arrayBuffer());
+      } else throw new Error(`adapter ${this.alias} 未返回音频数据或下载地址`);
+    } else if (provider === 'baidu-qianfan') {
+      const contentType = res.headers.get('content-type') ?? '';
+      if (contentType.includes('application/json')) {
+        const error = await res.json() as { code?: number; message?: string };
+        throw new Error(`adapter ${this.alias} 百度 TTS 错误 ${error.code ?? ''}: ${error.message ?? ''}`);
+      }
+      bytes = Buffer.from(await res.arrayBuffer());
+    } else if (provider === 'minimax') {
+      const body = await res.json() as { data?: { audio?: string }; base_resp?: { status_code?: number; status_msg?: string } };
+      if (!body.data?.audio) throw new Error(`adapter ${this.alias} 未返回音频: ${body.base_resp?.status_msg ?? 'empty audio'}`);
+      bytes = Buffer.from(body.data.audio, 'hex');
+    } else if (provider === 'volcengine') {
+      const contentType = res.headers.get('content-type') ?? '';
+      if (contentType.includes('audio/')) bytes = Buffer.from(await res.arrayBuffer());
+      else {
+        const text = await res.text();
+        const packets = text.split(/\r?\n/).filter(Boolean).map((line) => {
+          const payload = line.startsWith('data:') ? line.slice(5).trim() : line;
+          try { return JSON.parse(payload) as { data?: { audio?: string }; audio?: string; code?: number; message?: string }; } catch { return undefined; }
+        }).filter((packet): packet is { data?: { audio?: string }; audio?: string; code?: number; message?: string } => Boolean(packet));
+        const chunks = packets.map((packet) => packet.data?.audio ?? packet.audio ?? '').filter(Boolean).map((chunk) => Buffer.from(chunk, 'base64'));
+        if (chunks.length === 0) throw new Error(`adapter ${this.alias} 未返回音频帧`);
+        bytes = Buffer.concat(chunks);
+      }
+    } else bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.length < 128) {
       throw new Error(`adapter ${this.alias} 返回音频过短 (${bytes.length} bytes)`);
     }
@@ -123,7 +199,8 @@ export class HttpTtsAdapter implements TtsAdapter {
     const isMp3 = bytes.subarray(0, 3).toString('latin1') === 'ID3' ||
       (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0);
     const isWav = bytes.subarray(0, 4).toString('latin1') === 'RIFF';
-    if (!isMp3 && !isWav) {
+    const isMp3OrWav = isMp3 || isWav;
+    if (!isMp3OrWav && provider !== 'minimax' && provider !== 'volcengine') {
       throw new Error(`adapter ${this.alias} 返回的不是可播放音频容器 (head=${bytes.subarray(0, 4).toString('hex')})`);
     }
 
@@ -144,7 +221,7 @@ export class HttpTtsAdapter implements TtsAdapter {
 
     const dir = this.options.audioDir ?? resolveAudioDir();
     mkdirSync(dir, { recursive: true });
-    const fileName = `${fingerprint}.mp3`;
+    const fileName = `${fingerprint}.${isWav ? 'wav' : 'mp3'}`;
     const fullPath = join(dir, fileName);
     if (!existsSync(fullPath)) writeFileSync(fullPath, bytes);
 
@@ -161,7 +238,7 @@ export class HttpTtsAdapter implements TtsAdapter {
 }
 
 /** 把统一 audioRef 解析为可上传的音频字节。 */
-async function loadAudio(
+export async function loadAudio(
   audioRef: string,
 ): Promise<{ bytes: Uint8Array; fileName: string; mime: string }> {
   // 1) data URI：Web / Android 原型直接内联上传
@@ -237,16 +314,50 @@ export class HttpAsrAdapter implements AsrAdapter {
     const audio = await loadAudio(request.audioRef);
     const started = Date.now();
 
-    const form = new FormData();
-    form.set('model', modelAlias ?? '');
-    form.set('file', new Blob([audio.bytes], { type: audio.mime }), audio.fileName);
+    const provider = this.options.providerPresetId;
+    const credentials = this.options.credentials ?? {};
+    const extra = this.options.options ?? {};
+    let endpoint = `${baseUrl.replace(/\/$/, '')}/audio/transcriptions`;
+    let headers: Record<string, string> = {};
+    let body: BodyInit;
+    if (provider === 'bailian') {
+      const workspaceId = String(extra.workspaceId ?? '');
+      const customBase = baseUrl.replace(/\/$/, '') !== 'https://dashscope.aliyuncs.com';
+      const endpointBase = customBase ? baseUrl : workspaceId ? `https://${workspaceId}.${String(extra.regionHost ?? 'cn-beijing.maas.aliyuncs.com')}` : baseUrl;
+      endpoint = endpointBase.endsWith('/generation')
+        ? endpointBase
+        : `${endpointBase.replace(/\/$/, '')}/api/v1/services/aigc/multimodal-generation/generation`;
+      const mime = audio.mime === 'audio/mpeg' ? 'audio/mp3' : audio.mime;
+      headers = { 'content-type': 'application/json', authorization: `Bearer ${credentials.apiKey ?? this.options.apiKey ?? ''}` };
+      const format = mime === 'audio/mp3' ? 'mp3' : mime === 'audio/opus' ? 'opus' : 'wav';
+      body = JSON.stringify({ model: modelAlias, input: { messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${mime};base64,${Buffer.from(audio.bytes).toString('base64')}` } }] }] }, parameters: { format, sample_rate: String(extra.sampleRate ?? 16000) } });
+    } else if (provider === 'baidu-qianfan') {
+      const tokenUrl = new URL('https://aip.baidubce.com/oauth/2.0/token');
+      tokenUrl.searchParams.set('grant_type', 'client_credentials');
+      tokenUrl.searchParams.set('client_id', credentials.apiKey ?? '');
+      tokenUrl.searchParams.set('client_secret', credentials.secretKey ?? '');
+      const tokenResponse = await fetch(tokenUrl, { method: 'POST', signal: AbortSignal.timeout(request.timeoutMs ?? 15000) });
+      if (!tokenResponse.ok) throw new Error(`adapter ${this.alias} 获取百度语音令牌失败: HTTP ${tokenResponse.status}`);
+      const tokenData = await tokenResponse.json() as { access_token?: string; error_description?: string };
+      if (!tokenData.access_token) throw new Error(`adapter ${this.alias} 获取百度语音令牌失败: ${tokenData.error_description ?? 'missing access_token'}`);
+      const url = new URL(baseUrl);
+      url.searchParams.set('token', tokenData.access_token);
+      endpoint = url.toString();
+      const format = audio.mime.includes('mpeg') || audio.fileName.toLowerCase().endsWith('.mp3') ? 'mp3' : 'wav';
+      headers = { 'content-type': 'application/json' };
+      body = JSON.stringify({ format, rate: Number(extra.sampleRate ?? 16000), channel: 1, cuid: String(extra.cuid ?? 'ai-language-growth'), dev_pid: Number(extra.devPid ?? 1737), speech: Buffer.from(audio.bytes).toString('base64'), len: audio.bytes.length });
+    } else {
+      const form = new FormData();
+      form.set('model', modelAlias ?? '');
+      form.set('file', new Blob([audio.bytes], { type: audio.mime }), audio.fileName);
+      body = form;
+      if (this.options.apiKey) headers.authorization = `Bearer ${this.options.apiKey}`;
+    }
 
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/audio/transcriptions`, {
+    const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        ...(this.options.apiKey ? { authorization: `Bearer ${this.options.apiKey}` } : {}),
-      },
-      body: form,
+      headers,
+      body,
       signal: AbortSignal.timeout(request.timeoutMs ?? 15000),
     });
 
@@ -257,8 +368,11 @@ export class HttpAsrAdapter implements AsrAdapter {
     const json = (await res.json()) as {
       text?: string;
       usage?: { seconds?: number; duration?: number };
+      result?: string[];
+      output?: { text?: string; choices?: Array<{ message?: { content?: string } }> };
     };
-    const transcript = (json.text ?? '').trim();
+    const dashscopeText = json.output?.text ?? json.output?.choices?.[0]?.message?.content;
+    const transcript = (json.text ?? json.result?.[0] ?? dashscopeText ?? '').trim();
     const seconds = Number(json.usage?.seconds ?? json.usage?.duration ?? 0);
 
     return {

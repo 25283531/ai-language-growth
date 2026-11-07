@@ -53,6 +53,9 @@ jobs:
       - name: Build web workbench
         run: npm run build --workspace @alg/web
 
+      - name: Build model provider console
+        run: npm run build --workspace @alg/admin-web
+
       - name: Typecheck
         run: npm run typecheck
 

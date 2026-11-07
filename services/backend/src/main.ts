@@ -23,7 +23,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key', 'X-Admin-Token'],
   });
 
   // JSON body 体积上限：M1 语音以引用方式传递，不内联大 base64
