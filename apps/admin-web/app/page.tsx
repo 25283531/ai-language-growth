@@ -84,6 +84,7 @@ export default function AdminPage() {
   const [personaHistory, setPersonaHistory] = useState<Array<{ id: string; version: number; reason: string; createdAt: string; changeContent: string }>>([]);
   const [learnerId, setLearnerId] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
+  const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
   const service = services.find((item) => item.id === active)!;
   const available = useMemo(() => catalog.filter((item) => item.services.includes(active)), [catalog, active]);
   const current = configs[active];
@@ -150,6 +151,16 @@ export default function AdminPage() {
     const res = await fetch(`${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories/${encodeURIComponent(memoryId)}`, { method: 'DELETE', headers: { 'x-admin-token': token } });
     if (!res.ok) throw new Error((await res.json()).message ?? `删除失败 (${res.status})`);
     await loadMemories();
+  }
+
+  async function saveMemoryEdit() {
+    if (!editingMemory) return;
+    const res = await fetch(`${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories/${encodeURIComponent(editingMemory.id)}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-token': token },
+      body: JSON.stringify({ memoryType: editingMemory.memoryType, content: editingMemory.content, importance: editingMemory.importance, expiresAt: editingMemory.expiresAt }),
+    });
+    if (!res.ok) throw new Error((await res.json()).message ?? `保存失败 (${res.status})`);
+    setEditingMemory(null); await loadMemories();
   }
 
   async function rollbackPersona(historyId: string) {
@@ -255,7 +266,8 @@ export default function AdminPage() {
         <h3>变更历史</h3><div className="benchmark-list">{personaHistory.map((entry) => <div className="helper" key={entry.id}>v{entry.version} · {entry.reason} · {new Date(entry.createdAt).toLocaleString()} {entry.changeContent.includes('"before"') && <button className="secondary" onClick={() => void rollbackPersona(entry.id).catch((error) => setMessage(error.message))}>回滚到此前配置</button>}</div>)}</div>
       </>}
       <h3>学习记忆</h3><div className="fields"><label>学习者 ID<input value={learnerId} onChange={(event) => setLearnerId(event.target.value)} placeholder="从学习者档案中复制 ID"/></label><button className="secondary" disabled={!token || !learnerId} onClick={() => void loadMemories().catch((error) => setMessage(error.message))}>读取学习记忆</button></div>
-      <div className="benchmark-list">{memories.map((memory) => <div className="helper" key={memory.id}><strong>{memory.memoryType}</strong> · {memory.content} · 重要度 {memory.importance} · {memory.source}<button className="secondary" onClick={() => void deleteMemory(memory.id).catch((error) => setMessage(error.message))}>删除</button></div>)}</div>
+      <div className="benchmark-list">{memories.map((memory) => <div className="helper" key={memory.id}><strong>{memory.memoryType}</strong> · {memory.content} · 重要度 {memory.importance} · {memory.source}<button className="secondary" onClick={() => setEditingMemory({ ...memory })}>纠正</button><button className="secondary" onClick={() => void deleteMemory(memory.id).catch((error) => setMessage(error.message))}>删除</button></div>)}</div>
+      {editingMemory && <div className="fields"><label>记忆内容<input value={editingMemory.content} onChange={(event) => setEditingMemory({ ...editingMemory, content: event.target.value })}/></label><label>记忆类型<select value={editingMemory.memoryType} onChange={(event) => setEditingMemory({ ...editingMemory, memoryType: event.target.value })}><option value="learning_preference">学习偏好</option><option value="encouragement_preference">鼓励偏好</option><option value="lesson_learning_summary">课堂学习摘要</option><option value="caregiver_note">照护者备注</option></select></label><button disabled={!editingMemory.content.trim()} onClick={() => void saveMemoryEdit().then(() => setMessage('记忆已纠正。')).catch((error) => setMessage(error.message))}>保存纠正</button><button className="secondary" onClick={() => setEditingMemory(null)}>取消</button></div>}
       <p className="helper">记忆编辑与删除目前由管理令牌保护；面向监护人的专用账号与授权仍待账户体系实现。</p>
     </section>
   </main>;
