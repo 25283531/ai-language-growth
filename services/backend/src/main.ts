@@ -8,6 +8,8 @@ import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { json, raw } from 'express';
+import type { NextFunction, Response } from 'express';
+import type { Request } from 'express';
 import { AppModule } from './app.module';
 import { assertLiveProviderConfig } from '@alg/ai-provider-sdk';
 import { loadConfig } from './config/config.module';
@@ -37,7 +39,7 @@ async function bootstrap(): Promise<void> {
   // JSON body 体积上限：M1 语音以引用方式传递，不内联大 base64
   app.use(json({ limit: '2mb' }));
   const speechQuota = app.get(SpeechQuotaService);
-  app.use('/api/v1/media/audio/uploads', async (request, response, next) => {
+  app.use('/api/v1/media/audio/uploads', async (request: Request, response: Response, next: NextFunction) => {
     const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
     if (!reservationId || !learnerId) {
