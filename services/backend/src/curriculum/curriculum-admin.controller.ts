@@ -170,7 +170,7 @@ export class CurriculumAdminController {
             scenario: lesson.scenario,
             targetWords: lesson.targetWords,
             teacherUtteranceZh: lesson.teacherPrompt,
-            demonstrationText: lesson.demonstrationText || null,
+            demonstrationText: lesson.demonstrationText || '',
             skillNodeIds: [curriculumSkillNodeFor(lesson.taskType)],
             requiresPronunciationAssessment: ['word_mimicry', 'pronunciation_drill'].includes(lesson.taskType),
             requiresAsr: ['sentence_pattern', 'situational_dialogue', 'free_response'].includes(lesson.taskType),
