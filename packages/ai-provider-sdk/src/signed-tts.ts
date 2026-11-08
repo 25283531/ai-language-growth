@@ -49,11 +49,13 @@ export interface SignedTtsOptions extends HttpServiceOptions {
 }
 
 /** 允许出现在 audioRef 中的扩展名白名单，MediaController 使用同一份常量。 */
-export const AUDIO_EXTENSIONS = ['mp3', 'wav'] as const;
+export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a'] as const;
 export type AudioExtension = (typeof AUDIO_EXTENSIONS)[number];
 
 export function audioMimeType(ext: string): string {
-  return ext === 'wav' ? 'audio/wav' : 'audio/mpeg';
+  if (ext === 'wav') return 'audio/wav';
+  if (ext === 'm4a') return 'audio/mp4';
+  return 'audio/mpeg';
 }
 
 function sha256Hex(value: string | Buffer): string {

@@ -1,6 +1,9 @@
 # HTTP API 契约（实现快照）
 
-> **状态：未冻结。** 本文从当前 NestJS controller 与 `packages/shared-contracts` 整理，用于联调；它不是 M0 已验收/冻结的接口基线。代码变更后必须同步本文并由 CI 覆盖。当前没有生成式 OpenAPI 文档，认证和监护人授权也尚未实现。
+> **状态：M0 冻结快照（原型范围）。** 本文从当前 NestJS controller 与
+> `packages/shared-contracts` 整理，用于联调；冻结版本、数据库迁移和已知缺口见
+> [`docs/M0-freeze.md`](../M0-freeze.md)。代码新增接口时必须同步本文并由 CI 覆盖。
+> 当前没有生成式 OpenAPI 文档，认证和监护人授权仍未实现。
 
 ## 基本约定
 
@@ -8,7 +11,8 @@
 - 输入验证由 Zod schema 执行；不合法输入通常返回 HTTP 400，结构为 Nest `message`（可能是字符串或对象）、`error`、`statusCode`。不同 controller 的异常包装尚未完全统一。
 - 教学领域 ID 使用 JSON 字符串；日期时间使用 ISO-8601。
 - **当前除管理 API 外均无身份认证和监护人归属检查。** `x-admin-token` 仅保护 `/admin/*`，不得将该实现视为儿童数据权限系统。未完成 guardian auth 前仅可在隔离开发/CI 环境使用。
-- 语音 `audioRef` 是协议引用。Android 原型目前传本机 `file://`，服务端不可读取；尚无音频上传 API。
+- 语音 `audioRef` 是协议引用。Android 原型通过 `POST /media/audio/uploads` 上传
+  `.m4a` 字节后使用服务端引用；该端点仅为原型缓存，尚未接入对象存储和自动过期。
 - 能力阈值状态为未校准的内部教学信号，不是掌握承诺。
 
 ## 教学与学习者
@@ -47,6 +51,27 @@
 | `GET /health` | 无 | 状态、Gateway 模式、未校准标记、时间戳 | 无 |
 | `GET /config/audit` | 无 | 脱敏供应商配置摘要；`NODE_ENV=production` 时 404 | 仅开发环境门槛，不是认证 |
 | `GET /media/audio/{file}` | 内容指纹文件名 | 流式返回本地 TTS 文件，扩展名白名单检查 | 无 |
+| `POST /media/audio/uploads` | 原始音频字节（`audio/mp4`、`audio/wav`、`audio/mpeg`，最大 10 MB） | 返回内容指纹 `audioRef`，供 ASR/发音评测读取 | 原型无认证 |
+
+### 端侧语音额度租约
+
+Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须先向服务端申请短期额度租约：
+
+| 路由 | 用途 |
+|---|---|
+| `GET /speech/quota/status?learnerId=...` | 查询当天各服务的上限、已用、预留和剩余秒数 |
+| `POST /speech/quota/reserve` | `{ learnerId, serviceKind, seconds, idempotencyKey }`，原子预留，默认非会员每类 300 秒/自然日 |
+| `POST /speech/quota/settle` | `{ reservationId, seconds }`，按供应商/SDK 返回的实际秒数结算 |
+| `POST /speech/quota/release` | `{ reservationId }`，失败或取消时释放预留 |
+
+租约默认有效 180 秒，服务端数据库是额度权威来源。Android 端在额度不足时不发起供应商请求；服务端对带有
+`X-Learner-Id` 与 `X-Speech-Quota-Reservation` 是正式客户端访问语音媒体的必填请求头：
+
+- ASR 录音上传必须同时携带两者；服务端在接收音频字节前校验租约，租约无效或额度耗尽时不会保存上传内容。
+- 云端 TTS 音频下载也必须同时携带两者；Android 播放器先预留 TTS 额度，再用带请求头的下载请求读取音频，播放结束后按实际时长结算，失败则释放租约。
+- ASR / 发音评测接口复用同一租约校验。客户端不得只依赖本地计时器。
+
+端侧直连供应商时，供应商短期凭证也必须绑定同一租约；长期 API Key/AppSecret 不得放入 APK。课程缓存和旧 Web 原型的无租约读取只作为过渡兼容路径，正式客户端不使用该路径。
 
 ## 管理 API
 
@@ -72,7 +97,7 @@
 1. OpenAPI 3 文档尚未生成；管理配置、结课和数据库响应仍缺统一的 Zod schema 与字段级响应约束。
 2. 没有统一的错误码表、分页规范、速率限制和版本兼容策略。
 3. Guardian 注册/登录、consent 记录、按监护关系鉴权、授权撤销和儿童数据删除 API 尚未实现。
-4. 音频上传/短期保留/删除流程尚未实现；`file://` 只能在录音设备本机访问。
+4. 原型音频上传已实现，但短期保留、自动删除、对象存储和正式访问控制尚未实现。
 5. 本 API 快照与 M0 冻结验收记录尚未建立，不能称为“contracts are locked in M0”。
 
 ## 代码来源

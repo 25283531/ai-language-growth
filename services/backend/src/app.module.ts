@@ -16,6 +16,7 @@ import { LessonsController, LearnersController } from './lessons/lessons.control
 import {
   HealthController,
   SpeechController,
+  SpeechQuotaController,
   UsageController,
 } from './speech/speech.controller';
 import { MediaController } from './media/media.controller';
@@ -23,6 +24,7 @@ import { ProviderConfigController } from './providers/provider-config.controller
 import { ProviderConfigService } from './providers/provider-config.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
 import { MemoryAdminController } from './memory/memory-admin.controller';
+import { SpeechQuotaService } from './usage/speech-quota.service';
 
 @Module({
   imports: [ConfigModule],
@@ -30,6 +32,7 @@ import { MemoryAdminController } from './memory/memory-admin.controller';
     LessonsController,
     LearnersController,
     SpeechController,
+    SpeechQuotaController,
     UsageController,
     HealthController,
     MediaController,
@@ -43,6 +46,7 @@ import { MemoryAdminController } from './memory/memory-admin.controller';
     LearnerModelService,
     PlannerService,
     OrchestratorService,
+    SpeechQuotaService,
     {
       provide: ModelRouterImpl,
       useFactory: (prisma: PrismaService) => {

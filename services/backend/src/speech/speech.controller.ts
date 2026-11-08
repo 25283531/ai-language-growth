@@ -7,11 +7,13 @@
  * GET  /api/v1/usage/summary        成本与用量汇总
  * GET  /api/v1/health               健康检查
  */
-import { Body, Controller, Get, HttpException, Inject, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpException, Inject, Post, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { z } from 'zod';
 import { ModelRouterImpl } from '@alg/model-router';
 import { resolveLiveServices, resolveTtsProtocol } from '@alg/ai-provider-sdk';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
+import { SpeechQuotaService } from '../usage/speech-quota.service';
 
 const synthesizeSchema = z.object({
   text: z.string().min(1).max(500),
@@ -39,14 +41,16 @@ export class SpeechController {
   constructor(
     @Inject(AiGatewayService) private readonly gateway: AiGatewayService,
     @Inject(ModelRouterImpl) private readonly router: ModelRouterImpl,
+    @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
   ) {}
 
   @Post('synthesize')
-  async synthesize(@Body() body: unknown) {
+  async synthesize(@Body() body: unknown, @Req() request: Request) {
     const parsed = synthesizeSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.assertClientReservation(request, 'tts');
     const decision = await this.router.route({
       serviceKind: 'tts',
       taskRoute: 'tts.dynamic_teaching',
@@ -68,11 +72,12 @@ export class SpeechController {
   }
 
   @Post('recognize')
-  async recognize(@Body() body: unknown) {
+  async recognize(@Body() body: unknown, @Req() request: Request) {
     const parsed = recognizeSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.assertClientReservation(request, 'asr');
     const decision = await this.router.route({
       serviceKind: 'asr',
       taskRoute: 'asr.free_speech',
@@ -84,11 +89,12 @@ export class SpeechController {
   }
 
   @Post('evaluate')
-  async evaluate(@Body() body: unknown) {
+  async evaluate(@Body() body: unknown, @Req() request: Request) {
     const parsed = evaluateSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.assertClientReservation(request, 'pronunciation');
     const decision = await this.router.route({
       serviceKind: 'pronunciation',
       taskRoute: 'pronunciation.phoneme',
@@ -101,6 +107,74 @@ export class SpeechController {
       },
       decision,
     );
+  }
+
+  private async assertClientReservation(
+    request: Request,
+    serviceKind: 'asr' | 'tts' | 'pronunciation',
+  ): Promise<void> {
+    const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
+    const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
+    // 旧 Web 原型没有额度头，保留兼容路径；正式 Android 客户端必须同时提供两者。
+    if (!reservationId && !learnerId) return;
+    if (!reservationId || !learnerId) {
+      throw new HttpException('语音请求缺少额度租约或学习者标识', 400);
+    }
+    await this.quota.assertReservation({ reservationId, learnerId, serviceKind });
+  }
+}
+
+@Controller('api/v1/speech/quota')
+export class SpeechQuotaController {
+  constructor(@Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService) {}
+
+  @Get('status')
+  async status(@Query('learnerId') learnerId?: string) {
+    if (!learnerId) throw new HttpException('缺少 learnerId', 400);
+    return this.quota.status(learnerId);
+  }
+
+  @Post('reserve')
+  async reserve(@Body() body: unknown) {
+    const parsed = z
+      .object({
+        learnerId: z.string().min(1),
+        serviceKind: z.enum(['asr', 'tts', 'pronunciation']),
+        seconds: z.number().positive().max(120),
+        idempotencyKey: z.string().min(8),
+        ttlSeconds: z.number().int().min(30).max(600).optional(),
+      })
+      .safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException({ message: '额度预留参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    return this.quota.reserve({
+      learnerId: parsed.data.learnerId,
+      serviceKind: parsed.data.serviceKind,
+      units: parsed.data.seconds,
+      idempotencyKey: parsed.data.idempotencyKey,
+      ttlSeconds: parsed.data.ttlSeconds,
+    });
+  }
+
+  @Post('settle')
+  async settle(@Body() body: unknown) {
+    const parsed = z
+      .object({ reservationId: z.string().uuid(), seconds: z.number().min(0).max(120) })
+      .safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException({ message: '额度结算参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    return this.quota.settle(parsed.data.reservationId, parsed.data.seconds);
+  }
+
+  @Post('release')
+  async release(@Body() body: unknown) {
+    const parsed = z.object({ reservationId: z.string().uuid() }).safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException({ message: '额度释放参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    return this.quota.release(parsed.data.reservationId);
   }
 }
 

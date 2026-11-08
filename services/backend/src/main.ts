@@ -7,7 +7,7 @@
 import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { json } from 'express';
+import { json, raw } from 'express';
 import { AppModule } from './app.module';
 import { assertLiveProviderConfig } from '@alg/ai-provider-sdk';
 import { loadConfig } from './config/config.module';
@@ -23,11 +23,23 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key', 'X-Admin-Token'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Idempotency-Key',
+      'X-Admin-Token',
+      'X-Learner-Id',
+      'X-Speech-Quota-Reservation',
+    ],
   });
 
   // JSON body 体积上限：M1 语音以引用方式传递，不内联大 base64
   app.use(json({ limit: '2mb' }));
+  // Android 原型将录音字节直接 POST 到该路径；只对上传路由启用原始字节解析。
+  app.use('/api/v1/media/audio/uploads', raw({
+    type: ['audio/*', 'application/octet-stream'],
+    limit: '10mb',
+  }));
 
   await app.listen(config.port, '0.0.0.0');
 

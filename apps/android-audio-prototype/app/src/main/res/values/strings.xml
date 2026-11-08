@@ -6,7 +6,6 @@
          compose 默认把宿主机 3100 映射到容器内 3000。 -->
     <string name="backend_base_url">http://10.0.2.2:3100/api/v1</string>
 
-    <!-- 演示用固定课堂 / 学习者标识；真实流程应先调 /lessons/start 拿 lessonSessionId。 -->
-    <string name="lesson_id">m1_demo_lesson</string>
-    <string name="learner_id">m1_demo_learner</string>
+    <!-- 仅配置要测试的学习者；课堂 ID 由 POST /lessons/start 动态获取。 -->
+    <string name="learner_id">child-m1-demo</string>
 </resources>

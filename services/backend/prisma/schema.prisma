@@ -654,6 +654,45 @@ model ai_usage_logs {
   @@map("ai_usage_logs")
 }
 
+/// Per-learner, per-day reservation ledger for client-side speech access.
+/// Units are seconds for ASR, TTS and pronunciation assessment.
+model speech_quota_buckets {
+  id             String   @id @default(uuid())
+  learnerId      String
+  usageDate      DateTime @db.Date
+  serviceKind    String
+  limitUnits     Float
+  reservedUnits  Float    @default(0)
+  consumedUnits  Float    @default(0)
+  updatedAt      DateTime @updatedAt
+
+  reservations speech_quota_reservations[]
+
+  @@unique([learnerId, usageDate, serviceKind])
+  @@index([learnerId, usageDate])
+  @@map("speech_quota_buckets")
+}
+
+model speech_quota_reservations {
+  id             String   @id @default(uuid())
+  learnerId      String
+  serviceKind    String
+  requestedUnits Float
+  consumedUnits  Float    @default(0)
+  status         String   @default("reserved") // reserved | settled | released
+  idempotencyKey String   @unique
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  settledAt      DateTime?
+  bucketId       String
+
+  bucket speech_quota_buckets @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+
+  @@index([learnerId, serviceKind, status])
+  @@index([expiresAt])
+  @@map("speech_quota_reservations")
+}
+
 model ai_fallback_logs {
   id           String   @id @default(uuid())
   learnerId    String?
