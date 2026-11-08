@@ -229,7 +229,7 @@ export class InMemoryUsageLedger implements UsageLedger {
  * 只做选择，不做调用 —— 调用由 AI Gateway 负责（D-012）。
  */
 export class ModelRouterImpl {
-  private readonly config: RouterConfig;
+  private config: RouterConfig;
   private readonly ledger: UsageLedger;
   private providerAliases?: Partial<Record<ServiceKind, string>>;
   private modelAliases?: Partial<Record<ServiceKind, string>>;
@@ -250,6 +250,11 @@ export class ModelRouterImpl {
     this.modelAliases ??= {};
     this.providerAliases[serviceKind] = providerAlias;
     this.modelAliases[serviceKind] = modelAlias;
+  }
+
+  /** Replace policy after a validated admin/database configuration update. */
+  setConfig(config: RouterConfig): void {
+    this.config = config;
   }
 
   get usageLedger(): UsageLedger {
@@ -318,18 +323,23 @@ export class ModelRouterImpl {
       strategy: string;
     }> = [];
 
-    if (escalatedLevel && levelRank(escalatedLevel) > levelRank(rule.primary.level)) {
-      // 升级：主模型同级不可用时，优先使用升级目标的别名
+    const escalatedCandidates = escalatedLevel && levelRank(escalatedLevel) > levelRank(rule.primary.level)
+      ? rule.fallback
+          .filter((candidate) => levelRank(candidate.level) >= levelRank(escalatedLevel))
+          .sort((a, b) => levelRank(a.level) - levelRank(b.level))
+      : [];
+    for (const candidate of escalatedCandidates) {
       candidates.push({
-        providerAlias: `escalated_${escalatedLevel.toLowerCase()}`,
-        modelAlias: `escalated_${escalatedLevel.toLowerCase()}`,
-        level: escalatedLevel,
+        ...candidate,
         strategy: `escalated_on_${signals.join('+')}`,
       });
     }
 
     candidates.push({ ...rule.primary, strategy: 'primary' });
     for (const fb of rule.fallback) {
+      if (escalatedCandidates.some((candidate) => candidate.providerAlias === fb.providerAlias && candidate.modelAlias === fb.modelAlias)) {
+        continue;
+      }
       candidates.push({ ...fb, strategy: 'fallback' });
     }
 

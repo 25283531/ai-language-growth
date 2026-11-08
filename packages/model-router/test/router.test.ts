@@ -35,6 +35,9 @@ describe('Model Router', () => {
     });
     assert.equal(decision.level, 'L2');
     assert.equal(decision.fellBack, true);
+    assert.equal(decision.providerAlias, 'mid_llm');
+    assert.equal(decision.modelAlias, 'mid_llm_01');
+    assert.equal(decision.strategy, 'escalated_on_child_did_not_understand');
     assert.ok(decision.escalationSignals.includes('child_did_not_understand'));
   });
 
@@ -53,6 +56,28 @@ describe('Model Router', () => {
     const decision = await configurableRouter.route({ serviceKind: 'llm', taskRoute: 'llm.simple_dialogue' });
     assert.equal(decision.providerAlias, 'configured_llm');
     assert.equal(decision.modelAlias, 'child-model-v2');
+  });
+
+  it('可以运行时替换任务路由策略并使用真实备选模型升级', async () => {
+    const configurableRouter = new ModelRouterImpl();
+    configurableRouter.setConfig({
+      ...DEFAULT_ROUTER_CONFIG,
+      rules: DEFAULT_ROUTER_CONFIG.rules.map((rule) => rule.taskRoute === 'llm.simple_dialogue'
+        ? {
+            ...rule,
+            primary: { providerAlias: 'configured_light', modelAlias: 'child-light', level: 'L1' },
+            fallback: [{ providerAlias: 'configured_mid', modelAlias: 'child-mid', level: 'L2' }],
+          }
+        : rule),
+    });
+    const decision = await configurableRouter.route({
+      serviceKind: 'llm',
+      taskRoute: 'llm.simple_dialogue',
+      escalationSignals: ['child_did_not_understand'],
+    });
+    assert.equal(decision.providerAlias, 'configured_mid');
+    assert.equal(decision.modelAlias, 'child-mid');
+    assert.equal(decision.level, 'L2');
   });
 
   it('全部供应商标��失败时降级到 L0 本地规则', async () => {
