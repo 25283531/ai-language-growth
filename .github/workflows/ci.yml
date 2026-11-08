@@ -64,6 +64,7 @@ jobs:
         run: |
           npx tsx --test \
             services/backend/test/review-policy.test.ts \
+            services/backend/test/prisma-usage-ledger.test.ts \
             packages/skill-graph/test/mastery.test.ts \
             packages/model-router/test/router.test.ts \
             packages/ai-provider-sdk/test/*.test.ts

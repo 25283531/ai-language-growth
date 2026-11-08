@@ -151,6 +151,20 @@ export class OrchestratorService {
     });
 
     const speech = await this.synthesize(directive);
+    await this.router.recordUsage(
+      usageRecord({
+        id: `usage-tts-start-${session.id}`,
+        learnerId: input.learnerId,
+        lessonSessionId: session.id,
+        serviceKind: 'tts',
+        taskRoute: 'tts.dynamic_teaching',
+        level: speech.meta.effectiveLevel,
+        providerAlias: speech.meta.providerAlias,
+        modelAlias: speech.meta.modelAlias,
+        ttsCharacters: speech.characters,
+        latencyMs: speech.meta.latencyMs,
+      }),
+    );
     // 开课时把学习者已有能力状态一并交给客户端展示（契约 learnerState 字段）。
     const masteryStates = await this.learnerModel.getMasteryStates(input.learnerId);
 
@@ -362,9 +376,9 @@ export class OrchestratorService {
         lessonSessionId: input.lessonSessionId,
         serviceKind: 'tts',
         taskRoute: 'tts.dynamic_teaching',
-        level: routingDecision.level,
-        providerAlias: routingDecision.providerAlias,
-        modelAlias: routingDecision.modelAlias,
+        level: speech.meta.effectiveLevel,
+        providerAlias: speech.meta.providerAlias,
+        modelAlias: speech.meta.modelAlias,
         ttsCharacters: speech.characters,
         latencyMs: Date.now() - started,
       }),
@@ -846,7 +860,7 @@ export class OrchestratorService {
         lessonSessionId: input.lessonSessionId,
         serviceKind: 'llm',
         taskRoute: 'llm.simple_dialogue',
-        level: decision.level,
+        level: result.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
         providerAlias: result.providerAlias,
         modelAlias: result.modelAlias,
         inputTokens: result.inputTokens,
@@ -944,9 +958,9 @@ export class OrchestratorService {
           lessonSessionId: input.lessonSessionId,
           serviceKind: 'pronunciation',
           taskRoute: 'pronunciation.phoneme',
-          level: decision.level,
-          providerAlias: decision.providerAlias,
-          modelAlias: decision.modelAlias,
+          level: result.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
+          providerAlias: result.providerAlias,
+          modelAlias: result.modelAlias,
           pronunciationCalls: 1,
           latencyMs: result.latencyMs,
         }),
@@ -982,9 +996,9 @@ export class OrchestratorService {
           lessonSessionId: input.lessonSessionId,
           serviceKind: 'asr',
           taskRoute: 'asr.free_speech',
-          level: decision.level,
-          providerAlias: decision.providerAlias,
-          modelAlias: decision.modelAlias,
+          level: result.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
+          providerAlias: result.providerAlias,
+          modelAlias: result.modelAlias,
           asrSeconds: result.seconds,
           latencyMs: result.latencyMs,
         }),
@@ -1221,6 +1235,8 @@ export class OrchestratorService {
       reasons: string[];
       effectiveLevel: RoutingDecision['level'];
       providerAlias: string;
+      modelAlias: string;
+      latencyMs: number;
     };
   }> {
     const routingDecision =
@@ -1255,6 +1271,8 @@ export class OrchestratorService {
         reasons: outcome.reasons,
         effectiveLevel: outcome.effectiveLevel,
         providerAlias: outcome.providerAlias,
+        modelAlias: outcome.result.modelAlias,
+        latencyMs: outcome.latencyMs,
       },
     };
   }

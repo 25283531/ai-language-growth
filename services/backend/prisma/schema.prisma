@@ -629,6 +629,8 @@ model ai_usage_logs {
   learnerId      String?
   lessonSessionId String?
   modelId        String?
+  providerAlias  String   @default("unknown")
+  modelAlias     String   @default("unknown")
   serviceKind    String
   taskRoute      String
   level          String

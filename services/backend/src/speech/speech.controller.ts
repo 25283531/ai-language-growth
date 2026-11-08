@@ -118,7 +118,7 @@ export class UsageController {
       ...summary,
       // 有效教学成本 = 总成本 / 有效学习目标数（不是免费调用比例）
       note: '有效教学成本 = 总 API 成本 ÷ 实际完成的有效学习目标数',
-      // M1 只接了调用量，没有接价格表。costCny=0 表示「未计价」，绝不是「免费」。
+      // 当前路由还未关联到可计价的模型记录。costCny=0 表示「未计价」，绝不是「免费」。
       pricingStatus: 'unpriced',
       pricingNote:
         'M1 未接入供应商价格表，costCny 恒为 0 表示未计价而非零成本；' +

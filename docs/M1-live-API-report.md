@@ -95,6 +95,8 @@ classifyIntent → question
 - 真实适配器失败时 Gateway 回落 `mock_llm`，并把 `degraded` 与 `llm_fell_back_to_mock` 如实上报；
 - 实测 `in=149 / out=21 tokens`，账本 `llm.calls=1`。
 
+> 2026-11-08 更正：本报告形成时，`ai_usage_logs` 尚未接入运行时，账本统计仅在进程内存中；M2 的持久化账本现已写入用量表。模型价格尚未与运行时供应商配置关联，`costCny=0` 仍代表未计价，不代表免费。
+
 ---
 
 ## 3. 两家能力实测矩阵（2026-11-07 打真实请求核对）

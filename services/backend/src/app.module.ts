@@ -21,6 +21,7 @@ import {
 import { MediaController } from './media/media.controller';
 import { ProviderConfigController } from './providers/provider-config.controller';
 import { ProviderConfigService } from './providers/provider-config.service';
+import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
 
 @Module({
   imports: [ConfigModule],
@@ -42,12 +43,13 @@ import { ProviderConfigService } from './providers/provider-config.service';
     OrchestratorService,
     {
       provide: ModelRouterImpl,
-      useFactory: () => {
+      useFactory: (prisma: PrismaService) => {
         // Router 的供应商别名必须与 Gateway 实际注册的适配器来自同一份判断：
         // 未配置 BASE_URL 或被 AI_GATEWAY_LIVE_SERVICES 关闭的服务自动指向 Mock，
         // 避免出现「别名存在但适配器不存在」的静默降级。
-        return new ModelRouterImpl(undefined, undefined, resolveProviderAliases());
+        return new ModelRouterImpl(undefined, new PrismaUsageLedger(prisma), resolveProviderAliases());
       },
+      inject: [PrismaService],
     },
   ],
 })

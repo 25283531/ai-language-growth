@@ -169,9 +169,9 @@ export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
   fallbackOrder: ['L1', 'L2', 'L3'],
 };
 
-/** 成本账本条目（内存实现，M1 落库到 ai_usage_logs）。 */
+/** 成本账本接口：测试可用内存实现，后端生产通过 Prisma 写入 ai_usage_logs。 */
 export interface UsageLedger {
-  add(record: UsageRecord): void;
+  add(record: UsageRecord): void | Promise<void>;
   summary(filter?: {
     learnerId?: string;
     lessonSessionId?: string;
@@ -179,11 +179,15 @@ export interface UsageLedger {
     totalCostCny: number;
     byService: Record<string, { calls: number; costCny: number }>;
     byLevel: Record<string, { calls: number; costCny: number }>;
-  };
-  list(filter?: { learnerId?: string; lessonSessionId?: string }): UsageRecord[];
+  } | Promise<{
+    totalCostCny: number;
+    byService: Record<string, { calls: number; costCny: number }>;
+    byLevel: Record<string, { calls: number; costCny: number }>;
+  }>;
+  list(filter?: { learnerId?: string; lessonSessionId?: string }): UsageRecord[] | Promise<UsageRecord[]>;
 }
 
-/** 内存用量账本。M1 用于单测与本地运行，生产由 Prisma 实现同一接口。 */
+/** 内存用量账本。用于单测与独立本地运行；后端生产注入 Prisma 实现。 */
 export class InMemoryUsageLedger implements UsageLedger {
   private readonly records: UsageRecord[] = [];
 
@@ -354,12 +358,12 @@ export class ModelRouterImpl {
 
   /** 记录一条用量。 */
   async recordUsage(record: UsageRecord): Promise<void> {
-    this.ledger.add(record);
+    await this.ledger.add(record);
   }
 
   /** 查询用量汇总。 */
   async usageSummary(filter?: { learnerId?: string; lessonSessionId?: string }) {
-    return this.ledger.summary(filter);
+    return await this.ledger.summary(filter);
   }
 }
 
