@@ -44,7 +44,7 @@ export class MemoryAdminController {
     if (!existing) throw new BadRequestException('学习记忆不存在');
     return this.prisma.interaction_memories.update({
       where: { id: memoryId },
-      data: { ...parsed.data, expiresAt: parsed.data.expiresAt === undefined ? undefined : parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null, source: 'caregiver_corrected' },
+      data: { ...parsed.data, expiresAt: parsed.data.expiresAt === undefined ? undefined : parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null, source: 'admin_corrected' },
     });
   }
 
