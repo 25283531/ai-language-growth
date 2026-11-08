@@ -1358,7 +1358,7 @@ export class OrchestratorService {
       teacherUtteranceZh: string;
     };
 
-    const teacherProfile = await this.prisma.teacher_profiles.findFirst({ orderBy: { createdAt: 'asc' }, select: { adjustable: true, style: true } });
+    const teacherProfile = await this.getLearnerTeacherProfile(input.learnerId);
     const adjustable = teacherProfile?.adjustable && typeof teacherProfile.adjustable === 'object' && !Array.isArray(teacherProfile.adjustable)
       ? teacherProfile.adjustable as Record<string, unknown>
       : {};
@@ -1413,6 +1413,43 @@ export class OrchestratorService {
         '始终保护儿童安全，不嘲笑、不施压，诚实说明自己是 AI 老师。',
       ].join('；'),
     };
+  }
+
+  /**
+   * 每个学习者使用从统一模板派生的独立教师档案。
+   * 运行时只读取白名单风格参数；核心安全原则不从模型或学习者数据中覆盖。
+   */
+  private async getLearnerTeacherProfile(learnerId: string) {
+    const existing = await this.prisma.teacher_profiles.findUnique({ where: { learnerId } });
+    if (existing) return existing;
+    const template = await this.prisma.teacher_profiles.findFirst({
+      where: { learnerId: null },
+      orderBy: { createdAt: 'asc' },
+    }) ?? await this.prisma.teacher_profiles.create({
+      data: {
+        id: 'default-teacher',
+        name: '英语成长老师',
+        coreTraits: { childSafety: true, honestAiIdentity: true, noShaming: true, noPressure: true, ageAppropriate: true },
+        adjustable: { tone: 'gentle', encouragement: 'balanced', correctionStyle: 'hint_first', speakingRate: 0.65 },
+        style: 'patient_guide',
+      },
+    });
+    try {
+      return await this.prisma.teacher_profiles.create({
+        data: {
+          name: template.name,
+          coreTraits: template.coreTraits as object,
+          adjustable: template.adjustable as object,
+          style: template.style,
+          stage: template.stage,
+          version: 1,
+          learnerId,
+        },
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'P2002') throw error;
+      return this.prisma.teacher_profiles.findUniqueOrThrow({ where: { learnerId } });
+    }
   }
 
   /** 生成语音。 */

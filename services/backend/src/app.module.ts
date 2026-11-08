@@ -28,6 +28,7 @@ import { SpeechQuotaService } from './usage/speech-quota.service';
 import { RoutingConfigController } from './routing/routing-config.controller';
 import { RoutingConfigService } from './routing/routing-config.service';
 import { MembershipAdminController } from './membership/membership-admin.controller';
+import { CurriculumAdminController } from './curriculum/curriculum-admin.controller';
 
 @Module({
   imports: [ConfigModule],
@@ -43,6 +44,7 @@ import { MembershipAdminController } from './membership/membership-admin.control
     MemoryAdminController,
     RoutingConfigController,
     MembershipAdminController,
+    CurriculumAdminController,
   ],
   providers: [
     PrismaService,

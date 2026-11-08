@@ -56,6 +56,7 @@ model learner_profiles {
   reviews      review_schedules[]
   memories     interaction_memories[]
   growthSnapshots learner_growth_snapshots[]
+  teacherProfile teacher_profiles?
 
   @@index([guardianId])
   @@map("learner_profiles")
@@ -175,13 +176,99 @@ model curriculum_units {
   id          String   @id @default(uuid())
   topicId     String
   stage       Int
+  level       String   @default("A")
   title       String
   description String?
   order       Int      @default(0)
   reviewStatus String  @default("pending_review")
+  textbookUnitId String?
+  publishedAt DateTime?
 
+  textbookUnit textbook_units? @relation(fields: [textbookUnitId], references: [id], onDelete: SetNull)
   @@index([topicId])
+  @@index([level, reviewStatus])
+  @@index([textbookUnitId])
   @@map("curriculum_units")
+}
+
+model textbook_catalogs {
+  id              String   @id @default(uuid())
+  publisher       String
+  publicationYear Int
+  grade           String
+  title           String?
+  edition         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  units textbook_units[]
+  drafts curriculum_drafts[]
+
+  @@unique([publisher, publicationYear, grade, title, edition])
+  @@index([publisher, publicationYear, grade])
+  @@map("textbook_catalogs")
+}
+
+model textbook_units {
+  id          String   @id @default(uuid())
+  textbookId  String
+  unitCode    String
+  title       String
+  order       Int      @default(0)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  textbook textbook_catalogs @relation(fields: [textbookId], references: [id], onDelete: Cascade)
+  curriculumUnits curriculum_units[]
+  drafts curriculum_drafts[]
+
+  @@unique([textbookId, unitCode])
+  @@index([textbookId, order])
+  @@map("textbook_units")
+}
+
+model curriculum_drafts {
+  id             String   @id @default(uuid())
+  title          String
+  level          String
+  topicId        String?
+  textbookId     String?
+  textbookUnitId String?
+  wordList       Json
+  generatedContent Json?
+  status         String   @default("draft") // draft | generated | under_review | approved | published | rejected | archived
+  createdBy      String?
+  reviewedBy     String?
+  reviewNote     String?
+  generatedAt    DateTime?
+  publishedAt    DateTime?
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  textbook textbook_catalogs? @relation(fields: [textbookId], references: [id], onDelete: SetNull)
+  textbookUnit textbook_units? @relation(fields: [textbookUnitId], references: [id], onDelete: SetNull)
+  reviews curriculum_review_records[]
+
+  @@index([status, level])
+  @@index([textbookId, textbookUnitId])
+  @@map("curriculum_drafts")
+}
+
+model curriculum_review_records {
+  id          String   @id @default(uuid())
+  draftId     String
+  action      String   // generated | submitted | approved | rejected | published | archived
+  reviewer    String?
+  note        String?
+  snapshot    Json
+  createdAt   DateTime @default(now())
+
+  draft curriculum_drafts @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@index([draftId, createdAt])
+  @@map("curriculum_review_records")
 }
 
 model vocabulary_items {
@@ -414,6 +501,10 @@ model media_assets {
   teacherSpeed Float?
   durationMs  Int?
   checksum    String?
+  sourceUrl   String?
+  attribution String?
+  license     String?
+  sourceProvider String?
   createdAt   DateTime @default(now())
 
   @@index([checksum])
@@ -430,11 +521,13 @@ model teacher_profiles {
   style       String
   stage       Int      @default(0)
   version     Int      @default(1)
+  learnerId   String?  @unique
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   memories    interaction_memories[]
   history     persona_history[]
+  learner     learner_profiles? @relation(fields: [learnerId], references: [id], onDelete: Cascade)
 
   @@map("teacher_profiles")
 }

@@ -17,6 +17,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Curriculum } from '@alg/curriculum';
 import { SkillGraph } from '@alg/skill-graph';
 import type { MasteryState, TeachingActivity } from '@alg/shared-contracts';
+import { teachingActivitySchema } from '@alg/shared-contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { chooseReviewActivity, nextReviewIntervalDays } from './review-policy';
 
@@ -71,8 +72,8 @@ export class PlannerService {
     });
 
     for (const review of dueReviews) {
-      const reviewActivities = this.curriculum.activitiesForSkill(review.skillNodeId)
-        .filter((activity) => activity.m1Scope && !input.excludeActivityIds.includes(activity.id));
+      const reviewActivities = (await this.activitiesForSkill(review.skillNodeId, input.topicId))
+        .filter((activity) => !input.excludeActivityIds.includes(activity.id));
       const originalActivity = review.learningItemId
         ? this.curriculum.getActivity(review.learningItemId)
         : undefined;
@@ -127,8 +128,7 @@ export class PlannerService {
 
     // —— 2. 回到上一堂课中仍需巩固的能力 ——
     for (const skillNodeId of input.followUpSkillNodeIds ?? []) {
-      const followUp = this.curriculum.activitiesForSkill(skillNodeId).find((activity) =>
-        activity.m1Scope &&
+      const followUp = (await this.activitiesForSkill(skillNodeId, input.topicId)).find((activity) =>
         activity.topicId === input.topicId &&
         !input.excludeActivityIds.includes(activity.id),
       );
@@ -144,9 +144,8 @@ export class PlannerService {
 
     // —— 3. 选取主题内下一个可排的活动 ——
     const states = await this.getStates(input.learnerId);
-    const activities = this.curriculum
-      .activitiesOf(input.topicId)
-      .filter((a) => a.m1Scope && !input.excludeActivityIds.includes(a.id));
+    const activities = (await this.activitiesOf(input.topicId))
+      .filter((a) => !input.excludeActivityIds.includes(a.id));
 
     if (activities.length === 0) {
       return null;
@@ -213,6 +212,25 @@ export class PlannerService {
 
   private topicName(topicId: string): string {
     return this.curriculum.getTopic(topicId)?.name ?? topicId;
+  }
+
+  /** 已发布课程优先于内置 M1 内容；数据库课程无效时安全回落到内置活动。 */
+  private async activitiesOf(topicId: string): Promise<TeachingActivity[]> {
+    const rows = await this.prisma.learning_items.findMany({
+      where: { topicId, reviewStatus: 'published' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const activities = rows
+      .map((row) => teachingActivitySchema.safeParse(row.content))
+      .filter((parsed): parsed is { success: true; data: TeachingActivity } => parsed.success)
+      .map((parsed) => parsed.data);
+    return activities.length ? activities : this.curriculum.activitiesOf(topicId);
+  }
+
+  private async activitiesForSkill(skillNodeId: string, topicId: string): Promise<TeachingActivity[]> {
+    const activities = await this.activitiesOf(topicId);
+    const scoped = activities.filter((activity) => activity.skillNodeIds.includes(skillNodeId));
+    return scoped.length ? scoped : this.curriculum.activitiesForSkill(skillNodeId);
   }
 
   /**

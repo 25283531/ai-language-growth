@@ -59,7 +59,7 @@ export class MemoryAdminController {
   @Get('teacher-profile')
   async getTeacherProfile(@Headers('x-admin-token') token: string | undefined) {
     this.authorize(token);
-    const profile = await this.prisma.teacher_profiles.findFirst({ orderBy: { createdAt: 'asc' } });
+    const profile = await this.prisma.teacher_profiles.findFirst({ where: { learnerId: null }, orderBy: { createdAt: 'asc' } });
     return profile ?? this.prisma.teacher_profiles.create({ data: { id: 'default-teacher', name: '英语成长老师', coreTraits: defaultCore, adjustable: defaultAdjustable, style: 'patient_guide' } });
   }
 
@@ -68,7 +68,7 @@ export class MemoryAdminController {
     this.authorize(token);
     const parsed = profileInput.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    const current = await this.prisma.teacher_profiles.findFirst({ orderBy: { createdAt: 'asc' } }) ?? await this.prisma.teacher_profiles.create({ data: { id: 'default-teacher', name: '英语成长老师', coreTraits: defaultCore, adjustable: defaultAdjustable, style: 'patient_guide' } });
+    const current = await this.prisma.teacher_profiles.findFirst({ where: { learnerId: null }, orderBy: { createdAt: 'asc' } }) ?? await this.prisma.teacher_profiles.create({ data: { id: 'default-teacher', name: '英语成长老师', coreTraits: defaultCore, adjustable: defaultAdjustable, style: 'patient_guide' } });
     const nextVersion = current.version + 1;
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.teacher_profiles.update({ where: { id: current.id }, data: { adjustable: parsed.data.adjustable, style: parsed.data.style, stage: 1, version: nextVersion } });
@@ -82,7 +82,7 @@ export class MemoryAdminController {
   @Get('teacher-profile/history')
   async teacherProfileHistory(@Headers('x-admin-token') token: string | undefined) {
     this.authorize(token);
-    const profile = await this.prisma.teacher_profiles.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+    const profile = await this.prisma.teacher_profiles.findFirst({ where: { learnerId: null }, orderBy: { createdAt: 'asc' }, select: { id: true } });
     if (!profile) return [];
     return this.prisma.persona_history.findMany({ where: { teacherProfileId: profile.id }, orderBy: { createdAt: 'desc' }, take: 100 });
   }
