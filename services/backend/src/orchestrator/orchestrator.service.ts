@@ -181,6 +181,13 @@ export class OrchestratorService {
     }
 
     const speech = await this.synthesize(directive);
+    await this.prisma.lesson_sessions.update({
+      where: { id: session.id },
+      data: {
+        currentDirective: directive as unknown as object,
+        currentSpeech: speech.speech as unknown as object,
+      },
+    });
     await this.router.recordUsage(
       usageRecord({
         id: `usage-tts-start-${session.id}`,
@@ -301,6 +308,19 @@ export class OrchestratorService {
         })
       : null;
     const isReviewRound = Boolean(state.currentReviewScheduleId);
+
+    // 播放控制只影响老师的讲解，不构成学习答案，也不产生能力证据。
+    if (intent === 'repeat_request' || intent === 'slow_request') {
+      const playback = await this.handlePlaybackRequest({
+        session,
+        learnerId: input.learnerId,
+        idempotencyKey: input.idempotencyKey,
+        response: input.response,
+        intent,
+        state,
+      });
+      if (playback) return playback;
+    }
 
     // —— 第三步：按需评估 ——
     const assessment = await this.assess({
@@ -517,6 +537,140 @@ export class OrchestratorService {
       },
     });
 
+    await this.prisma.lesson_sessions.update({
+      where: { id: input.lessonSessionId },
+      data: {
+        currentDirective: directive as unknown as object,
+        currentSpeech: speech.speech as unknown as object,
+      },
+    });
+
+    return result;
+  }
+
+  private async handlePlaybackRequest(input: {
+    session: {
+      id: string;
+      currentDirective: unknown;
+      currentSpeech: unknown;
+    };
+    learnerId: string;
+    idempotencyKey: string;
+    response: LearnerResponse;
+    intent: 'repeat_request' | 'slow_request';
+    state: SessionRuntimeState;
+  }): Promise<TurnResponse | null> {
+    if (!input.session.currentDirective || !input.session.currentSpeech) return null;
+
+    const started = Date.now();
+    const directive = structuredClone(input.session.currentDirective) as TeachingDirective;
+    let speech = structuredClone(input.session.currentSpeech) as TurnResponse['speech'];
+    let routingDecision = await this.router.route({
+      serviceKind: 'tts',
+      taskRoute: 'tts.dynamic_teaching',
+    });
+    let ttsCharacters = 0;
+
+    if (input.intent === 'repeat_request') {
+      speech.cached = true;
+    } else {
+      directive.voice.teacherSpeed = Math.max(0.25, Math.round((directive.voice.teacherSpeed - 0.15) * 100) / 100);
+      const synthesized = await this.synthesize(directive, routingDecision);
+      speech = synthesized.speech;
+      ttsCharacters = synthesized.characters;
+      routingDecision = {
+        ...routingDecision,
+        level: synthesized.meta.effectiveLevel,
+        providerAlias: synthesized.meta.providerAlias,
+      };
+      await this.router.recordUsage(
+        usageRecord({
+          id: `usage-slow-${input.session.id}-${input.state.turnCount}`,
+          learnerId: input.learnerId,
+          lessonSessionId: input.session.id,
+          serviceKind: 'tts',
+          taskRoute: 'tts.dynamic_teaching',
+          level: synthesized.meta.effectiveLevel,
+          providerAlias: synthesized.meta.providerAlias,
+          modelAlias: synthesized.meta.modelAlias,
+          ttsCharacters,
+          latencyMs: Date.now() - started,
+        }),
+      );
+      await this.prisma.lesson_sessions.update({
+        where: { id: input.session.id },
+        data: {
+          currentDirective: directive as unknown as object,
+          currentSpeech: speech as unknown as object,
+        },
+      });
+    }
+
+    const turnIndex = input.state.turnCount;
+    input.state.turnCount += 1;
+    await this.prisma.lesson_sessions.update({
+      where: { id: input.session.id },
+      data: { turnCount: input.state.turnCount },
+    });
+
+    const result: TurnResponse = {
+      lessonSessionId: input.session.id,
+      turnIndex,
+      directive,
+      speech,
+      assessment: {
+        performedPronunciationAssessment: false,
+        performedAsr: false,
+        score: null,
+        passed: false,
+        errorUnits: [],
+        prompted: false,
+        independent: false,
+        thresholdVersion: null,
+      },
+      evidence: [],
+      stateChanges: [],
+      routing: {
+        taskRoute: 'tts.dynamic_teaching',
+        level: routingDecision.level,
+        strategy: routingDecision.strategy,
+        fellBack: routingDecision.fellBack,
+        providerAlias: routingDecision.providerAlias,
+        escalationSignals: [],
+        latencyMs: Date.now() - started,
+        cost: {
+          llmInputTokens: 0,
+          llmOutputTokens: 0,
+          ttsCharacters,
+          asrSeconds: 0,
+          pronunciationCalls: 0,
+          estimatedCostCny: 0,
+        },
+      },
+      degradation: {
+        degraded: false,
+        reasons: [],
+        offlineFallback: false,
+        effectiveLevel: routingDecision.level,
+      },
+      intent: input.intent,
+      lessonFinished: false,
+      summary: null,
+    };
+
+    await this.prisma.interaction_events.create({
+      data: {
+        id: `ie-${input.idempotencyKey}`,
+        lessonSessionId: input.session.id,
+        learnerId: input.learnerId,
+        turnIndex,
+        idempotencyKey: input.idempotencyKey,
+        intent: input.intent,
+        input: input.response as unknown as object,
+        output: result as unknown as object,
+        latencyMs: Date.now() - started,
+      },
+    });
     return result;
   }
 

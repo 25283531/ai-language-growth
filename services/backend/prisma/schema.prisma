@@ -269,6 +269,8 @@ model lesson_sessions {
   methodState    Json     @default("{}")
   currentActivityId String?
   currentReviewScheduleId String?
+  currentDirective Json?
+  currentSpeech Json?
   startedAt      DateTime @default(now())
   finishedAt     DateTime?
   summary        String?

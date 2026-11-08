@@ -45,6 +45,27 @@ test('M1 HTTP loop starts, responds idempotently, caches TTS, and archives growt
   assert.ok(lesson.directive.teacherUtterance);
   assert.ok(lesson.learnerState.masteryStates);
 
+  const repeatTurn = await request(`/lessons/${lesson.lessonSessionId}/turn`, {
+    learnerId,
+    response: { requestedRepeat: true },
+    idempotencyKey: `ci-repeat-${runId}`,
+  });
+  assert.equal(repeatTurn.intent, 'repeat_request');
+  assert.equal(repeatTurn.speech.cached, true);
+  assert.deepEqual(repeatTurn.evidence, []);
+  assert.deepEqual(repeatTurn.stateChanges, []);
+  assert.equal(repeatTurn.speech.audioRef, lesson.speech.audioRef);
+
+  const slowTurn = await request(`/lessons/${lesson.lessonSessionId}/turn`, {
+    learnerId,
+    response: { requestedSlower: true },
+    idempotencyKey: `ci-slow-${runId}`,
+  });
+  assert.equal(slowTurn.intent, 'slow_request');
+  assert.ok(slowTurn.speech.teacherSpeed < repeatTurn.speech.teacherSpeed);
+  assert.deepEqual(slowTurn.evidence, []);
+  assert.deepEqual(slowTurn.stateChanges, []);
+
   const turnBody = {
     learnerId,
     response: { text: 'Why do people say hello?', freeUtterance: 'Why do people say hello?' },
