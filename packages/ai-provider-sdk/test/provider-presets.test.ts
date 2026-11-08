@@ -21,7 +21,7 @@ describe('预置模型接入平台', () => {
       assert.ok(preset, `缺少 ${id} 预置`);
       assert.deepEqual(preset.services, services);
       for (const service of services) {
-        assert.match(preset.defaultBaseUrls[service] ?? '', /^https?:\/\//);
+        assert.match(preset.defaultBaseUrls[service] ?? '', /^(https?|wss?):\/\//);
       }
     }
     assert.deepEqual(getProviderPreset('tencent-soe')?.services, ['pronunciation']);
