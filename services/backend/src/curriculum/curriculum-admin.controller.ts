@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProviderConfigService } from '../providers/provider-config.service';
 import { z } from 'zod';
 import { teachingActivitySchema } from '@alg/shared-contracts';
+import type { Prisma } from '@prisma/client';
 
 const levelSchema = z.string().trim().min(1).max(24);
 const textbookSchema = z.object({
@@ -108,7 +109,7 @@ export class CurriculumAdminController {
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const textbook = await this.prisma.textbook_catalogs.findUnique({ where: { id: textbookId }, select: { id: true } });
     if (!textbook) throw new BadRequestException('教材不存在');
-    return this.prisma.textbook_units.create({ data: { textbookId, ...parsed.data } });
+    return this.prisma.textbook_units.create({ data: { textbook: { connect: { id: textbookId } }, ...parsed.data } });
   }
 
   @Get('drafts')
@@ -278,10 +279,10 @@ export class CurriculumAdminController {
     const content = { ...parsed.data, level: draft.level };
     const updated = await this.prisma.curriculum_drafts.update({
       where: { id: draftId },
-      data: { title: parsed.data.title, generatedContent: content, status: 'generated', version: { increment: 1 } },
+      data: { title: parsed.data.title, generatedContent: content as Prisma.InputJsonValue, status: 'generated', version: { increment: 1 } },
     });
     await this.prisma.curriculum_review_records.create({
-      data: { draftId, action: 'generated', reviewer: 'admin-edit', note: '人工编辑课程草稿', snapshot: content },
+      data: { draftId, action: 'generated', reviewer: 'admin-edit', note: '人工编辑课程草稿', snapshot: content as Prisma.InputJsonValue },
     });
     return updated;
   }
