@@ -40,6 +40,9 @@ import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PlannerService } from '../planner/planner.service';
 import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
 import { PrismaService } from '../prisma/prisma.service';
+import { GrowthMentorService } from '../agents/growth-mentor.service';
+import { MemoryManagerService } from '../agents/memory-manager.service';
+import { PersonalityEngineService } from '../agents/personality-engine.service';
 
 /**
  * 离线兜底的固定课程内容（D-015 降级链最后一步）。
@@ -96,12 +99,14 @@ export class OrchestratorService {
     @Inject(PlannerService) private readonly planner: PlannerService,
     @Inject(AiGatewayService) private readonly gateway: AiGatewayService,
     @Inject(ModelRouterImpl) private readonly router: ModelRouterImpl,
+    @Inject(GrowthMentorService) private readonly growthMentor: GrowthMentorService,
+    @Inject(MemoryManagerService) private readonly memoryManager: MemoryManagerService,
+    @Inject(PersonalityEngineService) private readonly personalityEngine: PersonalityEngineService,
   ) {}
 
   /** 开课。 */
   /** 返回类型直接绑定契约，避免实现与 lessonStartResponseSchema 漂移。 */
   async startLesson(input: { learnerId: string; topicId?: string }): Promise<LessonStartResponse> {
-    const topicId = input.topicId ?? 'topic-greetings';
     const previousArchive = await this.prisma.learner_growth_snapshots.findFirst({
       where: { learnerId: input.learnerId },
       orderBy: { createdAt: 'desc' },
@@ -114,6 +119,7 @@ export class OrchestratorService {
         unsuccessfulAttempts: number;
         independentSuccesses: number;
       }>;
+      nextFocusSkillNodeIds?: string[];
     } | undefined;
     const previousFinishedSession = previousSnapshot?.session?.topicId
       ? null
@@ -123,7 +129,13 @@ export class OrchestratorService {
           select: { topicId: true },
         });
     const previousTopicId = previousSnapshot?.session?.topicId ?? previousFinishedSession?.topicId;
-    const followUpSkillNodeIds = selectFollowUpSkillNodeIds(previousSnapshot?.evidenceBySkill ?? []);
+    // 未指定主题时沿用最近完成课程的主题，让隔天重进真正延续教学上下文；
+    // Planner 仍会依据能力、复习和跨场景证据决定具体活动，不把主题顺序当成能力状态。
+    const topicId = input.topicId ?? previousTopicId ?? 'topic-greetings';
+    const followUpSkillNodeIds = Array.from(new Set([
+      ...selectFollowUpSkillNodeIds(previousSnapshot?.evidenceBySkill ?? []),
+      ...(previousSnapshot?.nextFocusSkillNodeIds ?? []),
+    ])).slice(0, 5);
     const session = await this.prisma.lesson_sessions.create({
       data: {
         learnerId: input.learnerId,
@@ -322,6 +334,21 @@ export class OrchestratorService {
       if (playback) return playback;
     }
 
+    // 普通交流不属于当前学习任务：只回应孩子并保留当前活动、复习项和方法阶梯。
+    // 这样闲聊/提问不会被误写成学习证据，也不会因为一次闲聊推进课程。
+    if (intent === 'question' || intent === 'small_talk') {
+      return this.handleConversationalTurn({
+        session,
+        learnerId: input.learnerId,
+        response: input.response,
+        idempotencyKey: input.idempotencyKey,
+        intent,
+        state,
+        activityId: currentActivity!.id,
+        isReview: isReviewRound,
+      });
+    }
+
     // —— 第三步：按需评估 ——
     const assessment = await this.assess({
       response: input.response,
@@ -390,23 +417,10 @@ export class OrchestratorService {
       isReview: isReviewRound,
     });
 
-    // —— 第五步半：孩子突然提问时，LLM 只补一句回应话术 ——
-    // 教学决策（评估、证据、状态、下一活动、方法阶梯）已全部在上方由规则完成，
-    // LLM 不参与其中任何一步，输出只追加到老师说的话里，随后一并合成语音。
+    // 普通提问/闲聊已在评估前单独处理；学习回合不额外调用对话模型。
     let llmInputTokens = 0;
     let llmOutputTokens = 0;
     const llmDegradationReasons: string[] = [];
-    if (intent === 'question') {
-      const answer = await this.answerChildQuestion({
-        question: input.response.text ?? input.response.audioRef ?? '孩子提了一个问题',
-        learnerId: input.learnerId,
-        lessonSessionId: input.lessonSessionId,
-      });
-      llmInputTokens = answer.inputTokens;
-      llmOutputTokens = answer.outputTokens;
-      if (answer.degraded) llmDegradationReasons.push('llm_fell_back_to_mock');
-      directive.teacherUtterance = `${directive.teacherUtterance} ${answer.text}`.trim();
-    }
 
     const routingDecision = await this.router.route({
       serviceKind: 'tts',
@@ -674,6 +688,130 @@ export class OrchestratorService {
     return result;
   }
 
+  /** 回应提问/闲聊，但不改变当前学习任务的教学证据与方法状态。 */
+  private async handleConversationalTurn(input: {
+    session: {
+      id: string;
+      currentDirective: unknown;
+      currentSpeech: unknown;
+    };
+    learnerId: string;
+    response: LearnerResponse;
+    idempotencyKey: string;
+    intent: 'question' | 'small_talk';
+    state: SessionRuntimeState;
+    activityId: string;
+    isReview: boolean;
+  }): Promise<TurnResponse> {
+    const started = Date.now();
+    const directive = await this.buildDirective({
+      activityId: input.activityId,
+      learnerId: input.learnerId,
+      sessionId: input.session.id,
+      methodState: input.state.methodLadder,
+      errorUnits: [],
+      isReview: input.isReview,
+    });
+    const answer = await this.answerChildQuestion({
+      question: input.response.freeUtterance ?? input.response.text ?? '孩子想和老师聊一聊',
+      learnerId: input.learnerId,
+      lessonSessionId: input.session.id,
+      intent: input.intent,
+    });
+    directive.teacherUtterance = `${answer.text} ${directive.teacherUtterance}`.trim();
+
+    const routingDecision = await this.router.route({
+      serviceKind: 'tts',
+      taskRoute: 'tts.dynamic_teaching',
+    });
+    const speech = await this.synthesize(directive, routingDecision);
+    await this.router.recordUsage(
+      usageRecord({
+        id: `usage-conversation-tts-${input.session.id}-${input.state.turnCount}`,
+        learnerId: input.learnerId,
+        lessonSessionId: input.session.id,
+        serviceKind: 'tts',
+        taskRoute: 'tts.dynamic_teaching',
+        level: speech.meta.effectiveLevel,
+        providerAlias: speech.meta.providerAlias,
+        modelAlias: speech.meta.modelAlias,
+        ttsCharacters: speech.characters,
+        latencyMs: Date.now() - started,
+      }),
+    );
+
+    const turnIndex = input.state.turnCount;
+    input.state.turnCount += 1;
+    await this.prisma.lesson_sessions.update({
+      where: { id: input.session.id },
+      data: {
+        turnCount: input.state.turnCount,
+        currentDirective: directive as unknown as object,
+        currentSpeech: speech.speech as unknown as object,
+      },
+    });
+
+    const result: TurnResponse = {
+      lessonSessionId: input.session.id,
+      turnIndex,
+      directive,
+      speech: speech.speech,
+      assessment: {
+        performedPronunciationAssessment: false,
+        performedAsr: false,
+        score: null,
+        passed: false,
+        errorUnits: [],
+        prompted: false,
+        independent: false,
+        thresholdVersion: null,
+      },
+      evidence: [],
+      stateChanges: [],
+      routing: {
+        taskRoute: 'tts.dynamic_teaching',
+        level: speech.meta.effectiveLevel,
+        strategy: routingDecision.strategy,
+        fellBack: routingDecision.fellBack || speech.meta.degraded,
+        providerAlias: speech.meta.providerAlias,
+        escalationSignals: [],
+        latencyMs: Date.now() - started,
+        cost: {
+          llmInputTokens: answer.inputTokens,
+          llmOutputTokens: answer.outputTokens,
+          ttsCharacters: speech.characters,
+          asrSeconds: 0,
+          pronunciationCalls: 0,
+          estimatedCostCny: 0,
+        },
+      },
+      degradation: {
+        degraded: speech.meta.degraded || answer.degraded,
+        reasons: [...speech.meta.reasons, ...(answer.degraded ? ['llm_fell_back_to_mock'] : [])],
+        offlineFallback: false,
+        effectiveLevel: speech.meta.effectiveLevel,
+      },
+      intent: input.intent,
+      lessonFinished: false,
+      summary: null,
+    };
+
+    await this.prisma.interaction_events.create({
+      data: {
+        id: `ie-${input.idempotencyKey}`,
+        lessonSessionId: input.session.id,
+        learnerId: input.learnerId,
+        turnIndex,
+        idempotencyKey: input.idempotencyKey,
+        intent: input.intent,
+        input: input.response as unknown as object,
+        output: result as unknown as object,
+        latencyMs: Date.now() - started,
+      },
+    });
+    return result;
+  }
+
   /** 结课。 */
   async finishLesson(lessonSessionId: string, learnerId: string) {
     const session = await this.prisma.lesson_sessions.findUnique({
@@ -681,6 +819,41 @@ export class OrchestratorService {
     });
     if (!session) throw new Error(`课堂 ${lessonSessionId} 不存在`);
     if (session.learnerId !== learnerId) throw new ForbiddenException('课堂不属于该学习者');
+    if (session.status === 'finished') {
+      const archived = await this.prisma.learner_growth_snapshots.findUnique({
+        where: { lessonSessionId },
+        select: { snapshot: true },
+      });
+      const snapshot = archived?.snapshot as {
+        growthReport?: { strengths: string[]; practiceFocus: string[]; caregiverGuidance: string[] };
+        abilities?: Array<{ skillNodeId: string; masteryCode: number }>;
+        upcomingReviews?: Array<{ skillNodeId: string; dueAt: string; intervalDays: number }>;
+      } | undefined;
+      if (snapshot?.growthReport) {
+        const usage = await this.router.usageSummary({ lessonSessionId });
+        const completedGoals = (snapshot.abilities ?? [])
+          .filter((ability) => ability.masteryCode >= 2)
+          .map((ability) => ability.skillNodeId);
+        return {
+          lessonSessionId,
+          turns: session.turnCount,
+          completedGoals,
+          effectiveTeachingCostCny: completedGoals.length > 0
+            ? usage.totalCostCny / completedGoals.length
+            : usage.totalCostCny,
+          totalCostCny: usage.totalCostCny,
+          stateChanges: [],
+          summary: session.summary ?? '本堂课已完成。',
+          growthReport: snapshot.growthReport,
+          reviewScheduled: (snapshot.upcomingReviews ?? []).map((review) => ({
+            skillNodeId: review.skillNodeId,
+            dueAt: review.dueAt,
+            intervalDays: review.intervalDays,
+          })),
+          calibrationStatus: 'uncalibrated' as const,
+        };
+      }
+    }
 
     if (session.currentReviewScheduleId) {
       await this.planner.releaseReviewClaim({
@@ -689,7 +862,6 @@ export class OrchestratorService {
       });
     }
 
-    const usage = await this.router.usageSummary({ lessonSessionId });
     const stateChanges = await this.prisma.learner_skill_states.findMany({
       where: { learnerId },
     });
@@ -775,8 +947,55 @@ export class OrchestratorService {
         .slice(0, 3)
         .map(([unit, count]) => ({ unit, count })),
     }));
+    const nextFocusSkillNodeIds = await this.planner.planLongTermFocus({
+      learnerId,
+      evidenceBySkill: evidenceSummary.map((item) => ({
+        skillNodeId: item.skillNodeId,
+        unsuccessfulAttempts: item.unsuccessfulAttempts,
+        independentSuccesses: item.independentSuccesses,
+      })),
+    });
     const completedAt = new Date();
     const summary = `本堂课 ${session.turnCount} 轮，记录 ${sessionEvidence.length} 条学习证据，涉及 ${evidenceSummary.length} 项能力。档案为内部学习记录，状态未经儿童样本校准。`;
+    const growthReport = await this.growthMentor.createLessonReport({
+      learnerId,
+      lessonSessionId,
+      topicId: session.topicId,
+      turns: session.turnCount,
+      evidenceBySkill: evidenceSummary.map((item) => ({
+        skillNodeId: item.skillNodeId,
+        skillName: item.skillName,
+        evidenceCount: item.evidenceCount,
+        independentSuccesses: item.independentSuccesses,
+        unsuccessfulAttempts: item.unsuccessfulAttempts,
+        commonErrorUnits: item.commonErrorUnits,
+      })),
+      upcomingReviews: reviewScheduled.map((item) => ({
+        skillNodeId: item.skillNodeId,
+        intervalDays: item.intervalDays,
+      })),
+    });
+    const extractedMemories = await this.memoryManager.extractLessonMemories({
+      learnerId,
+      lessonSessionId,
+      topicId: session.topicId,
+      evidenceBySkill: evidenceSummary.map((item) => ({
+        skillName: item.skillName,
+        independentSuccesses: item.independentSuccesses,
+        unsuccessfulAttempts: item.unsuccessfulAttempts,
+      })),
+    });
+    await this.memoryManager.saveLessonMemories({ learnerId, lessonSessionId, memories: extractedMemories });
+    await this.personalityEngine.adaptAfterLesson({
+      learnerId,
+      lessonSessionId,
+      evidenceBySkill: evidenceSummary.map((item) => ({
+        independentSuccesses: item.independentSuccesses,
+        unsuccessfulAttempts: item.unsuccessfulAttempts,
+      })),
+      memories: extractedMemories,
+    });
+    const usage = await this.router.usageSummary({ lessonSessionId });
     const snapshot = {
       session: {
         lessonSessionId,
@@ -799,6 +1018,8 @@ export class OrchestratorService {
         dueAt: review.dueAt.toISOString(),
         intervalDays: review.intervalDays,
       })),
+      nextFocusSkillNodeIds,
+      growthReport,
       calibrationNotice: '内部原型状态，阈值未经真实儿童样本校准，不代表已掌握。',
     };
     const memoryContent = sessionEvidence.length === 0
@@ -810,6 +1031,10 @@ export class OrchestratorService {
             : ''),
         ).join('；')}。该摘要来自评估证据，不含原始语音或对话文本。`;
 
+    const existingLessonMemory = await this.prisma.interaction_memories.findFirst({
+      where: { sourceSessionId: lessonSessionId, memoryType: 'lesson_learning_summary' },
+      select: { id: true },
+    });
     await this.prisma.$transaction([
       this.prisma.lesson_sessions.update({
         where: { id: lessonSessionId },
@@ -825,22 +1050,25 @@ export class OrchestratorService {
         },
         update: { snapshot: snapshot as unknown as object },
       }),
-      this.prisma.interaction_memories.upsert({
-        where: { sourceSessionId: lessonSessionId },
-        create: {
-          id: `memory-${lessonSessionId}`,
-          learnerId,
-          sourceSessionId: lessonSessionId,
-          memoryType: 'lesson_learning_summary',
-          content: memoryContent,
-          importance: Math.min(1, 0.4 + Math.min(sessionEvidence.length, 20) * 0.03),
-          source: 'rule_summary',
-        },
-        update: {
-          content: memoryContent,
-          importance: Math.min(1, 0.4 + Math.min(sessionEvidence.length, 20) * 0.03),
-        },
-      }),
+      existingLessonMemory
+        ? this.prisma.interaction_memories.update({
+            where: { id: existingLessonMemory.id },
+            data: {
+              content: memoryContent,
+              importance: Math.min(1, 0.4 + Math.min(sessionEvidence.length, 20) * 0.03),
+            },
+          })
+        : this.prisma.interaction_memories.create({
+            data: {
+              id: `memory-${lessonSessionId}`,
+              learnerId,
+              sourceSessionId: lessonSessionId,
+              memoryType: 'lesson_learning_summary',
+              content: memoryContent,
+              importance: Math.min(1, 0.4 + Math.min(sessionEvidence.length, 20) * 0.03),
+              source: 'rule_summary',
+            },
+          }),
     ]);
 
     const effectiveTeachingCostCny =
@@ -854,6 +1082,7 @@ export class OrchestratorService {
       totalCostCny: usage.totalCostCny,
       stateChanges: [],
       summary,
+      growthReport,
       reviewScheduled: reviewScheduled.map((review) => ({
         skillNodeId: review.skillNodeId,
         dueAt: review.dueAt.toISOString(),
@@ -939,10 +1168,9 @@ export class OrchestratorService {
   private classifyIntent(response: LearnerResponse): IntentType {
     if (response.requestedSlower) return 'slow_request';
     if (response.requestedRepeat) return 'repeat_request';
-    if (!response.text && !response.audioRef && !response.selectedImageId) return 'no_answer';
-    if (response.freeUtterance) {
-      // 自由发言可能是提问，也可能是闲聊 —— M1 先判为提问
-      return 'question';
+    if (!response.text && !response.audioRef && !response.selectedImageId && !response.freeUtterance) return 'no_answer';
+    if (response.freeUtterance?.trim()) {
+      return isLikelyQuestion(response.freeUtterance) ? 'question' : 'small_talk';
     }
     return 'learning_answer';
   }
@@ -961,6 +1189,7 @@ export class OrchestratorService {
     question: string;
     learnerId: string;
     lessonSessionId: string;
+    intent?: 'question' | 'small_talk';
   }): Promise<{
     text: string;
     inputTokens: number;
@@ -974,19 +1203,26 @@ export class OrchestratorService {
       taskRoute: 'llm.simple_dialogue',
     });
 
-    const fallbackText = '这个问题我们先记下来，等一下一起找答案，好吗？';
+    const intent = input.intent ?? 'question';
+    const fallbackText = intent === 'small_talk'
+      ? '我听见啦，我们边聊边继续练习，好吗？'
+      : '这个问题我们先记下来，等一下一起找答案，好吗？';
     let result: LlmResponse;
     try {
       result = await this.gateway.llm(
         {
-          promptKey: 'teacher.child_question',
+          promptKey: intent === 'small_talk' ? 'teacher.small_talk' : 'teacher.child_question',
           promptVersion: 'm1.1',
           system: [
             '你是面向 6—9 岁英语零基础中国儿童的 AI 英语启蒙老师。',
-            '用简短、温柔、鼓励式的中文回应孩子的提问，最多两句话，不超过 60 个汉字。',
+            intent === 'small_talk'
+              ? '用简短、温柔、自然的中文回应孩子的闲聊，最多两句话，不超过 60 个汉字。'
+              : '用简短、温柔、鼓励式的中文回应孩子的提问，最多两句话，不超过 60 个汉字。',
             '可以自然带出一个简单英文单词，但不要展开讲解。',
             '不评价孩子说得对不对，不判断掌握程度，不布置新任务，不承诺教学结果。',
-            '不要解释科学原理、不要给事实性答案；温柔回应一两句后把话题带回当前的英语练习。',
+            intent === 'small_talk'
+              ? '不要把闲聊写成学习表现评价；回应一两句后自然带回当前英语练习。'
+              : '不要解释科学原理、不要给事实性答案；温柔回应一两句后把话题带回当前的英语练习。',
             '如果被问及身份，诚实说明自己是 AI 老师。只用纯文本输出要说的话，',
             '不要 JSON、不要标题、不要表情符号、不要 markdown。',
           ].join(''),
@@ -1358,7 +1594,19 @@ export class OrchestratorService {
       teacherUtteranceZh: string;
     };
 
-    const teacherProfile = await this.getLearnerTeacherProfile(input.learnerId);
+    const [teacherProfile, interactionMemories] = await Promise.all([
+      this.getLearnerTeacherProfile(input.learnerId),
+      this.prisma.interaction_memories.findMany({
+        where: {
+          learnerId: input.learnerId,
+          memoryType: { in: ['learning_preference', 'encouragement_preference'] },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        orderBy: [{ importance: 'desc' }, { updatedAt: 'desc' }],
+        take: 3,
+        select: { content: true },
+      }),
+    ]);
     const adjustable = teacherProfile?.adjustable && typeof teacherProfile.adjustable === 'object' && !Array.isArray(teacherProfile.adjustable)
       ? teacherProfile.adjustable as Record<string, unknown>
       : {};
@@ -1407,9 +1655,16 @@ export class OrchestratorService {
       methodVariant: input.methodState.current,
       consecutiveFailures: input.methodState.consecutiveFailures,
       personaHint: [
-        teacherProfile?.style === 'playful_companion' ? '活泼友好的学习伙伴' : teacherProfile?.style === 'calm_coach' ? '沉稳的耐心教练' : '耐心温和的引导老师',
+        teacherProfile?.style === 'conversation_partner'
+          ? '自然的英语交流伙伴，减少不必要的教学提示'
+          : teacherProfile?.style === 'playful_companion'
+            ? '活泼友好的学习伙伴'
+            : teacherProfile?.style === 'calm_coach'
+              ? '沉稳的耐心教练'
+              : '耐心温和的引导老师',
         adjustable.encouragement === 'frequent' ? '多给予具体鼓励' : adjustable.encouragement === 'light' ? '简短自然地鼓励' : '适度给予具体鼓励',
         adjustable.correctionStyle === 'model_first' ? '纠错时先示范正确说法' : adjustable.correctionStyle === 'encourage_retry' ? '纠错时先邀请孩子再试一次' : '纠错时先给提示再示范',
+        ...interactionMemories.map((memory) => `教学偏好参考：${memory.content.slice(0, 120)}`),
         '始终保护儿童安全，不嘲笑、不施压，诚实说明自己是 AI 老师。',
       ].join('；'),
     };
@@ -1625,4 +1880,15 @@ function topicNameOf(topicId: string): string {
     'topic-objects-around': '身边物品',
   };
   return names[topicId] ?? topicId;
+}
+
+/** 只把明显的疑问句判为提问，其余自由发言按普通交流处理。 */
+function isLikelyQuestion(value: string): boolean {
+  const text = value.trim();
+  if (!text) return false;
+  if (/[?？]$/.test(text)) return true;
+  if (/^(what|why|how|when|where|who|which|can|could|would|will|do|does|did|is|are|am|may|请问|为什么|怎么|什么|哪里|谁|能不能|可以吗|是不是|吗)/i.test(text)) {
+    return true;
+  }
+  return /(吗|呢|么)[。！!，,]?$/.test(text);
 }

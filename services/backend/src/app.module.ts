@@ -35,6 +35,9 @@ import { EmailService } from './auth/email.service';
 import { MembershipController, MembershipUsersAdminController } from './membership/membership.controller';
 import { BackupController } from './backup/backup.controller';
 import { BackupService } from './backup/backup.service';
+import { GrowthMentorService } from './agents/growth-mentor.service';
+import { MemoryManagerService } from './agents/memory-manager.service';
+import { PersonalityEngineService } from './agents/personality-engine.service';
 
 @Module({
   imports: [ConfigModule],
@@ -69,6 +72,9 @@ import { BackupService } from './backup/backup.service';
     AuthService,
     EmailService,
     BackupService,
+    GrowthMentorService,
+    MemoryManagerService,
+    PersonalityEngineService,
     {
       provide: ModelRouterImpl,
       useFactory: (prisma: PrismaService) => {

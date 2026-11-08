@@ -317,6 +317,11 @@ export const lessonFinishResponseSchema = z.object({
   totalCostCny: z.number().min(0),
   stateChanges: z.array(turnStateChangeSchema).default([]),
   summary: z.string(),
+  growthReport: z.object({
+    strengths: z.array(z.string()),
+    practiceFocus: z.array(z.string()),
+    caregiverGuidance: z.array(z.string()),
+  }),
   /** 待复习项（间隔重复调度） */
   reviewScheduled: z.array(
     z.object({

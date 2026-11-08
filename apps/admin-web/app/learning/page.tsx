@@ -5,7 +5,7 @@ import { AdminNav } from '../admin-nav';
 
 type TeacherProfile = {
   id: string;
-  style: 'patient_guide' | 'playful_companion' | 'calm_coach';
+  style: 'patient_guide' | 'playful_companion' | 'calm_coach' | 'conversation_partner';
   adjustable: {
     tone: 'gentle' | 'lively' | 'calm';
     encouragement: 'light' | 'balanced' | 'frequent';
@@ -192,6 +192,7 @@ export default function LearningPage() {
                   <option value="patient_guide">耐心引导</option>
                   <option value="playful_companion">活泼伙伴</option>
                   <option value="calm_coach">沉稳教练</option>
+                  <option value="conversation_partner">英语交流伙伴</option>
                 </select>
               </label>
               <label>

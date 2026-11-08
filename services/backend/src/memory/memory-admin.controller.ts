@@ -17,7 +17,7 @@ const adjustableSchema = z.object({
 }).strict();
 const profileInput = z.object({
   adjustable: adjustableSchema,
-  style: z.enum(['patient_guide', 'playful_companion', 'calm_coach']),
+  style: z.enum(['patient_guide', 'playful_companion', 'calm_coach', 'conversation_partner']),
   reason: z.string().trim().min(1).max(500),
 }).strict();
 const defaultCore = { childSafety: true, honestAiIdentity: true, noShaming: true, noPressure: true, ageAppropriate: true };
@@ -71,7 +71,8 @@ export class MemoryAdminController {
     const current = await this.prisma.teacher_profiles.findFirst({ where: { learnerId: null }, orderBy: { createdAt: 'asc' } }) ?? await this.prisma.teacher_profiles.create({ data: { id: 'default-teacher', name: '英语成长老师', coreTraits: defaultCore, adjustable: defaultAdjustable, style: 'patient_guide' } });
     const nextVersion = current.version + 1;
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.teacher_profiles.update({ where: { id: current.id }, data: { adjustable: parsed.data.adjustable, style: parsed.data.style, stage: 1, version: nextVersion } });
+      const stage = parsed.data.style === 'conversation_partner' ? 2 : parsed.data.style === 'patient_guide' ? 0 : 1;
+      const updated = await tx.teacher_profiles.update({ where: { id: current.id }, data: { adjustable: parsed.data.adjustable, style: parsed.data.style, stage, version: nextVersion } });
       await tx.persona_history.create({
         data: { teacherProfileId: current.id, changeContent: JSON.stringify({ before: { adjustable: current.adjustable, style: current.style }, after: parsed.data }), reason: parsed.data.reason, version: nextVersion },
       });
@@ -95,9 +96,11 @@ export class MemoryAdminController {
     let before: { adjustable?: unknown; style?: unknown };
     try { before = JSON.parse(history.changeContent).before; } catch { throw new BadRequestException('人格历史记录无法解析'); }
     const adjustable = adjustableSchema.safeParse(before.adjustable);
-    if (!adjustable.success || !['patient_guide', 'playful_companion', 'calm_coach'].includes(String(before.style))) throw new BadRequestException('历史记录中的配置不符合当前安全约束');
+    if (!adjustable.success || !['patient_guide', 'playful_companion', 'calm_coach', 'conversation_partner'].includes(String(before.style))) throw new BadRequestException('历史记录中的配置不符合当前安全约束');
     return this.prisma.$transaction(async (tx) => {
-      const profile = await tx.teacher_profiles.update({ where: { id: history.teacherProfileId }, data: { adjustable: adjustable.data, style: before.style as string, version: { increment: 1 } } });
+      const restoredStyle = before.style as string;
+      const stage = restoredStyle === 'conversation_partner' ? 2 : restoredStyle === 'patient_guide' ? 0 : 1;
+      const profile = await tx.teacher_profiles.update({ where: { id: history.teacherProfileId }, data: { adjustable: adjustable.data, style: restoredStyle, stage, version: { increment: 1 } } });
       await tx.persona_history.create({ data: { teacherProfileId: profile.id, changeContent: JSON.stringify({ rollbackOf: history.id, restored: before }), reason: `回滚到版本 ${history.version}`, version: profile.version, rollbackOf: history.id } });
       return profile;
     });

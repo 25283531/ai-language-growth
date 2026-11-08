@@ -27,6 +27,9 @@ export const TASK_ROUTES = [
   'llm.teaching_explanation', // 教学解释
   'llm.learning_plan', // 长期学习规划
   'llm.method_adaptation', // 教学方法调整
+  'llm.growth_report', // 阶段成长汇总与家长解释
+  'llm.memory_extraction', // 结课批量交互记忆候选提取
+  'llm.personality_adjustment', // 受控人格调整候选建议
   'tts.fixed_course', // 固定课程音频（走预生成缓存）
   'tts.dynamic_teaching', // 动态教学语句
   'tts.narrative', // 故事与情感表达

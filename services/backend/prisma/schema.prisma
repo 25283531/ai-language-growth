@@ -620,7 +620,7 @@ model interaction_memories {
   id               String    @id @default(uuid())
   learnerId        String
   teacherProfileId String?
-  sourceSessionId  String?   @unique
+  sourceSessionId  String?
   memoryType       String
   content          String
   importance       Float     @default(0.5)

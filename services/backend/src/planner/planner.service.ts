@@ -6,7 +6,8 @@
  *
  * M1 的规划完全由程序规则驱动（规则 + 能力状态 + 课程活动），
  * 不依赖 LLM —— 这保证规划可复现、可回归测试、可解释。
- * M2 才在此基础上引入 LLM 做长期规划与策略调整。
+ * M2 在此基础上加入候选活动的 LLM 调序；长期关注点仍由服务端规则确定，
+ * 避免模型直接改写学习状态或绕过能力门槛。
  *
  * 规划原则：
  *  1. 先复习到期项，再教新内容（间隔重复：短期复现 → 次日无提示回忆 → 按表现调整间隔）。
@@ -62,6 +63,7 @@ export class PlannerService {
   }): Promise<PlannedStep | null> {
     // —— 1. 先看有没有到期的复习项 ——
     const now = new Date();
+    const states = await this.getStates(input.learnerId);
     const dueReviews = await this.prisma.review_schedules.findMany({
       where: {
         learnerId: input.learnerId,
@@ -79,7 +81,10 @@ export class PlannerService {
 
     for (const review of dueReviews) {
       const reviewActivities = (await this.activitiesForSkill(review.skillNodeId, input.topicId))
-        .filter((activity) => !input.excludeActivityIds.includes(activity.id));
+        .filter((activity) =>
+          !input.excludeActivityIds.includes(activity.id) &&
+          this.isWithinProgressiveAccess(activity, states),
+        );
       const originalActivity = review.learningItemId
         ? this.curriculum.getActivity(review.learningItemId)
         : undefined;
@@ -136,7 +141,8 @@ export class PlannerService {
     for (const skillNodeId of input.followUpSkillNodeIds ?? []) {
       const followUp = (await this.activitiesForSkill(skillNodeId, input.topicId)).find((activity) =>
         activity.topicId === input.topicId &&
-        !input.excludeActivityIds.includes(activity.id),
+        !input.excludeActivityIds.includes(activity.id) &&
+        this.isWithinProgressiveAccess(activity, states),
       );
       if (followUp) {
         return {
@@ -149,7 +155,6 @@ export class PlannerService {
     }
 
     // —— 3. 选取主题内下一个可排的活动 ——
-    const states = await this.getStates(input.learnerId);
     const activities = (await this.activitiesOf(input.topicId))
       .filter((a) => !input.excludeActivityIds.includes(a.id));
 
@@ -165,15 +170,23 @@ export class PlannerService {
       }
     }
     if (eligible.length) {
+      const progressive = this.applyProgressiveAccess(eligible, states);
+      const candidates = progressive.activities.length
+        ? progressive.activities
+        : [...eligible]
+            .filter((activity) => !this.isAutonomousConversation(activity))
+            .sort((left, right) => left.difficulty - right.difficulty || left.order - right.order)
+            .slice(0, 1);
+      if (!candidates.length) return null;
       const selected = await this.chooseAdaptiveActivity({
-        activities: eligible,
+        activities: candidates,
         learnerId: input.learnerId,
         lessonSessionId: input.lessonSessionId,
         states,
       });
       return {
         activity: selected,
-        rationale: `AI 在 ${eligible.length} 个规则可行活动中选择；能力状态与硬前置由服务端校验`,
+        rationale: `服务端按当前能力开放难度 ${progressive.difficultyBand}，在 ${candidates.length} 个候选中选择；能力状态与硬前置由服务端校验${progressive.freeConversationLocked ? '，自主日常交流尚未开放' : ''}${progressive.activities.length ? '' : '；当前课程缺少该难度活动，回退至最低难度的非自由交流活动'}`,
         isReview: false,
         reviewScheduleId: null,
       };
@@ -181,10 +194,14 @@ export class PlannerService {
 
     // —— 4. 全部被硬前置阻塞：退回到该主题内门槛最低的活动 ——
     //     D-004：不得因某能力未达标就禁止孩子发展其他能力。
-    const fallback = activities.reduce((best, a) => {
+    const fallbackActivities = activities.filter((activity) =>
+      !this.isAutonomousConversation(activity) || this.hasIndependentConversationFoundation(states, masteryCode),
+    );
+    if (!fallbackActivities.length) return null;
+    const fallback = fallbackActivities.reduce((best, a) => {
       if (!best) return a;
       return a.difficulty < best.difficulty ? a : best;
-    }, activities[0]!);
+    }, undefined as TeachingActivity | undefined) ?? fallbackActivities[0]!;
 
     return {
       activity: fallback,
@@ -192,6 +209,103 @@ export class PlannerService {
       isReview: false,
       reviewScheduleId: null,
     };
+  }
+
+  /**
+   * 结课/阶段复盘使用的长期关注点。
+   *
+   * 该结果是服务端规则产物，供下一堂课的 Planner 使用；它不是能力状态，
+   * 也不允许被 LLM 自行改写。失败多、独立成功少且当前掌握等级低的能力优先。
+   */
+  async planLongTermFocus(input: {
+    learnerId: string;
+    evidenceBySkill: Array<{
+      skillNodeId: string;
+      unsuccessfulAttempts: number;
+      independentSuccesses: number;
+    }>;
+    limit?: number;
+  }): Promise<string[]> {
+    const states = await this.getStates(input.learnerId);
+    const rank = masteryCode;
+    const evidence = new Map(input.evidenceBySkill.map((item) => [item.skillNodeId, item]));
+    // 长期关注只从本课产生过证据的能力中选择，避免每节课把全图未接触
+    // 节点随机带入下一堂课，破坏“围绕实际学习表现规划”的可解释性。
+    const candidates = Array.from(evidence.keys())
+      .map((skillNodeId) => {
+        const item = evidence.get(skillNodeId)!;
+        const stateRank = rank(states[skillNodeId] ?? 'not_exposed');
+        const unresolved = (item?.unsuccessfulAttempts ?? 0) - (item?.independentSuccesses ?? 0);
+        return {
+          skillNodeId,
+          score: unresolved * 4 + (stateRank < 3 ? 2 : 0) + (stateRank === 0 ? 1 : 0),
+          stateRank,
+          unresolved,
+        };
+      })
+      .filter((item) => item.unresolved > 0 || item.stateRank < 3)
+      .sort((left, right) =>
+        right.score - left.score ||
+        left.stateRank - right.stateRank ||
+        left.skillNodeId.localeCompare(right.skillNodeId),
+      );
+    return candidates.slice(0, Math.max(1, Math.min(5, input.limit ?? 3))).map((item) => item.skillNodeId);
+  }
+
+  /**
+   * 能力增强后逐步提高活动难度；自由交流要求口语句子和情景对话能力达标。
+   * 这是服务端确定性门槛，LLM 只能在门槛内调序。
+   */
+  private applyProgressiveAccess(
+    activities: TeachingActivity[],
+    states: Record<string, MasteryState>,
+  ): { activities: TeachingActivity[]; difficultyBand: number; freeConversationLocked: boolean } {
+    const rank = masteryCode;
+    const highest = Math.max(
+      0,
+      ...activities.map((activity) => this.activityDifficultyBand(activity, states, rank)),
+    );
+    const difficultyBand = highest >= 3 ? 3 : highest >= 2 ? 2 : 1;
+    const freeConversationLocked = !this.hasIndependentConversationFoundation(states, rank);
+    const scoped = activities.filter((activity) =>
+      activity.difficulty <= this.activityDifficultyBand(activity, states, rank) &&
+      (!this.isAutonomousConversation(activity) || !freeConversationLocked),
+    );
+    return {
+      activities: scoped,
+      difficultyBand,
+      freeConversationLocked,
+    };
+  }
+
+  private isWithinProgressiveAccess(activity: TeachingActivity, states: Record<string, MasteryState>): boolean {
+    const rank = masteryCode;
+    if (activity.difficulty > this.activityDifficultyBand(activity, states, rank)) return false;
+    return !this.isAutonomousConversation(activity) || this.hasIndependentConversationFoundation(states, rank);
+  }
+
+  private isAutonomousConversation(activity: TeachingActivity): boolean {
+    return activity.skillNodeIds.includes('LA.COMM.free_talk');
+  }
+
+  private activityDifficultyBand(
+    activity: TeachingActivity,
+    states: Record<string, MasteryState>,
+    rank: (state: MasteryState) => number,
+  ): number {
+    const relevant = activity.skillNodeIds
+      .filter((skillNodeId) => skillNodeId.startsWith('LA.'))
+      .map((skillNodeId) => rank(states[skillNodeId] ?? 'not_exposed'));
+    const highest = Math.max(0, ...relevant);
+    return highest >= 3 ? 3 : highest >= 2 ? 2 : 1;
+  }
+
+  private hasIndependentConversationFoundation(
+    states: Record<string, MasteryState>,
+    rank: (state: MasteryState) => number,
+  ): boolean {
+    return rank(states['LA.SPEAK.simple_sentences'] ?? 'not_exposed') >= 3 &&
+      rank(states['LA.COMM.dialogue'] ?? 'not_exposed') >= 3;
   }
 
   /**
