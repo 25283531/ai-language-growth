@@ -93,4 +93,13 @@ docker compose ps
 8. `POST /api/v1/lessons/{id}/finish`
 9. `GET /api/v1/learners/{id}/growth`，确认返回成长快照、记忆和待复习计划字段
 
+额度闸门必须用临时学习者额外验证，不能使用真实儿童数据：
+
+1. `GET /api/v1/speech/quota/status?learnerId=<temporary-learner>`，确认 ASR、TTS、pronunciation 各自有独立剩余量。
+2. `POST /api/v1/speech/quota/reserve` 预留不超过剩余额度的 ASR 秒数，记录返回的 `reservationId`。
+3. 使用 `X-Learner-Id` 和 `X-Speech-Quota-Reservation` 上传音频；缺少任一请求头、租约过期或额度不足时必须返回错误，服务端不得保存音频。
+4. 对云端 TTS 播放先预留 `tts` 租约，再用同样两个请求头读取音频；租约无效时媒体下载必须被拒绝。
+5. `POST /api/v1/speech/quota/settle` 按实际秒数结算，或在失败时调用 `release`；再次查询 status，确认 `consumedSeconds`、`reservedSeconds` 和 `remainingSeconds` 正确变化。
+6. 将 `ASR_DAILY_QUOTA_SECONDS`、`TTS_DAILY_QUOTA_SECONDS` 临时设为较小值，连续预留直到返回 HTTP 429，确认客户端在预留失败时不发送音频请求。
+
 2026 年 11 月 8 日已在该服务器完成一次验证：PostgreSQL/Redis 健康，后端 `b4d1bf3` 镜像健康，以上流程全部通过。该记录只证明远程联调链路可用。
