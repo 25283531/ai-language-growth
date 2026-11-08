@@ -38,6 +38,7 @@ import { resolveEvidenceTargets } from '@alg/skill-graph';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PlannerService } from '../planner/planner.service';
+import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -101,6 +102,28 @@ export class OrchestratorService {
   /** 返回类型直接绑定契约，避免实现与 lessonStartResponseSchema 漂移。 */
   async startLesson(input: { learnerId: string; topicId?: string }): Promise<LessonStartResponse> {
     const topicId = input.topicId ?? 'topic-greetings';
+    const previousArchive = await this.prisma.learner_growth_snapshots.findFirst({
+      where: { learnerId: input.learnerId },
+      orderBy: { createdAt: 'desc' },
+      select: { snapshot: true },
+    });
+    const previousSnapshot = previousArchive?.snapshot as {
+      session?: { topicId?: string };
+      evidenceBySkill?: Array<{
+        skillNodeId: string;
+        unsuccessfulAttempts: number;
+        independentSuccesses: number;
+      }>;
+    } | undefined;
+    const previousFinishedSession = previousSnapshot?.session?.topicId
+      ? null
+      : await this.prisma.lesson_sessions.findFirst({
+          where: { learnerId: input.learnerId, status: 'finished' },
+          orderBy: { finishedAt: 'desc' },
+          select: { topicId: true },
+        });
+    const previousTopicId = previousSnapshot?.session?.topicId ?? previousFinishedSession?.topicId;
+    const followUpSkillNodeIds = selectFollowUpSkillNodeIds(previousSnapshot?.evidenceBySkill ?? []);
     const session = await this.prisma.lesson_sessions.create({
       data: {
         learnerId: input.learnerId,
@@ -124,6 +147,7 @@ export class OrchestratorService {
       learnerId: input.learnerId,
       lessonSessionId: session.id,
       excludeActivityIds: [],
+      followUpSkillNodeIds,
     });
 
     if (!step) {
@@ -149,6 +173,12 @@ export class OrchestratorService {
       errorUnits: [],
       isReview: step.isReview,
     });
+    if (previousTopicId) {
+      const previousTopicName = topicNameOf(previousTopicId);
+      directive.teacherUtterance = step.isReview
+        ? `欢迎回来。上次我们一起练习了「${previousTopicName}」。先试着自己回忆吧。`
+        : `欢迎回来。上次我们一起练习了「${previousTopicName}」，今天继续学习。`;
+    }
 
     const speech = await this.synthesize(directive);
     await this.router.recordUsage(

@@ -51,6 +51,7 @@ export class PlannerService {
     learnerId: string;
     lessonSessionId: string;
     excludeActivityIds: string[];
+    followUpSkillNodeIds?: string[];
   }): Promise<PlannedStep | null> {
     // —— 1. 先看有没有到期的复习项 ——
     const now = new Date();
@@ -124,7 +125,24 @@ export class PlannerService {
       }
     }
 
-    // —— 2. 选取主题内下一个可排的活动 ——
+    // —— 2. 回到上一堂课中仍需巩固的能力 ——
+    for (const skillNodeId of input.followUpSkillNodeIds ?? []) {
+      const followUp = this.curriculum.activitiesForSkill(skillNodeId).find((activity) =>
+        activity.m1Scope &&
+        activity.topicId === input.topicId &&
+        !input.excludeActivityIds.includes(activity.id),
+      );
+      if (followUp) {
+        return {
+          activity: followUp,
+          rationale: `跨课续学：上一堂课的 ${skillNodeId} 仍有未完成练习，先巩固后推进新内容`,
+          isReview: false,
+          reviewScheduleId: null,
+        };
+      }
+    }
+
+    // —— 3. 选取主题内下一个可排的活动 ——
     const states = await this.getStates(input.learnerId);
     const activities = this.curriculum
       .activitiesOf(input.topicId)
@@ -146,7 +164,7 @@ export class PlannerService {
       }
     }
 
-    // —— 3. 全部被硬前置阻塞：退回到该主题内门槛最低的活动 ——
+    // —— 4. 全部被硬前置阻塞：退回到该主题内门槛最低的活动 ——
     //     D-004：不得因某能力未达标就禁止孩子发展其他能力。
     const fallback = activities.reduce((best, a) => {
       if (!best) return a;
