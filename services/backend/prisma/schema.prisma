@@ -615,6 +615,7 @@ model ai_model_benchmarks {
   benchmarkType String
   score       Float
   sampleCount Int      @default(0)
+  passed      Boolean  @default(false)
   notes       String?
   testedAt    DateTime @default(now())
 

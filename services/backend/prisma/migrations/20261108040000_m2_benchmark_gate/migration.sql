@@ -1,0 +1,2 @@
+ALTER TABLE "ai_model_benchmarks"
+ADD COLUMN "passed" BOOLEAN NOT NULL DEFAULT FALSE;

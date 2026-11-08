@@ -47,6 +47,14 @@ describe('Model Router', () => {
     assert.equal(decision.level, 'L3');
   });
 
+  it('运行时供应商别名不覆盖真实模型别名', async () => {
+    const configurableRouter = new ModelRouterImpl();
+    configurableRouter.setProviderAlias('llm', 'configured_llm', 'child-model-v2');
+    const decision = await configurableRouter.route({ serviceKind: 'llm', taskRoute: 'llm.simple_dialogue' });
+    assert.equal(decision.providerAlias, 'configured_llm');
+    assert.equal(decision.modelAlias, 'child-model-v2');
+  });
+
   it('全部供应商标��失败时降级到 L0 本地规则', async () => {
     const decision = await router.route({
       serviceKind: 'llm',

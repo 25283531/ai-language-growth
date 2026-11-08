@@ -232,6 +232,7 @@ export class ModelRouterImpl {
   private readonly config: RouterConfig;
   private readonly ledger: UsageLedger;
   private providerAliases?: Partial<Record<ServiceKind, string>>;
+  private modelAliases?: Partial<Record<ServiceKind, string>>;
 
   constructor(
     config: RouterConfig = DEFAULT_ROUTER_CONFIG,
@@ -244,9 +245,11 @@ export class ModelRouterImpl {
   }
 
   /** Apply an operator-managed adapter selection without changing task routing rules. */
-  setProviderAlias(serviceKind: ServiceKind, providerAlias: string): void {
+  setProviderAlias(serviceKind: ServiceKind, providerAlias: string, modelAlias = providerAlias): void {
     this.providerAliases ??= {};
+    this.modelAliases ??= {};
     this.providerAliases[serviceKind] = providerAlias;
+    this.modelAliases[serviceKind] = modelAlias;
   }
 
   get usageLedger(): UsageLedger {
@@ -260,7 +263,7 @@ export class ModelRouterImpl {
   private finalize(decision: RoutingDecision, serviceKind: ServiceKind): RoutingDecision {
     const alias = this.providerAliases?.[serviceKind];
     if (!alias) return decision;
-    return { ...decision, providerAlias: alias, modelAlias: alias };
+    return { ...decision, providerAlias: alias, modelAlias: this.modelAliases?.[serviceKind] ?? alias };
   }
 
   private findRule(taskRoute: string): RouteRule | undefined {

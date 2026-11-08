@@ -44,7 +44,7 @@ import type {
   TtsRequest,
   TtsResponse,
 } from '@alg/shared-contracts';
-import { ModelRouterImpl } from '@alg/model-router';
+import { MOCK_PROVIDER_ALIASES, ModelRouterImpl } from '@alg/model-router';
 import { ProviderConfigService, type RuntimeProviderConfig } from '../providers/provider-config.service';
 
 /** 一次调用的结果与降级信息。 */
@@ -84,7 +84,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     for (const config of await this.providerConfigs.listEnabledRuntimeConfigs()) {
-      this.applyRuntimeProvider(config);
+      await this.applyRuntimeProvider(config);
     }
   }
 
@@ -92,13 +92,13 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   async refreshRuntimeProvider(serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation'): Promise<void> {
     const config = await this.providerConfigs.getEnabledRuntimeConfig(serviceKind);
     if (config) {
-      this.applyRuntimeProvider(config);
+      await this.applyRuntimeProvider(config);
       return;
     }
     this.modelRouter.setProviderAlias(serviceKind, resolveProviderAliases()[serviceKind]);
   }
 
-  private applyRuntimeProvider(config: RuntimeProviderConfig): void {
+  private async applyRuntimeProvider(config: RuntimeProviderConfig): Promise<void> {
     const alias = `configured_${config.serviceKind}`;
     const options: HttpServiceOptions = {
       alias,
@@ -150,8 +150,17 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         }
         break;
     }
-    this.modelRouter.setProviderAlias(config.serviceKind, alias);
-    this.logger.log(`运行时模型连接已更新：${config.serviceKind} → ${alias}`);
+    const benchmarkPassed = await this.providerConfigs.hasPassingBenchmark(
+      config.serviceKind,
+      config.modelAlias,
+    );
+    if (benchmarkPassed) {
+      this.modelRouter.setProviderAlias(config.serviceKind, alias, config.modelAlias);
+      this.logger.log(`运行时模型连接已更新：${config.serviceKind} → ${alias}（儿童专项 Benchmark 通过）`);
+    } else {
+      this.modelRouter.setProviderAlias(config.serviceKind, MOCK_PROVIDER_ALIASES[config.serviceKind]);
+      this.logger.warn(`模型 ${config.serviceKind}/${config.modelAlias} 尚无通过的儿童专项 Benchmark，暂使用本地 Mock`);
+    }
   }
 
   // ——————————————————— LLM ———————————————————

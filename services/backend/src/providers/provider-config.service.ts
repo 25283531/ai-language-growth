@@ -25,6 +25,14 @@ const configInput = z.object({
   enabled: z.boolean(),
   options: z.record(z.unknown()).default({}),
 });
+const benchmarkInput = z.object({
+  serviceKind: z.enum(serviceKinds),
+  modelAlias: z.string().trim().min(1).max(160),
+  score: z.number().finite(),
+  sampleCount: z.number().int().min(1).max(100000),
+  passed: z.boolean(),
+  notes: z.string().max(2000).optional(),
+});
 
 export type ProviderConfigInput = z.input<typeof configInput>;
 
@@ -146,7 +154,76 @@ export class ProviderConfigService {
         options: value.options as Prisma.InputJsonValue,
       },
     });
+    await this.syncModelCatalog(value);
     return this.toPublic(row);
+  }
+
+  async listBenchmarks(serviceKind: ServiceKind) {
+    const provider = await this.prisma.ai_providers.findUnique({
+      where: { alias: `configured_${serviceKind}` },
+      select: { id: true },
+    });
+    if (!provider) return [];
+    const models = await this.prisma.ai_models.findMany({
+      where: { providerId: provider.id },
+      include: { benchmarks: { orderBy: { testedAt: 'desc' }, take: 10 } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return models.map((model) => ({
+      modelAlias: model.alias,
+      level: model.level,
+      enabled: model.enabled,
+      benchmarks: model.benchmarks,
+    }));
+  }
+
+  async recordBenchmark(input: unknown) {
+    const parsed = benchmarkInput.safeParse(input);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    const value = parsed.data;
+    const provider = await this.prisma.ai_providers.findUnique({
+      where: { alias: `configured_${value.serviceKind}` },
+      select: { id: true },
+    });
+    if (!provider) throw new BadRequestException('请先保存该服务的模型接入配置');
+    const model = await this.prisma.ai_models.findUnique({
+      where: { providerId_alias: { providerId: provider.id, alias: value.modelAlias } },
+      select: { id: true },
+    });
+    if (!model) throw new BadRequestException('当前服务配置中没有该模型');
+    const benchmark = await this.prisma.ai_model_benchmarks.create({
+      data: {
+        modelId: model.id,
+        benchmarkType: `${value.serviceKind}_child_english`,
+        score: value.score,
+        sampleCount: value.sampleCount,
+        passed: value.passed,
+        notes: value.notes?.trim() || null,
+      },
+    });
+    return { ...benchmark, serviceKind: value.serviceKind };
+  }
+
+  async hasPassingBenchmark(serviceKind: ServiceKind, modelAlias: string): Promise<boolean> {
+    const provider = await this.prisma.ai_providers.findUnique({
+      where: { alias: `configured_${serviceKind}` },
+      select: { id: true },
+    });
+    if (!provider) return false;
+    const model = await this.prisma.ai_models.findUnique({
+      where: { providerId_alias: { providerId: provider.id, alias: modelAlias } },
+      include: {
+        benchmarks: {
+          where: {
+            benchmarkType: `${serviceKind}_child_english`,
+            passed: true,
+            sampleCount: { gt: 0 },
+          },
+          take: 1,
+        },
+      },
+    });
+    return model?.enabled === true && model.benchmarks.length > 0;
   }
 
   assertAdminToken(received: string | undefined): void {
@@ -188,6 +265,38 @@ export class ProviderConfigService {
         : {},
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+
+  private async syncModelCatalog(value: z.infer<typeof configInput>): Promise<void> {
+    const alias = `configured_${value.serviceKind}`;
+    await this.prisma.$transaction(async (tx) => {
+      const provider = await tx.ai_providers.upsert({
+        where: { alias },
+        create: {
+          alias,
+          kind: value.serviceKind,
+          baseUrl: value.baseUrl,
+          enabled: value.enabled,
+        },
+        update: { kind: value.serviceKind, baseUrl: value.baseUrl, enabled: value.enabled },
+        select: { id: true },
+      });
+      await tx.ai_models.updateMany({
+        where: { providerId: provider.id, alias: { not: value.modelAlias } },
+        data: { enabled: false },
+      });
+      await tx.ai_models.upsert({
+        where: { providerId_alias: { providerId: provider.id, alias: value.modelAlias } },
+        create: {
+          providerId: provider.id,
+          alias: value.modelAlias,
+          modelId: value.modelAlias,
+          level: 'L1',
+          enabled: value.enabled,
+        },
+        update: { modelId: value.modelAlias, enabled: value.enabled },
+      });
+    });
   }
 
   private encryptionKey(): Buffer {

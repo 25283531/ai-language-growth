@@ -22,6 +22,12 @@ type Config = {
   credentialConfigured?: boolean;
   options: Record<string, unknown>;
 };
+type ModelBenchmark = {
+  modelAlias: string;
+  level: string;
+  enabled: boolean;
+  benchmarks: Array<{ id: string; score: number; sampleCount: number; passed: boolean; notes: string | null; testedAt: string }>;
+};
 
 function apiRoot(): string {
   if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -63,6 +69,11 @@ export default function AdminPage() {
   const [active, setActive] = useState<ServiceKind>('llm');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [benchmarks, setBenchmarks] = useState<ModelBenchmark[]>([]);
+  const [benchmarkScore, setBenchmarkScore] = useState('');
+  const [benchmarkSamples, setBenchmarkSamples] = useState('');
+  const [benchmarkPassed, setBenchmarkPassed] = useState(false);
+  const [benchmarkNotes, setBenchmarkNotes] = useState('');
   const service = services.find((item) => item.id === active)!;
   const available = useMemo(() => catalog.filter((item) => item.services.includes(active)), [catalog, active]);
   const current = configs[active];
@@ -72,12 +83,45 @@ export default function AdminPage() {
     void fetch(`${apiRoot()}/api/v1/admin/model-providers/catalog`).then((res) => res.json()).then(setCatalog).catch(() => setMessage('无法连接后端，请检查管理后台与 API 的访问地址。'));
   }, []);
 
+  useEffect(() => {
+    if (!token) return;
+    void fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}`, { headers: { 'x-admin-token': token } })
+      .then(async (res) => {
+        if (!res.ok) throw new Error((await res.json()).message ?? `读取 Benchmark 失败 (${res.status})`);
+        return res.json();
+      })
+      .then(setBenchmarks)
+      .catch((error) => setMessage(error instanceof Error ? error.message : '读取 Benchmark 失败'));
+  }, [active, token]);
+
   async function loadConfigs() {
     const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs`, { headers: { 'x-admin-token': token } });
     if (!res.ok) throw new Error((await res.json()).message ?? `读取失败 (${res.status})`);
     const rows: Config[] = await res.json();
     setConfigs((old) => ({ ...old, ...Object.fromEntries(rows.map((row) => [row.serviceKind, row])) }));
+    await loadBenchmarks();
     setMessage('已读取现有配置。');
+  }
+
+  async function loadBenchmarks() {
+    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}`, { headers: { 'x-admin-token': token } });
+    if (!res.ok) throw new Error((await res.json()).message ?? `读取 Benchmark 失败 (${res.status})`);
+    setBenchmarks(await res.json());
+  }
+
+  async function saveBenchmark() {
+    setBusy(true); setMessage('正在保存儿童专项测试结果…');
+    try {
+      const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': token },
+        body: JSON.stringify({ serviceKind: active, modelAlias: current.modelAlias, score: Number(benchmarkScore), sampleCount: Number(benchmarkSamples), passed: benchmarkPassed, notes: benchmarkNotes }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.message ?? `保存失败 (${res.status})`);
+      await loadBenchmarks();
+      setMessage(body.passed ? '测试记录已保存，模型通过 Benchmark 并已应用。' : '测试记录已保存，模型仍由本地 Mock 处理。');
+    } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
+    finally { setBusy(false); }
   }
 
   function chooseProvider(id: string) {
@@ -97,14 +141,15 @@ export default function AdminPage() {
       if (!res.ok) throw new Error(body.message ?? `保存失败 (${res.status})`);
       setConfigs((old) => ({ ...old, [active]: body }));
       setCredentials((old) => ({ ...old, [active]: {} }));
-      setMessage('配置已加密保存，后端已立即切换该服务路由。');
+      await loadBenchmarks();
+      setMessage('配置已加密保存；通过儿童专项 Benchmark 后才会启用真实模型。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
     finally { setBusy(false); }
   }
 
   return <main className="shell">
     <header className="topbar"><div><p className="eyebrow">AI LANGUAGE GROWTH</p><h1>模型接入</h1><p className="muted">选择服务商，填写平台账号信息，后端会自动适配对应接口。</p></div><div className="token"><label htmlFor="token">后台管理令牌</label><input id="token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="ADMIN_CONFIG_TOKEN"/><button className="secondary" onClick={() => void loadConfigs().catch((error) => setMessage(error.message))}>读取配置</button></div></header>
-    <section className="notice"><strong>两类语音能力分开配置</strong><span>普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。</span></section>
+      <section className="notice"><strong>两类语音能力分开配置</strong><span>普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。真实模型须先通过对应的儿童专项 Benchmark。</span></section>
     <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{configs[item.id].enabled ? '已启用' : '未启用'}</i></button>)}</nav>
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => setConfigs((old) => ({ ...old, [active]: { ...current, enabled: event.target.checked } }))}/><span>启用</span></label></div>
         <label>预置平台<select value={current.providerPresetId} onChange={(event) => chooseProvider(event.target.value)}><option value="">请选择平台</option>{available.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -125,6 +170,18 @@ export default function AdminPage() {
           {current.providerPresetId === 'baidu-qianfan' && active === 'tts' && <label>音色 ID<input value={String(current.options.voiceId ?? '5003')} onChange={(event) => setConfigs((old) => ({ ...old, [active]: { ...current, options: { ...current.options, voiceId: event.target.value } } }))}/></label>}
           <p className="helper">{active === 'pronunciation' ? '发音评测会将音频与目标文本一起发送。讯飞 ISE 需 16kHz 单声道音频；腾讯 SOE 使用签名 WebSocket；Azure 通过区域 Speech endpoint 评测。需先在对应控制台开通服务。' : active === 'asr' ? '此项只配置普通转写服务。音素级能力请在左侧单独配置。' : '填写平台账号凭据即可；接入地址可以编辑，以适应区域域名或供应商 API 地址变更。凭据在服务端使用 AES-256-GCM 加密后入库，页面不会回显已保存的密钥。'}</p>
           {(catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl) && <a className="doclink" href={catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl ?? ''} target="_blank" rel="noreferrer">打开此服务的官方接入文档 ↗</a>}
+          <section className="benchmark">
+            <h3>儿童专项 Benchmark</h3>
+            <p className="helper">记录本服务的儿童英语样本评测结果。只有明确标记通过且样本数大于 0，真实模型才会接管调用；否则使用本地 Mock。</p>
+            <div className="fields">
+              <label>测试分数<input type="number" step="any" value={benchmarkScore} onChange={(event) => setBenchmarkScore(event.target.value)} placeholder="按测试集评分口径填写"/></label>
+              <label>样本数<input type="number" min="1" step="1" value={benchmarkSamples} onChange={(event) => setBenchmarkSamples(event.target.value)} placeholder="实际测试样本数"/></label>
+            </div>
+            <label>测试说明<input value={benchmarkNotes} onChange={(event) => setBenchmarkNotes(event.target.value)} placeholder="年龄段、口音、测试集版本与结果摘要"/></label>
+            <label className="switch"><input type="checkbox" checked={benchmarkPassed} onChange={(event) => setBenchmarkPassed(event.target.checked)}/><span>该模型通过本服务专项测试</span></label>
+            <button className="secondary" disabled={!token || !current.modelAlias || !benchmarkScore || !benchmarkSamples || busy} onClick={() => void saveBenchmark()}>保存测试结果并刷新模型接入</button>
+            <div className="benchmark-list">{benchmarks.flatMap((model) => model.benchmarks.map((entry) => <div className="helper" key={entry.id}>{model.modelAlias} · {entry.passed ? '通过' : '未通过'} · 分数 {entry.score} · 样本 {entry.sampleCount} · {new Date(entry.testedAt).toLocaleDateString()}</div>))}</div>
+          </section>
         </>}
         <footer><span className="status">{message}</span><button disabled={!token || !current.providerPresetId || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存并应用'}</button></footer>
       </section></div>

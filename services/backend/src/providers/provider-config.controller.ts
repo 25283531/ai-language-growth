@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Put } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Put, Query } from '@nestjs/common';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ProviderConfigService, type ProviderConfigInput } from './provider-config.service';
 
@@ -29,5 +29,22 @@ export class ProviderConfigController {
     const saved = await this.configs.save(body);
     await this.gateway.refreshRuntimeProvider(saved.serviceKind);
     return saved;
+  }
+
+  @Get('benchmarks')
+  async benchmarks(
+    @Headers('x-admin-token') token: string | undefined,
+    @Query('serviceKind') serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation',
+  ) {
+    this.configs.assertAdminToken(token);
+    return this.configs.listBenchmarks(serviceKind);
+  }
+
+  @Post('benchmarks')
+  async recordBenchmark(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
+    this.configs.assertAdminToken(token);
+    const benchmark = await this.configs.recordBenchmark(body);
+    await this.gateway.refreshRuntimeProvider(benchmark.serviceKind);
+    return benchmark;
   }
 }
