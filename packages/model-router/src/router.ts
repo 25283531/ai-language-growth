@@ -252,8 +252,9 @@ export class InMemoryUsageLedger implements UsageLedger {
       unpricedCalls: rows.filter((record) =>
         record.level !== 'L0' &&
         record.estimatedCostCny === 0 &&
-        (record.inputTokens + record.outputTokens + record.ttsCharacters +
-          record.asrSeconds + record.pronunciationCalls) > 0,
+        ((record.inputTokens ?? 0) + (record.outputTokens ?? 0) +
+          (record.ttsCharacters ?? 0) + (record.asrSeconds ?? 0) +
+          (record.pronunciationCalls ?? 0)) > 0,
       ).length,
     };
   }
