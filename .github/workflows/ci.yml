@@ -14,7 +14,6 @@ permissions:
 env:
   # Workflow-local disposable PostgreSQL; no production credentials or datasets.
   DATABASE_URL: postgresql://alg_ci:alg_ci@127.0.0.1:5432/alg_ci?schema=public
-  NODE_ENV: development
   # 不调用任何外部服务；教学逻辑与模型选择都在后端 mock 模式内完成。
   AI_GATEWAY_MODE: mock
 
@@ -91,6 +90,8 @@ jobs:
             packages/ai-provider-sdk/test/*.test.ts
 
       - name: Start mock API for M1 integration acceptance
+        env:
+          NODE_ENV: development
         run: |
           nohup node services/backend/dist/main.js >/tmp/alg-backend.log 2>&1 &
           for attempt in $(seq 1 30); do
