@@ -193,6 +193,13 @@ export interface UsageLedger {
     byLevel: Record<string, { calls: number; costCny: number }>;
   }>;
   list(filter?: { learnerId?: string; lessonSessionId?: string }): UsageRecord[] | Promise<UsageRecord[]>;
+  /** Return the cost already settled for one task route during a time window. */
+  dailyCost(input: {
+    taskRoute: string;
+    from: Date;
+    to: Date;
+  }): { costCny: number; unpricedCalls: number } |
+    Promise<{ costCny: number; unpricedCalls: number }>;
 }
 
 /** 内存用量账本。用于单测与独立本地运行；后端生产注入 Prisma 实现。 */
@@ -229,6 +236,27 @@ export class InMemoryUsageLedger implements UsageLedger {
 
     return { totalCostCny, byService, byLevel };
   }
+
+  dailyCost(input: { taskRoute: string; from: Date; to: Date }): {
+    costCny: number;
+    unpricedCalls: number;
+  } {
+    const rows = this.records.filter((record) => {
+      const createdAt = new Date(record.createdAt);
+      return record.taskRoute === input.taskRoute &&
+        createdAt >= input.from &&
+        createdAt < input.to;
+    });
+    return {
+      costCny: rows.reduce((total, record) => total + record.estimatedCostCny, 0),
+      unpricedCalls: rows.filter((record) =>
+        record.level !== 'L0' &&
+        record.estimatedCostCny === 0 &&
+        (record.inputTokens + record.outputTokens + record.ttsCharacters +
+          record.asrSeconds + record.pronunciationCalls) > 0,
+      ).length,
+    };
+  }
 }
 
 /**
@@ -241,6 +269,11 @@ export class ModelRouterImpl {
   private readonly ledger: UsageLedger;
   private providerAliases?: Partial<Record<ServiceKind, string>>;
   private modelAliases?: Partial<Record<ServiceKind, string>>;
+  /** Short-lived in-process guards for concurrent requests sharing one budget. */
+  private readonly pendingBudgetReservations = new Map<
+    string,
+    Array<{ amountCny: number; expiresAt: number }>
+  >();
 
   constructor(
     config: RouterConfig = DEFAULT_ROUTER_CONFIG,
@@ -288,6 +321,39 @@ export class ModelRouterImpl {
     return this.config.rules.find((r) => r.taskRoute === taskRoute && r.enabled);
   }
 
+  private budgetWindow(now = new Date()): { from: Date; to: Date } {
+    const from = new Date(now);
+    from.setUTCHours(0, 0, 0, 0);
+    const to = new Date(from);
+    to.setDate(to.getDate() + 1);
+    return { from, to };
+  }
+
+  private pendingBudget(taskRoute: string, now = Date.now()): number {
+    const reservations = this.pendingBudgetReservations.get(taskRoute) ?? [];
+    const active = reservations.filter((reservation) => reservation.expiresAt > now);
+    if (active.length !== reservations.length) {
+      if (active.length) this.pendingBudgetReservations.set(taskRoute, active);
+      else this.pendingBudgetReservations.delete(taskRoute);
+    }
+    return active.reduce((total, reservation) => total + reservation.amountCny, 0);
+  }
+
+  private reserveBudget(taskRoute: string, amountCny: number): void {
+    if (amountCny <= 0) return;
+    const reservations = this.pendingBudgetReservations.get(taskRoute) ?? [];
+    reservations.push({ amountCny, expiresAt: Date.now() + 2 * 60 * 1000 });
+    this.pendingBudgetReservations.set(taskRoute, reservations);
+  }
+
+  private settleBudget(taskRoute: string): void {
+    const reservations = this.pendingBudgetReservations.get(taskRoute);
+    if (!reservations?.length) return;
+    reservations.shift();
+    if (reservations.length) this.pendingBudgetReservations.set(taskRoute, reservations);
+    else this.pendingBudgetReservations.delete(taskRoute);
+  }
+
   /**
    * 选择模型并执行升级判定。
    *
@@ -317,6 +383,27 @@ export class ModelRouterImpl {
 
     const signals = input.escalationSignals ?? [];
     const failed = new Set(input.failedAliases ?? []);
+    const budgetLimit = rule.dailyBudgetCny;
+    const budgetWindow = this.budgetWindow();
+    const dailyUsage = budgetLimit > 0
+      ? await this.ledger.dailyCost({ taskRoute: rule.taskRoute, ...budgetWindow })
+      : { costCny: 0, unpricedCalls: 0 };
+    const settledCost = dailyUsage.costCny;
+    const reservedCost = budgetLimit > 0 ? this.pendingBudget(rule.taskRoute) : 0;
+    const budgetReserve = budgetLimit > 0 ? budgetLimit / Math.max(1, rule.maxConcurrency) : 0;
+    const budgetExhausted = budgetLimit > 0 &&
+      (dailyUsage.unpricedCalls > 0 ||
+        settledCost + reservedCost >= budgetLimit ||
+        settledCost + reservedCost + budgetReserve > budgetLimit);
+    const budgetSnapshot = budgetLimit > 0
+      ? {
+          limitCny: budgetLimit,
+          spentCny: settledCost,
+          reservedCny: reservedCost,
+          unpricedCalls: dailyUsage.unpricedCalls,
+          exhausted: budgetExhausted,
+        }
+      : undefined;
 
     // —— 升级判定：取所有信号对应目标级别中的最高级 ——
     const targets = this.config.escalationTargets[input.serviceKind] ?? {};
@@ -367,16 +454,32 @@ export class ModelRouterImpl {
       candidates.push({ ...fb, strategy: 'fallback' });
     }
 
-    for (const candidate of candidates) {
+    const budgetCandidates = budgetExhausted
+      ? candidates
+          .filter((candidate) =>
+            candidate.strategy !== 'primary' &&
+            levelRank(candidate.level) < levelRank(rule.primary.level),
+          )
+          .sort((a, b) => {
+            const aOrder = this.config.fallbackOrder.indexOf(a.level);
+            const bOrder = this.config.fallbackOrder.indexOf(b.level);
+            return (aOrder < 0 ? Number.MAX_SAFE_INTEGER : aOrder) -
+              (bOrder < 0 ? Number.MAX_SAFE_INTEGER : bOrder);
+          })
+      : candidates;
+
+    for (const candidate of budgetCandidates) {
       if (failed.has(candidate.providerAlias)) continue;
+      if (budgetLimit > 0) this.reserveBudget(rule.taskRoute, budgetReserve);
       return this.finalize(
         {
           level: candidate.level,
           providerAlias: candidate.providerAlias,
           modelAlias: candidate.modelAlias,
-          strategy: candidate.strategy,
+          strategy: budgetExhausted ? `budget_degraded_${candidate.strategy}` : candidate.strategy,
           fellBack: candidate.strategy !== 'primary',
           escalationSignals: signals,
+          budget: budgetSnapshot,
         },
         input.serviceKind,
       );
@@ -387,15 +490,22 @@ export class ModelRouterImpl {
       level: 'L0',
       providerAlias: 'local_rules',
       modelAlias: 'local_rules',
-      strategy: 'all_providers_failed_local_fallback',
+      strategy: budgetExhausted
+        ? 'budget_circuit_open_local_fallback'
+        : 'all_providers_failed_local_fallback',
       fellBack: true,
       escalationSignals: signals,
+      budget: budgetSnapshot,
     };
   }
 
   /** 记录一条用量。 */
   async recordUsage(record: UsageRecord): Promise<void> {
-    await this.ledger.add(record);
+    try {
+      await this.ledger.add(record);
+    } finally {
+      this.settleBudget(record.taskRoute);
+    }
   }
 
   /** 查询用量汇总。 */

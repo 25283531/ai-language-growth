@@ -68,6 +68,53 @@ export class PrismaUsageLedger implements UsageLedger {
     }));
   }
 
+  async dailyCost(input: { taskRoute: string; from: Date; to: Date }): Promise<{
+    costCny: number;
+    unpricedCalls: number;
+  }> {
+    const rows = await this.prisma.ai_usage_logs.findMany({
+      where: {
+        taskRoute: input.taskRoute,
+        createdAt: { gte: input.from, lt: input.to },
+      },
+      select: {
+        estimatedCostCny: true,
+        level: true,
+        modelId: true,
+        inputTokens: true,
+        outputTokens: true,
+        ttsCharacters: true,
+        asrSeconds: true,
+        pronunciationCalls: true,
+        model: { select: { prices: { select: { priceType: true } } } },
+      },
+    });
+    let costCny = 0;
+    let unpricedCalls = 0;
+    for (const row of rows) {
+      costCny += row.estimatedCostCny;
+      const quantities: Record<string, number> = {
+        input_token: row.inputTokens,
+        output_token: row.outputTokens,
+        per_character: row.ttsCharacters,
+        per_second: row.asrSeconds,
+        per_call: row.pronunciationCalls,
+      };
+      const usedTypes = Object.entries(quantities)
+        .filter(([, quantity]) => quantity > 0)
+        .map(([priceType]) => priceType);
+      const availableTypes = new Set(row.model?.prices.map((price) => price.priceType) ?? []);
+      if (
+        row.level !== 'L0' &&
+        usedTypes.length &&
+        (!row.modelId || usedTypes.some((priceType) => !availableTypes.has(priceType)))
+      ) {
+        unpricedCalls += 1;
+      }
+    }
+    return { costCny, unpricedCalls };
+  }
+
   async summary(filter?: { learnerId?: string; lessonSessionId?: string }) {
     const rows = await this.prisma.ai_usage_logs.findMany({
       where: {

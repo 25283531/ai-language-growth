@@ -63,6 +63,14 @@ export const routingDecisionSchema = z.object({
   strategy: z.string(),
   fellBack: z.boolean(),
   escalationSignals: z.array(z.string()).default([]),
+  /** 预算决策快照；仅在该任务路由启用每日预算时返回。 */
+  budget: z.object({
+    limitCny: z.number().min(0),
+    spentCny: z.number().min(0),
+    reservedCny: z.number().min(0),
+    unpricedCalls: z.number().int().min(0),
+    exhausted: z.boolean(),
+  }).optional(),
 });
 
 export type RoutingDecision = z.infer<typeof routingDecisionSchema>;

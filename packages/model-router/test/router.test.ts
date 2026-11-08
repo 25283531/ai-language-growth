@@ -92,6 +92,100 @@ describe('Model Router', () => {
     assert.equal(decision.providerAlias, 'local_rules');
   });
 
+  it('达到每日预算后选择低等级备选并标记自动降级', async () => {
+    const budgetRouter = new ModelRouterImpl({
+      ...DEFAULT_ROUTER_CONFIG,
+      rules: DEFAULT_ROUTER_CONFIG.rules.map((rule) =>
+        rule.taskRoute === 'llm.learning_plan'
+          ? { ...rule, dailyBudgetCny: 1, maxConcurrency: 1 }
+          : rule,
+      ),
+    });
+    await budgetRouter.recordUsage({
+      id: 'budget-used',
+      learnerId: null,
+      lessonSessionId: null,
+      serviceKind: 'llm',
+      taskRoute: 'llm.learning_plan',
+      level: 'L3',
+      providerAlias: 'premium_llm',
+      modelAlias: 'premium_llm_01',
+      estimatedCostCny: 1,
+      createdAt: new Date().toISOString(),
+    });
+    const decision = await budgetRouter.route({
+      serviceKind: 'llm',
+      taskRoute: 'llm.learning_plan',
+    });
+    assert.equal(decision.level, 'L2');
+    assert.equal(decision.strategy, 'budget_degraded_fallback');
+    assert.equal(decision.budget?.exhausted, true);
+  });
+
+  it('并发预算预留会触发熔断，避免多个请求同时越过上限', async () => {
+    const budgetRouter = new ModelRouterImpl({
+      ...DEFAULT_ROUTER_CONFIG,
+      rules: DEFAULT_ROUTER_CONFIG.rules.map((rule) =>
+        rule.taskRoute === 'llm.learning_plan'
+          ? { ...rule, dailyBudgetCny: 1, maxConcurrency: 1 }
+          : rule,
+      ),
+    });
+    const first = await budgetRouter.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan' });
+    const second = await budgetRouter.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan' });
+    assert.equal(first.level, 'L3');
+    assert.equal(second.level, 'L2');
+    assert.equal(second.strategy, 'budget_degraded_fallback');
+    await budgetRouter.recordUsage({
+      id: 'budget-settle',
+      learnerId: null,
+      lessonSessionId: null,
+      serviceKind: 'llm',
+      taskRoute: 'llm.learning_plan',
+      level: first.level,
+      providerAlias: first.providerAlias,
+      modelAlias: first.modelAlias,
+      estimatedCostCny: 0.2,
+      createdAt: new Date().toISOString(),
+    });
+    await budgetRouter.recordUsage({
+      id: 'budget-settle-2',
+      learnerId: null,
+      lessonSessionId: null,
+      serviceKind: 'llm',
+      taskRoute: 'llm.learning_plan',
+      level: second.level,
+      providerAlias: second.providerAlias,
+      modelAlias: second.modelAlias,
+      estimatedCostCny: 0.2,
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  it('发音评测缺少可用单价时按未知成本熔断到 L0', async () => {
+    const budgetRouter = new ModelRouterImpl();
+    await budgetRouter.recordUsage({
+      id: 'unpriced-pronunciation',
+      learnerId: null,
+      lessonSessionId: null,
+      serviceKind: 'pronunciation',
+      taskRoute: 'pronunciation.phoneme',
+      level: 'L1',
+      providerAlias: 'pronunciation_svc',
+      modelAlias: 'pronunciation_01',
+      pronunciationCalls: 1,
+      estimatedCostCny: 0,
+      createdAt: new Date().toISOString(),
+    });
+    const decision = await budgetRouter.route({
+      serviceKind: 'pronunciation',
+      taskRoute: 'pronunciation.phoneme',
+    });
+    assert.equal(decision.level, 'L0');
+    assert.equal(decision.strategy, 'budget_circuit_open_local_fallback');
+    assert.equal(decision.budget?.unpricedCalls, 1);
+  });
+
   it('路由规则中不含任何厂商或模型名称', () => {
     const forbidden = ['silicon', 'siliconflow', 'openai', 'zhipu', 'aliyun', 'tencent', 'qwen', 'glm', 'doubao'];
     const text = JSON.stringify(DEFAULT_ROUTER_CONFIG).toLowerCase();
