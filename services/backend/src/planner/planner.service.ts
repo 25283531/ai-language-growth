@@ -18,6 +18,8 @@ import { Curriculum } from '@alg/curriculum';
 import { SkillGraph } from '@alg/skill-graph';
 import type { MasteryState, TeachingActivity } from '@alg/shared-contracts';
 import { teachingActivitySchema } from '@alg/shared-contracts';
+import { ModelRouterImpl } from '@alg/model-router';
+import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { chooseReviewActivity, nextReviewIntervalDays } from './review-policy';
 
@@ -38,7 +40,11 @@ export class PlannerService {
   private readonly curriculum = new Curriculum();
   private readonly graph = new SkillGraph();
 
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AiGatewayService) private readonly gateway: AiGatewayService,
+    @Inject(ModelRouterImpl) private readonly router: ModelRouterImpl,
+  ) {}
 
   /**
    * 选出本堂课的第一个活动。
@@ -151,16 +157,26 @@ export class PlannerService {
       return null;
     }
 
+    const eligible: TeachingActivity[] = [];
     for (const activity of activities) {
       const gate = this.canSchedule(activity, states);
       if (gate.met) {
-        return {
-          activity,
-          rationale: `主题「${this.topicName(input.topicId)}」的下一个活动，能力节点 ${activity.skillNodeIds.join(',')} 的硬前置已达成`,
-          isReview: false,
-          reviewScheduleId: null,
-        };
+        eligible.push(activity);
       }
+    }
+    if (eligible.length) {
+      const selected = await this.chooseAdaptiveActivity({
+        activities: eligible,
+        learnerId: input.learnerId,
+        lessonSessionId: input.lessonSessionId,
+        states,
+      });
+      return {
+        activity: selected,
+        rationale: `AI 在 ${eligible.length} 个规则可行活动中选择；能力状态与硬前置由服务端校验`,
+        isReview: false,
+        reviewScheduleId: null,
+      };
     }
 
     // —— 4. 全部被硬前置阻塞：退回到该主题内门槛最低的活动 ——
@@ -208,6 +224,93 @@ export class PlannerService {
       ] ?? 'not_exposed';
     }
     return map;
+  }
+
+  /**
+   * AI 只能在已经通过发布状态和硬前置筛选的有限候选集中调序。
+   * 无效输出、预算熔断或供应商故障都会回落到可复现的规则排序。
+   */
+  private async chooseAdaptiveActivity(input: {
+    activities: TeachingActivity[];
+    learnerId: string;
+    lessonSessionId: string;
+    states: Record<string, MasteryState>;
+  }): Promise<TeachingActivity> {
+    const fallback = [...input.activities].sort((a, b) => {
+      const masteryRank = (activity: TeachingActivity) => Math.min(
+        ...activity.skillNodeIds.map((id) => masteryCode(input.states[id] ?? 'not_exposed')),
+      );
+      return masteryRank(a) - masteryRank(b) || a.difficulty - b.difficulty || a.order - b.order;
+    })[0]!;
+    if (input.activities.length < 2) return fallback;
+
+    const decision = await this.router.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan' });
+    let result: Awaited<ReturnType<AiGatewayService['llm']>> | null = null;
+    try {
+      const [learner, textbook] = await Promise.all([
+        this.prisma.learner_profiles.findUnique({
+          where: { id: input.learnerId },
+          select: { ageGroup: true, entryLevel: true, target: true },
+        }),
+        this.prisma.textbook_mappings.findFirst({
+          where: { learnerId: input.learnerId },
+          orderBy: { updatedAt: 'desc' },
+          select: { publisher: true, grade: true, version: true, currentUnit: true },
+        }),
+      ]);
+      result = await this.gateway.llm({
+        promptKey: 'planner.adaptive_candidate',
+        promptVersion: 'm2.1',
+        system: [
+          '你是课程活动排序助手，只能从候选列表选择一个 activityId。',
+          '优先考虑学习者薄弱或尚未接触的能力、教材关联和难度适配；已到期复习由系统单独优先处理。',
+          '你不能创造活动、修改能力状态或声称已经掌握。只输出 JSON：{"activityId":"候选中的ID"}。',
+        ].join(''),
+        messages: [{
+          role: 'user',
+          content: JSON.stringify({
+            learner,
+            textbook,
+            skillStates: input.states,
+            candidates: input.activities.map((activity) => ({
+              activityId: activity.id,
+              targetWords: activity.targetWords,
+              skillNodeIds: activity.skillNodeIds,
+              difficulty: activity.difficulty,
+              taskType: activity.taskType,
+              order: activity.order,
+            })),
+          }),
+        }],
+        temperature: 0.1,
+        maxTokens: 100,
+        timeoutMs: 8000,
+      }, decision);
+    } catch {
+      // The deterministic fallback below keeps a lesson available.
+    }
+
+    const selectedId = result ? parseActivityId(result.content) : null;
+    const selected = input.activities.find((activity) => activity.id === selectedId) ?? fallback;
+    await this.router.recordUsage({
+      id: `usage-plan-${input.lessonSessionId}-${Date.now()}`,
+      learnerId: input.learnerId,
+      lessonSessionId: input.lessonSessionId,
+      serviceKind: 'llm',
+      taskRoute: 'llm.learning_plan',
+      level: result?.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
+      providerAlias: result?.providerAlias ?? decision.providerAlias,
+      modelAlias: result?.modelAlias ?? decision.modelAlias,
+      inputTokens: result?.inputTokens ?? 0,
+      outputTokens: result?.outputTokens ?? 0,
+      ttsCharacters: 0,
+      asrSeconds: 0,
+      pronunciationCalls: 0,
+      estimatedCostCny: 0,
+      latencyMs: result?.latencyMs ?? 0,
+      createdAt: new Date().toISOString(),
+    });
+    return selected;
   }
 
   private topicName(topicId: string): string {
@@ -346,5 +449,19 @@ export class PlannerService {
 
   private activeReviewKey(learnerId: string, skillNodeId: string, learningItemId: string | null): string {
     return `${learnerId}::${skillNodeId}::${learningItemId ?? '*'}`;
+  }
+}
+
+function masteryCode(state: MasteryState): number {
+  return ({ not_exposed: 0, encountered: 1, forming: 2, mastered: 3, transferred: 4 } as Record<MasteryState, number>)[state] ?? 0;
+}
+
+function parseActivityId(content: string): string | null {
+  const cleaned = content.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  try {
+    const parsed = JSON.parse(cleaned) as { activityId?: unknown };
+    return typeof parsed.activityId === 'string' ? parsed.activityId : null;
+  } catch {
+    return null;
   }
 }
