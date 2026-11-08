@@ -1,4 +1,5 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,6 +7,7 @@ import { ProviderConfigService } from '../providers/provider-config.service';
 import { z } from 'zod';
 import { teachingActivitySchema } from '@alg/shared-contracts';
 import type { Prisma } from '@prisma/client';
+import AdmZip from 'adm-zip';
 
 const levelSchema = z.string().trim().min(1).max(24);
 const textbookSchema = z.object({
@@ -34,6 +36,39 @@ const reviewSchema = z.object({
   action: z.enum(['submit', 'approve', 'reject']),
   reviewer: z.string().trim().min(1).max(120),
   note: z.string().trim().max(2000).optional(),
+});
+const curriculumPackageSchema = z.object({
+  schemaVersion: z.literal(1),
+  packageId: z.string().trim().min(1).max(120),
+  title: z.string().trim().min(1).max(200),
+  source: z.string().trim().min(1).max(500),
+  levels: z.array(z.object({
+    code: z.enum(['pre-A1', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2']),
+    nameZh: z.string().trim().min(1).max(80),
+    canDo: z.array(z.string().trim().min(1).max(500)).min(1).max(30),
+    units: z.array(z.object({
+      code: z.string().trim().min(1).max(80),
+      title: z.string().trim().min(1).max(200),
+      objectives: z.array(z.string().trim().min(1).max(500)).min(1).max(20),
+      vocabulary: z.array(z.object({
+        word: z.string().trim().min(1).max(100),
+        phonetic: z.string().max(100).default(''),
+        meaningZh: z.string().max(200).default(''),
+      })).min(1).max(100),
+      patterns: z.array(z.object({
+        en: z.string().trim().min(1).max(300),
+        zh: z.string().trim().min(1).max(300),
+      })).max(30),
+      lessons: z.array(z.object({
+        title: z.string().trim().min(1).max(200),
+        taskType: z.enum(['listening_comprehension', 'image_identification', 'word_mimicry', 'pronunciation_drill', 'phrase_assembly', 'sentence_pattern', 'situational_dialogue', 'reading_story', 'free_response']),
+        scenario: z.enum(['greeting_scene', 'self_intro_scene', 'object_pic_scene', 'object_shop_scene', 'free_chat_scene', 'story_scene', 'assessment_scene']),
+        teacherPrompt: z.string().trim().min(1).max(500),
+        demonstrationText: z.string().max(2000).default(''),
+        targetWords: z.array(z.string().trim().min(1).max(100)).min(1).max(30),
+      })).min(1).max(12),
+    })).min(1).max(40),
+  })).length(7),
 });
 
 type GeneratedLesson = {
@@ -73,6 +108,108 @@ export class CurriculumAdminController {
 
   private authorize(token?: string) {
     this.configs.assertAdminToken(token);
+  }
+
+  @Post('package/import')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024, files: 1 } }))
+  async importCurriculumPackage(
+    @Headers('x-admin-token') token: string | undefined,
+    @UploadedFile() file?: { originalname: string; buffer: Buffer },
+  ) {
+    this.authorize(token);
+    if (!file || !file.originalname.toLowerCase().endsWith('.zip')) {
+      throw new BadRequestException('请选择 ZIP 格式的课程包');
+    }
+    let packageText: string;
+    try {
+      const zip = new AdmZip(file.buffer);
+      const entry = zip.getEntry('curriculum-package.json');
+      if (!entry || entry.header.size > 10 * 1024 * 1024) {
+        throw new Error('课程包缺少有效的 curriculum-package.json');
+      }
+      packageText = entry.getData().toString('utf8');
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : '课程 ZIP 无法读取');
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(packageText);
+    } catch {
+      throw new BadRequestException('课程包中的 JSON 格式无效');
+    }
+    const parsed = curriculumPackageSchema.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException({ message: '课程包结构不符合规范', details: parsed.error.flatten() });
+    const levels = parsed.data.levels;
+    const expectedLevels = ['pre-A1', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+    if (expectedLevels.some((level, index) => levels[index]?.code !== level)) {
+      throw new BadRequestException('课程包等级必须依照 pre-A1、A1、A2、B1、B2、C1、C2 排列');
+    }
+
+    const created: Array<{ id: string; title: string; level: string }> = [];
+    let skipped = 0;
+    for (const level of levels) {
+      for (const unit of level.units) {
+        const topicId = `bundle:${parsed.data.packageId}:${level.code}:${unit.code}`.slice(0, 120);
+        const existing = await this.prisma.curriculum_drafts.findFirst({ where: { topicId }, select: { id: true } });
+        if (existing) {
+          skipped += 1;
+          continue;
+        }
+        const vocabulary = unit.vocabulary.map((item) => ({
+          ...item,
+          syllables: [item.word],
+          difficultPhonemes: [],
+        }));
+        const generatedContent: GeneratedLesson = {
+          title: unit.title,
+          level: level.code,
+          objectives: [...level.canDo, ...unit.objectives],
+          vocabulary,
+          activities: unit.lessons.map((lesson, index) => ({
+            taskType: lesson.taskType,
+            scenario: lesson.scenario,
+            targetWords: lesson.targetWords,
+            teacherUtteranceZh: lesson.teacherPrompt,
+            demonstrationText: lesson.demonstrationText || null,
+            skillNodeIds: [curriculumSkillNodeFor(lesson.taskType)],
+            requiresPronunciationAssessment: ['word_mimicry', 'pronunciation_drill'].includes(lesson.taskType),
+            requiresAsr: ['sentence_pattern', 'situational_dialogue', 'free_response'].includes(lesson.taskType),
+            difficulty: Math.min(5, Math.max(1, Math.ceil((index + 1) / 2))),
+          })),
+          images: [],
+        };
+        const draft = await this.prisma.curriculum_drafts.create({
+          data: {
+            title: unit.title,
+            level: level.code,
+            topicId,
+            wordList: unit.vocabulary.map((item) => item.word),
+            generatedContent: generatedContent as unknown as Prisma.InputJsonValue,
+            status: 'generated',
+            generatedAt: new Date(),
+            createdBy: `package:${parsed.data.packageId}`,
+          },
+        });
+        await this.prisma.curriculum_review_records.create({
+          data: {
+            draftId: draft.id,
+            action: 'generated',
+            reviewer: `package:${parsed.data.packageId}`,
+            note: `导入课程包「${parsed.data.title}」；必须经人工审核后发布。句型：${unit.patterns.map((pattern) => pattern.en).join(' / ')}`.slice(0, 2000),
+            snapshot: generatedContent as unknown as Prisma.InputJsonValue,
+          },
+        });
+        created.push({ id: draft.id, title: unit.title, level: level.code });
+      }
+    }
+    return {
+      packageId: parsed.data.packageId,
+      packageTitle: parsed.data.title,
+      imported: created.length,
+      skipped,
+      levels: levels.map((level) => ({ code: level.code, units: level.units.length })),
+      drafts: created,
+    };
   }
 
   @Get('textbooks')
@@ -388,9 +525,21 @@ function buildFallbackLesson(title: string, level: string, words: string[], skil
 }
 
 function levelToStage(level: string): number {
-  const normalized = level.toLowerCase();
-  if (normalized.includes('pre')) return 0;
-  if (normalized.startsWith('a')) return 1;
-  if (normalized.startsWith('b')) return 3;
-  return 2;
+  const stages: Record<string, number> = { 'pre-a1': 0, 'pre-a': 0, a1: 1, a2: 2, b1: 3, b2: 4, c1: 5, c2: 6 };
+  return stages[level.toLowerCase()] ?? 0;
+}
+
+function curriculumSkillNodeFor(taskType: string): string {
+  const nodeByTask: Record<string, string> = {
+    listening_comprehension: 'LA.LISTEN.word_recognition',
+    image_identification: 'LA.VOCAB.receptive',
+    word_mimicry: 'LA.SPEAK.imitation',
+    pronunciation_drill: 'LA.PRON.phonemes',
+    phrase_assembly: 'LA.SPEAK.phrases',
+    sentence_pattern: 'LA.SPEAK.simple_sentences',
+    situational_dialogue: 'LA.COMM.dialogue',
+    reading_story: 'SE.SCHOOL.reading',
+    free_response: 'LA.COMM.free_talk',
+  };
+  return nodeByTask[taskType] ?? 'LA.VOCAB.receptive';
 }

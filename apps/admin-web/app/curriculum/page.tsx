@@ -36,6 +36,7 @@ export default function CurriculumPage() {
   const [contentText, setContentText] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [packageFile, setPackageFile] = useState<File | null>(null);
   const [textbook, setTextbook] = useState({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
   const [draft, setDraft] = useState({ title: '', level: 'pre-A', words: '', textbookId: '', textbookUnitId: '' });
 
@@ -71,6 +72,30 @@ export default function CurriculumPage() {
       setDraft({ title: '', level: 'pre-A', words: '', textbookId: '', textbookUnitId: '' });
       await load(); setMessage('课程草稿已创建。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '创建失败'); } finally { setBusy(false); }
+  }
+  async function importPackage() {
+    if (!packageFile) return;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append('file', packageFile);
+      const response = await fetch(`${apiRoot()}/api/v1/admin/curriculum/package/import`, {
+        method: 'POST',
+        headers: headers(),
+        body: form,
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message || `导入失败 (${response.status})`);
+      setPackageFile(null);
+      const input = document.getElementById('curriculum-package-file') as HTMLInputElement | null;
+      if (input) input.value = '';
+      await load();
+      setMessage(`课程包导入完成：新增 ${body.imported} 个单元，跳过 ${body.skipped} 个重复单元。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '课程包导入失败');
+    } finally {
+      setBusy(false);
+    }
   }
   async function draftAction(id: string, action: 'generate' | 'submit' | 'approve' | 'reject' | 'publish') {
     setBusy(true);
@@ -109,6 +134,14 @@ export default function CurriculumPage() {
       </div>
       <button disabled={!token || busy || !textbook.publisher || !textbook.grade} onClick={() => void createTextbook()}>保存教材版本</button>
       <div className="benchmark-list">{textbooks.map((book) => <div className="helper" key={book.id}><strong>{book.publisher}</strong> · {book.publicationYear} · {book.grade} · {book.title || '未命名'} {book.edition || ''} · 单元 {book.units.length}</div>)}</div>
+    </section>
+    <section className="panel" style={{ marginTop: 24 }}>
+      <div className="panel-head"><div><p className="eyebrow">CEFR COURSE PACKAGE</p><h2>导入完整 CEFR 课程包</h2><p className="muted">支持 pre-A1、A1、A2、B1、B2、C1、C2。导入后每个单元进入待人工审核队列，不会自动发布。</p></div></div>
+      <div className="fields">
+        <label>课程包 ZIP 文件<input id="curriculum-package-file" type="file" accept=".zip,application/zip" onChange={(event) => setPackageFile(event.target.files?.[0] || null)} /></label>
+        <div className="helper">课程包必须包含根目录文件 <strong>curriculum-package.json</strong>，等级顺序和结构由服务端校验。重复导入同一 packageId 与单元编码会自动跳过。</div>
+      </div>
+      <button disabled={!token || busy || !packageFile} onClick={() => void importPackage()}>导入课程包</button>
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
       <div className="panel-head"><div><p className="eyebrow">AI DRAFT</p><h2>按词表生成课程</h2><p className="muted">每行一个单词。AI 只生成待审核内容，不会直接修改孩子掌握状态。</p></div></div>

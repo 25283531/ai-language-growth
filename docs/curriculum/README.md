@@ -2,6 +2,14 @@
 
 The admin curriculum workspace is available at `/curriculum`.
 
+## CEFR curriculum package import
+
+The curriculum admin page accepts a ZIP containing `curriculum-package.json` at its root. Package schema version 1 contains the seven ordered levels `pre-A1`, `A1`, `A2`, `B1`, `B2`, `C1`, and `C2`; each level contains can-do goals and units, and each unit contains objectives, vocabulary, sentence patterns, and lesson activities.
+
+Import uses `POST /api/v1/admin/curriculum/package/import` as multipart form data with the file field named `file`. The ZIP is limited to 15 MB and its curriculum JSON to 10 MB. The server creates generated drafts only; it does not approve or publish imported material. The normal edit, submit, approval, and publication workflow still applies. A stable `packageId` and unit code make repeat imports idempotent.
+
+The locally prepared package `G:\workbuddy\课程\儿童英语_CEFR七级成长课程_v1.zip` is intentionally not stored in this repository. It is an original, child-context adaptation guided by the Council of Europe's CEFR Companion Volume (2020) descriptors and the project brief's page 3, not a copy of descriptor text. Level outcomes are references rather than deadlines or a mandatory course order. Image assets are omitted; any later image additions require a verified source and license.
+
 ## Textbook catalog
 
 Create textbook editions with publisher, publication year, grade, title, and edition. Units can be added through `POST /api/v1/admin/curriculum/textbooks/{textbookId}/units`. These fields are catalog metadata, not a required teaching sequence.
