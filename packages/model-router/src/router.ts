@@ -323,15 +323,26 @@ export class ModelRouterImpl {
       strategy: string;
     }> = [];
 
-    const escalatedCandidates = escalatedLevel && levelRank(escalatedLevel) > levelRank(rule.primary.level)
+    let escalatedCandidates = escalatedLevel && levelRank(escalatedLevel) > levelRank(rule.primary.level)
       ? rule.fallback
           .filter((candidate) => levelRank(candidate.level) >= levelRank(escalatedLevel))
           .sort((a, b) => levelRank(a.level) - levelRank(b.level))
       : [];
+    const escalationTargetUnavailable = escalatedLevel !== null &&
+      levelRank(escalatedLevel) > levelRank(rule.primary.level) &&
+      escalatedCandidates.length === 0;
+    if (escalationTargetUnavailable) {
+      escalatedCandidates = rule.fallback
+        .filter((candidate) => levelRank(candidate.level) > levelRank(rule.primary.level))
+        .sort((a, b) => levelRank(b.level) - levelRank(a.level))
+        .slice(0, 1);
+    }
     for (const candidate of escalatedCandidates) {
       candidates.push({
         ...candidate,
-        strategy: `escalated_on_${signals.join('+')}`,
+        strategy: escalationTargetUnavailable
+          ? `escalation_target_${escalatedLevel!.toLowerCase()}_unavailable_using_${candidate.level.toLowerCase()}`
+          : `escalated_on_${signals.join('+')}`,
       });
     }
 

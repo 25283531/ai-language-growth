@@ -41,13 +41,15 @@ describe('Model Router', () => {
     assert.ok(decision.escalationSignals.includes('child_did_not_understand'));
   });
 
-  it('多个升级信号取最高级别', async () => {
+  it('多个升级信号取最高级别；目标模型缺失时返回真实可用的最高备选级别', async () => {
     const decision = await router.route({
       serviceKind: 'llm',
       taskRoute: 'llm.simple_dialogue',
       escalationSignals: ['child_did_not_understand', 'method_already_changed'],
     });
-    assert.equal(decision.level, 'L3');
+    assert.equal(decision.level, 'L2');
+    assert.equal(decision.providerAlias, 'mid_llm');
+    assert.equal(decision.strategy, 'escalation_target_l3_unavailable_using_l2');
   });
 
   it('运行时供应商别名不覆盖真实模型别名', async () => {
