@@ -4,7 +4,7 @@
 
 A patient AI teacher that teaches word by word, like an adult teaching a child to speak — slow TTS with word / syllable / phoneme breakdown, phoneme-level pronunciation assessment, and a teaching state machine (teach → listen → score → break down further / encourage / advance), not a free-chat chatbot.
 
-> **Status: M0/M1 not acceptance-complete.** The M0 design set and M1 prototype are present, but M0 was not formally frozen before implementation. GitHub Actions now runs a PostgreSQL-backed API smoke flow for lesson start/turn/finish, idempotency, TTS cache, repeat/slow controls, and growth archive. M1 still has open gates: Android does not upload audio bytes, three-topic/browser coverage and progressive difficulty/free conversation are incomplete, and consent/auth/data-deletion are not implemented. See [`docs/M0-M1-audit.md`](docs/M0-M1-audit.md). Thresholds remain `uncalibrated`; all course content remains `pending_review`. License: TBD (no LICENSE file yet).
+> **Status: M0–M2 code scope delivered; M3 in progress.** M0 technical baseline, M1 teaching prototype and M2 learner/routing code are documented in their audit files. M1 acceptance still has open gates for real child samples, teaching quality, latency, guardian authorization and data deletion. The M3 Android Compose client now has its first backend-connected lesson-start slice; HTTPS deployment and the remaining voice and parent workflows are pending. Thresholds remain `uncalibrated`; course content remains `pending_review`. See [`docs/M0-M1-audit.md`](docs/M0-M1-audit.md) and [`docs/M2-audit.md`](docs/M2-audit.md).
 
 > **Live mode added (2026-11-07):** real LLM / ASR / TTS adapters are wired through config only, with Mock kept as the fallback. `AI_GATEWAY_MODE=mock` returns to a zero-call, zero-cost run; `AI_GATEWAY_LIVE_SERVICES` selects which services actually call out. End-to-end results, pricing caveats and the latency shortfall against the 1–2 s target: [`docs/M1-live-API-report.md`](docs/M1-live-API-report.md).
 
@@ -28,7 +28,7 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 - **M0 — Teaching system + infra design:** 7 stages, dual track, ability graph, DB design, NestJS modules, Provider Adapter spec, LLM/TTS/ASR unified protocol, fixed teacher persona. *(Design set delivered; formal baseline freeze and complete API/data dictionary review remain open — see `docs/M0-M1-audit.md`.)*
 - **M1 — Web teaching prototype:** Next.js workbench + NestJS backend, basic routing L0+L1+fallback, basic cost stats, minimal learner state, 3 themes (greetings / self-introduction / objects around the child), plus a parallel Android minimal audio prototype. *(Prototype delivered, acceptance partial: see `docs/M0-M1-audit.md` and the conditional report `docs/M1-QA-report.md`.)*
 - **M2 — Learner engine + full routing:** multi-dim profile, evidence / mastery, long-term memory, controlled persona, planner, L1–L3 routing, Benchmark, ASR/TTS/pronunciation grading, budget / auto-degrade, review / migration.
-- **M3 — Android formal client:** Kotlin + Jetpack Compose, child UI, voice, parent centre, same backend.
+- **M3 — Android formal client:** in progress; Compose classroom shell and lesson start are implemented, with voice and parent workflows to follow.
 - **M4 — Curriculum expansion + commercialisation:** 7 stages, phonics / reading / writing, textbook mapping, parent report, membership / usage, privacy / guardian consent, Docker self-deploy, open-source docs.
 
 ## Three hard R&D constraints
