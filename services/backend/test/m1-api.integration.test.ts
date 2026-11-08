@@ -8,9 +8,15 @@ const userId = `ci-m1-user-${runId}`;
 const learnerId = `ci-m1-learner-${runId}`;
 const api = process.env.M1_API_URL ?? 'http://127.0.0.1:3100/api/v1';
 
-async function request(path: string, body?: unknown) {
+async function request(path: string, body?: unknown, extraHeaders: Record<string, string> = {}) {
   const response = await fetch(`${api}${path}`, {
-    ...(body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+    ...(body === undefined
+      ? { headers: extraHeaders }
+      : {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...extraHeaders },
+          body: JSON.stringify(body),
+        }),
   });
   const payload = await response.json() as Record<string, any>;
   assert.equal(response.ok, true, `${path} returned ${response.status}: ${JSON.stringify(payload)}`);
@@ -22,7 +28,15 @@ before(async () => {
     data: { id: userId, email: `${userId}@example.invalid`, passwordHash: 'ci-only', displayName: 'CI Guardian', role: 'guardian' },
   });
   await prisma.learner_profiles.create({
-    data: { id: learnerId, userId, guardianId: userId, displayName: 'CI Learner', ageGroup: '6-9', entryLevel: 'pre_a1' },
+    data: {
+      id: learnerId,
+      userId,
+      guardianId: userId,
+      displayName: 'CI Learner',
+      ageGroup: '6-9',
+      entryLevel: 'pre_a1',
+      membershipTier: 'free',
+    },
   });
 });
 
@@ -34,8 +48,19 @@ test('M1 HTTP loop starts, responds idempotently, caches TTS, and archives growt
   assert.equal(health.gatewayMode, 'mock');
 
   const ttsPayload = { text: 'Hello from the teacher.', teacherSpeed: 0.6, voiceStyle: 'gentle', pauseAfterSentenceMs: 900, pronunciationMode: 'slow_clear' };
-  const firstSpeech = await request('/speech/synthesize', ttsPayload);
-  const repeatedSpeech = await request('/speech/synthesize', ttsPayload);
+  const ttsReservation = await request('/speech/quota/reserve', {
+    learnerId,
+    serviceKind: 'tts',
+    seconds: 10,
+    idempotencyKey: `ci-tts-${runId}`,
+  });
+  const speechHeaders = {
+    'X-Learner-Id': learnerId,
+    'X-Speech-Quota-Reservation': ttsReservation.reservationId,
+  };
+  const firstSpeech = await request('/speech/synthesize', ttsPayload, speechHeaders);
+  const repeatedSpeech = await request('/speech/synthesize', ttsPayload, speechHeaders);
+  await request('/speech/quota/settle', { reservationId: ttsReservation.reservationId, seconds: 1 });
   assert.equal(firstSpeech.cached, false);
   assert.equal(repeatedSpeech.cached, true);
   assert.equal(repeatedSpeech.characters, 0);

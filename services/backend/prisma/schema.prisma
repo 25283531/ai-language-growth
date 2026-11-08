@@ -40,6 +40,7 @@ model learner_profiles {
   ageGroup     String   @default("6-9")
   entryLevel   String   @default("pre_a1")
   target       String   @default("daily_communication")
+  membershipTier String  @default("guest") // guest | free | member | advanced; effective tier is server managed
   guardianId   String
   currentTopic String?
   createdAt    DateTime @default(now())

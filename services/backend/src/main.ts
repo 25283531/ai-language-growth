@@ -11,6 +11,7 @@ import { json, raw } from 'express';
 import { AppModule } from './app.module';
 import { assertLiveProviderConfig } from '@alg/ai-provider-sdk';
 import { loadConfig } from './config/config.module';
+import { SpeechQuotaService } from './usage/speech-quota.service';
 
 async function bootstrap(): Promise<void> {
   // live 模式下配置漏填必须立刻失败，不能等到运行期静默回落 Mock
@@ -35,6 +36,21 @@ async function bootstrap(): Promise<void> {
 
   // JSON body 体积上限：M1 语音以引用方式传递，不内联大 base64
   app.use(json({ limit: '2mb' }));
+  const speechQuota = app.get(SpeechQuotaService);
+  app.use('/api/v1/media/audio/uploads', async (request, response, next) => {
+    const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
+    const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
+    if (!reservationId || !learnerId) {
+      response.status(400).json({ message: '音频请求缺少额度租约或学习者标识' });
+      return;
+    }
+    try {
+      await speechQuota.assertReservation({ reservationId, learnerId, serviceKind: 'asr' });
+      next();
+    } catch {
+      response.status(429).json({ message: '语音额度租约无效或已超额，已阻止音频上传' });
+    }
+  });
   // Android 原型将录音字节直接 POST 到该路径；只对上传路由启用原始字节解析。
   app.use('/api/v1/media/audio/uploads', raw({
     type: ['audio/*', 'application/octet-stream'],

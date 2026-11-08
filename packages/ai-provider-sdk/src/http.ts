@@ -95,7 +95,7 @@ export class HttpTtsAdapter implements TtsAdapter {
     if (!baseUrl) throw new Error(`adapter ${this.alias} 缺少 baseUrl 配置`);
 
     const speed = mapTeacherSpeed(request.voice.teacherSpeed ?? 0.65);
-    const voice = this.options.voice ?? request.voiceIdentity;
+    const voice = this.options.voice ?? (this.options.providerPresetId === 'ollama' ? '' : request.voiceIdentity);
     const started = Date.now();
 
     const provider = this.options.providerPresetId;
@@ -109,6 +109,15 @@ export class HttpTtsAdapter implements TtsAdapter {
       speed,
       response_format: 'mp3',
     };
+    if (provider === 'ollama') {
+      requestBody = {
+        model: modelAlias,
+        input: request.text,
+        ...(voice ? { voice } : {}),
+        speed: 1,
+        response_format: 'wav',
+      };
+    }
     if (provider === 'bailian') {
       const workspaceId = String(extra.workspaceId ?? '');
       const customBase = baseUrl.replace(/\/$/, '') !== 'https://dashscope.aliyuncs.com';
@@ -144,7 +153,7 @@ export class HttpTtsAdapter implements TtsAdapter {
       requestUrl = `${baseUrl}${groupId ? `?GroupId=${encodeURIComponent(groupId)}` : ''}`;
       requestBody = { model: modelAlias, text: request.text, stream: false, voice_setting: { voice_id: voice || String(extra.voice ?? 'English_Graceful_Lady'), speed, vol: 1, pitch: 0 }, audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 } };
     }
-    if (this.options.apiKey && provider !== 'volcengine' && provider !== 'baidu-qianfan') requestHeaders.authorization = `Bearer ${this.options.apiKey}`;
+    if (this.options.apiKey && provider !== 'volcengine' && provider !== 'baidu-qianfan' && provider !== 'tencent-cloud') requestHeaders.authorization = `Bearer ${this.options.apiKey}`;
     const res = await fetch(requestUrl, {
       method: 'POST',
       headers: requestHeaders,
@@ -252,7 +261,30 @@ export async function loadAudio(
     };
   }
 
-  // 2) 公网可下载地址
+  // 2) 后端自己生成的媒体地址：适配器在同一进程内直接读缓存文件，
+  //    避免为了供应商上传再次经过需要额度租约的公网媒体路由。
+  const mediaPath = /\/api\/v1\/media\/audio\/([a-f0-9]{24}\.(?:mp3|m4a|wav|ogg|opus|aac))$/i.exec(audioRef);
+  if (mediaPath?.[1]) {
+    const filePath = join(resolveAudioDir(), mediaPath[1]);
+    if (!existsSync(filePath)) throw new Error(`音频文件不存在: ${filePath}`);
+    const lower = filePath.toLowerCase();
+    const mime = lower.endsWith('.mp3')
+      ? 'audio/mpeg'
+      : lower.endsWith('.m4a')
+        ? 'audio/mp4'
+        : lower.endsWith('.ogg') || lower.endsWith('.opus')
+          ? 'audio/ogg'
+          : lower.endsWith('.aac')
+            ? 'audio/aac'
+            : 'audio/wav';
+    return {
+      bytes: new Uint8Array(readFileSync(filePath)),
+      fileName: mediaPath[1],
+      mime,
+    };
+  }
+
+  // 3) 公网可下载地址
   if (/^https?:\/\//i.test(audioRef)) {
     const res = await fetch(audioRef, { signal: AbortSignal.timeout(15000) });
     if (!res.ok) throw new Error(`音频下载失败: HTTP ${res.status}`);
@@ -264,7 +296,7 @@ export async function loadAudio(
     };
   }
 
-  // 3) 本地文件：支持 file:// 与绝对路径
+  // 4) 本地文件：支持 file:// 与绝对路径
   let filePath = audioRef;
   if (filePath.startsWith('file://')) {
     filePath = filePath.slice(7).replace(/^\/([A-Za-z]:)/, '$1');
@@ -346,6 +378,22 @@ export class HttpAsrAdapter implements AsrAdapter {
       const format = audio.mime.includes('mpeg') || audio.fileName.toLowerCase().endsWith('.mp3') ? 'mp3' : 'wav';
       headers = { 'content-type': 'application/json' };
       body = JSON.stringify({ format, rate: Number(extra.sampleRate ?? 16000), channel: 1, cuid: String(extra.cuid ?? 'ai-language-growth'), dev_pid: Number(extra.devPid ?? 1737), speech: Buffer.from(audio.bytes).toString('base64'), len: audio.bytes.length });
+    } else if (provider === 'volcengine') {
+      endpoint = baseUrl;
+      headers = {
+        'content-type': 'application/json',
+        'X-Api-Key': credentials.apiKey ?? this.options.apiKey ?? '',
+        'X-Api-Resource-Id': String(extra.resourceId ?? 'volc.bigasr.auc_turbo'),
+        'X-Api-Request-Id': randomUUID(),
+        'X-Api-Sequence': '-1',
+      };
+      body = JSON.stringify({
+        user: { uid: String(extra.uid ?? 'ai-language-growth') },
+        audio: { data: Buffer.from(audio.bytes).toString('base64') },
+        request: {
+          model_name: String(extra.modelName ?? 'bigmodel'),
+        },
+      });
     } else {
       const form = new FormData();
       form.set('model', modelAlias ?? '');
@@ -368,12 +416,19 @@ export class HttpAsrAdapter implements AsrAdapter {
     const json = (await res.json()) as {
       text?: string;
       usage?: { seconds?: number; duration?: number };
-      result?: string[];
+      result?: Array<string | { text?: string }> | string | { text?: string };
       output?: { text?: string; choices?: Array<{ message?: { content?: string } }> };
+      audio_info?: { duration?: number };
     };
     const dashscopeText = json.output?.text ?? json.output?.choices?.[0]?.message?.content;
-    const transcript = (json.text ?? json.result?.[0] ?? dashscopeText ?? '').trim();
-    const seconds = Number(json.usage?.seconds ?? json.usage?.duration ?? 0);
+    const resultObject = json.result && !Array.isArray(json.result) && typeof json.result === 'object'
+      ? json.result as { text?: string }
+      : undefined;
+    const resultText = Array.isArray(json.result)
+      ? json.result.map((entry) => typeof entry === 'string' ? entry : entry.text ?? '').join(' ')
+      : typeof json.result === 'string' ? json.result : '';
+    const transcript = (json.text ?? resultObject?.text ?? resultText ?? dashscopeText ?? '').trim();
+    const seconds = Number(json.usage?.seconds ?? json.usage?.duration ?? (provider === 'volcengine' ? json.audio_info?.duration : 0) ?? 0);
 
     return {
       transcript,

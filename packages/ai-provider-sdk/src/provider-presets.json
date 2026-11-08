@@ -13,11 +13,11 @@
     "id": "volcengine",
     "name": "火山引擎",
     "protocol": "volcengine_http",
-    "defaultBaseUrls": { "llm": "https://ark.cn-beijing.volces.com/api/v3", "tts": "https://openspeech.bytedance.com/api/v3/tts/unidirectional" },
-    "services": ["llm", "tts"],
+    "defaultBaseUrls": { "llm": "https://ark.cn-beijing.volces.com/api/v3", "tts": "https://openspeech.bytedance.com/api/v3/tts/unidirectional", "asr": "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash" },
+    "services": ["llm", "tts", "asr"],
     "credentialRequired": true,
     "documentationUrl": "https://docs.volcengine.com/docs/ark/base-url-and-authentication",
-    "documentationUrls": { "llm": "https://docs.volcengine.com/docs/ark/base-url-and-authentication?lang=en", "tts": "https://docs.volcengine.com/docs/doubao-voice/http-chunked-sse-unidirectional-streaming-v3?lang=zh" }
+    "documentationUrls": { "llm": "https://docs.volcengine.com/docs/ark/base-url-and-authentication?lang=en", "tts": "https://docs.volcengine.com/docs/doubao-voice/http-chunked-sse-unidirectional-streaming-v3?lang=zh", "asr": "https://docs.volcengine.com/docs/doubao-voice/recording-file-recognition-lite-http?lang=zh" }
   },
   {
     "id": "baidu-qianfan",
@@ -53,11 +53,45 @@
     "id": "ollama",
     "name": "Ollama",
     "protocol": "openai_compatible",
-    "defaultBaseUrls": { "llm": "http://localhost:11434/v1" },
-    "services": ["llm"],
+    "defaultBaseUrls": { "llm": "http://localhost:11434/v1", "tts": "http://localhost:11434/v1", "asr": "http://localhost:11434/v1" },
+    "services": ["llm", "tts", "asr"],
     "credentialRequired": false,
     "documentationUrl": "https://docs.ollama.com/api/openai-compatibility",
-    "documentationUrls": { "llm": "https://docs.ollama.com/api/openai-compatibility" }
+    "documentationUrls": { "llm": "https://docs.ollama.com/api/openai-compatibility", "tts": "https://docs.ollama.com/api/openai-compatibility", "asr": "https://docs.ollama.com/api/openai-compatibility" }
+  },
+  {
+    "id": "siliconflow",
+    "name": "硅基流动",
+    "protocol": "openai_compatible",
+    "defaultBaseUrls": { "llm": "https://api.siliconflow.cn/v1", "tts": "https://api.siliconflow.cn/v1", "asr": "https://api.siliconflow.cn/v1" },
+    "services": ["llm", "tts", "asr"],
+    "credentialRequired": true,
+    "documentationUrl": "https://docs.siliconflow.cn/",
+    "documentationUrls": { "llm": "https://docs.siliconflow.cn/", "tts": "https://docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech", "asr": "https://docs.siliconflow.cn/docs/api/audio-transcriptions-post" }
+  },
+  {
+    "id": "tencent-cloud",
+    "name": "腾讯云语音服务",
+    "protocol": "tencent_cloud",
+    "defaultBaseUrls": { "tts": "https://tts.tencentcloudapi.com", "asr": "https://asr.tencentcloudapi.com" },
+    "services": ["tts", "asr"],
+    "credentialRequired": true,
+    "documentationUrl": "https://cloud.tencent.com/document/product/1073/37995",
+    "documentationUrls": { "tts": "https://cloud.tencent.com/document/api/1073/37995", "asr": "https://cloud.tencent.com/document/product/1093/134682" },
+    "credentialFields": [
+      { "key": "secretId", "label": "腾讯云 Secret ID", "required": true },
+      { "key": "secretKey", "label": "腾讯云 Secret Key", "required": true }
+    ]
+  },
+  {
+    "id": "tencent-hunyuan",
+    "name": "腾讯云混元",
+    "protocol": "openai_compatible",
+    "defaultBaseUrls": { "llm": "https://api.hunyuan.cloud.tencent.com/v1" },
+    "services": ["llm"],
+    "credentialRequired": true,
+    "documentationUrl": "https://cloud.tencent.com/document/product/1729",
+    "documentationUrls": { "llm": "https://cloud.tencent.com/document/product/1729" }
   },
   {
     "id": "openai-compatible",

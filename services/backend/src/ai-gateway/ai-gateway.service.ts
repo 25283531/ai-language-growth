@@ -31,6 +31,8 @@ import {
   ChivoxPronunciationAdapter,
   IflytekTtsAdapter,
   IflytekAsrAdapter,
+  TencentCloudAsrAdapter,
+  TencentCloudTtsAdapter,
 } from '@alg/ai-provider-sdk';
 import type {
   AiGateway,
@@ -127,12 +129,16 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       case 'tts':
         this.registry.register('tts', config.providerPresetId === 'iflytek-spark'
           ? new IflytekTtsAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })
-          : new HttpTtsAdapter(options));
+          : config.providerPresetId === 'tencent-cloud'
+            ? new TencentCloudTtsAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })
+            : new HttpTtsAdapter(options));
         break;
       case 'asr':
         this.registry.register('asr', config.providerPresetId === 'iflytek-spark'
           ? new IflytekAsrAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })
-          : new HttpAsrAdapter(options));
+          : config.providerPresetId === 'tencent-cloud'
+            ? new TencentCloudAsrAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })
+            : new HttpAsrAdapter(options));
         break;
       case 'pronunciation':
         if (config.providerPresetId === 'iflytek-spark') {

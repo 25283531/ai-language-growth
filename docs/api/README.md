@@ -60,7 +60,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 | 路由 | 用途 |
 |---|---|
 | `GET /speech/quota/status?learnerId=...` | 查询当天各服务的上限、已用、预留和剩余秒数 |
-| `POST /speech/quota/reserve` | `{ learnerId, serviceKind, seconds, idempotencyKey }`，原子预留，默认非会员每类 300 秒/自然日 |
+| `POST /speech/quota/reserve` | `{ learnerId, serviceKind, seconds, idempotencyKey }`，原子预留；`guest` 为 0 秒，`free` 默认每类 300 秒，`member` 默认每类 1800 秒，`advanced` 不限 |
 | `POST /speech/quota/settle` | `{ reservationId, seconds }`，按供应商/SDK 返回的实际秒数结算 |
 | `POST /speech/quota/release` | `{ reservationId }`，失败或取消时释放预留 |
 
@@ -72,6 +72,17 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 - ASR / 发音评测接口复用同一租约校验。客户端不得只依赖本地计时器。
 
 端侧直连供应商时，供应商短期凭证也必须绑定同一租约；长期 API Key/AppSecret 不得放入 APK。课程缓存和旧 Web 原型的无租约读取只作为过渡兼容路径，正式客户端不使用该路径。
+
+### 会员管理
+
+管理端使用 `ADMIN_CONFIG_TOKEN` 调用以下接口，等级由服务端读取和保存，客户端不能自行传入等级：
+
+| `GET /admin/learners/{id}/membership` | 读取学习者当前等级 |
+| `PUT /admin/learners/{id}/membership` | `{ tier: "guest" | "free" | "member" | "advanced" }` |
+
+读取会员接口同时返回 `speechQuota.byService`，包含 ASR、TTS、发音评测的当日上限、已用、预留和剩余秒数。新建档案默认等级为 `guest`；生产环境应仅由后台将注册学习者设置为 `free` 或更高等级。
+
+`advanced` 仅供后台配置，手机客户端暂不提供购买或升级入口。
 
 ## 管理 API
 

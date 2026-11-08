@@ -18,6 +18,8 @@ const DEFAULT_LIMITS: Record<SpeechQuotaKind, number> = {
   tts: 300,
   pronunciation: 300,
 };
+const UNLIMITED_LIMIT = Number.MAX_SAFE_INTEGER;
+type MembershipTier = 'guest' | 'free' | 'member' | 'advanced';
 
 class QuotaExceededException extends HttpException {
   constructor(message = '今日语音额度不足，已阻止本次请求') {
@@ -65,35 +67,53 @@ export class SpeechQuotaService {
     });
   }
 
-  private limitFor(kind: SpeechQuotaKind): number {
-    const envName = `${kind.toUpperCase()}_DAILY_QUOTA_SECONDS`;
+  private async membershipTier(learnerId: string): Promise<MembershipTier> {
+    const learner = await this.prisma.learner_profiles.findUnique({
+      where: { id: learnerId },
+      select: { membershipTier: true },
+    });
+    const tier = learner?.membershipTier;
+    return tier === 'free' || tier === 'member' || tier === 'advanced' ? tier : 'guest';
+  }
+
+  private limitFor(kind: SpeechQuotaKind, tier: MembershipTier): number {
+    if (tier === 'guest') return 0;
+    if (tier === 'advanced') return UNLIMITED_LIMIT;
+    const envName = `${tier.toUpperCase()}_${kind.toUpperCase()}_DAILY_QUOTA_SECONDS`;
     const configured = Number(process.env[envName]);
-    return Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_LIMITS[kind];
+    if (Number.isFinite(configured) && configured >= 0) return configured;
+    if (tier === 'free') {
+      const legacy = Number(process.env[`${kind.toUpperCase()}_DAILY_QUOTA_SECONDS`]);
+      return Number.isFinite(legacy) && legacy >= 0 ? legacy : DEFAULT_LIMITS[kind];
+    }
+    return DEFAULT_LIMITS[kind] * 6;
   }
 
   async status(learnerId: string) {
     await this.reapExpired();
     const date = utcDate();
+    const tier = await this.membershipTier(learnerId);
     const rows = await this.prisma.speech_quota_buckets.findMany({
       where: { learnerId, usageDate: date },
     });
     const byService = (['asr', 'tts', 'pronunciation'] as SpeechQuotaKind[]).reduce(
       (result, kind) => {
         const row = rows.find((item) => item.serviceKind === kind);
-        const limit = row?.limitUnits ?? this.limitFor(kind);
+        const limit = this.limitFor(kind, tier);
         const used = row?.consumedUnits ?? 0;
         const reserved = row?.reservedUnits ?? 0;
         result[kind] = {
-          limitSeconds: limit,
+          limitSeconds: tier === 'advanced' ? null : limit,
+          unlimited: tier === 'advanced',
           consumedSeconds: used,
           reservedSeconds: reserved,
-          remainingSeconds: Math.max(0, limit - used - reserved),
+          remainingSeconds: tier === 'advanced' ? null : Math.max(0, limit - used - reserved),
         };
         return result;
       },
       {} as Record<string, unknown>,
     );
-    return { learnerId, usageDate: date.toISOString().slice(0, 10), byService };
+    return { learnerId, membershipTier: tier, usageDate: date.toISOString().slice(0, 10), byService };
   }
 
   async reserve(input: {
@@ -105,6 +125,7 @@ export class SpeechQuotaService {
   }) {
     await this.reapExpired();
     const serviceKind = validKind(input.serviceKind);
+    const tier = await this.membershipTier(input.learnerId);
     const units = Number(input.units);
     if (!Number.isFinite(units) || units <= 0 || units > 120) {
       throw new ConflictException('预留时长必须在 0 到 120 秒之间');
@@ -113,10 +134,15 @@ export class SpeechQuotaService {
       where: { idempotencyKey: input.idempotencyKey },
       include: { bucket: true },
     });
-    if (existing) return this.publicReservation(existing, existing.bucket);
+    if (existing) {
+      if (existing.learnerId !== input.learnerId || existing.serviceKind !== serviceKind) {
+        throw new ConflictException('额度请求幂等键已用于其他学习者或服务');
+      }
+      return this.publicReservation(existing, existing.bucket);
+    }
 
     const date = utcDate();
-    const limitUnits = this.limitFor(serviceKind);
+    const limitUnits = this.limitFor(serviceKind, tier);
     const ttl = Math.max(30, Math.min(600, input.ttlSeconds ?? 180));
     try {
       const reservation = await this.prisma.$transaction(async (tx) => {
@@ -130,7 +156,7 @@ export class SpeechQuotaService {
             serviceKind,
             limitUnits,
           },
-          update: {},
+          update: { limitUnits },
         });
         const updated = await tx.speech_quota_buckets.updateMany({
           where: {
@@ -222,6 +248,10 @@ export class SpeechQuotaService {
 
   async assertReservation(input: { reservationId: string; learnerId: string; serviceKind: SpeechQuotaKind }) {
     await this.reapExpired();
+    const tier = await this.membershipTier(input.learnerId);
+    if (tier === 'guest') {
+      throw new QuotaExceededException('当前账户不允许使用云端语音；请使用设备自带语音播放');
+    }
     const reservation = await this.prisma.speech_quota_reservations.findUnique({
       where: { id: input.reservationId },
     });
@@ -248,7 +278,7 @@ export class SpeechQuotaService {
       consumedSeconds: reservation.consumedUnits,
       status: reservation.status,
       expiresAt: reservation.expiresAt.toISOString(),
-      remainingSeconds: Math.max(0, bucket.limitUnits - bucket.consumedUnits - bucket.reservedUnits),
+      remainingSeconds: bucket.limitUnits >= UNLIMITED_LIMIT ? null : Math.max(0, bucket.limitUnits - bucket.consumedUnits - bucket.reservedUnits),
     };
   }
 }

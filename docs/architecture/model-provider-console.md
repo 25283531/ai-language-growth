@@ -15,18 +15,21 @@ Docker Compose 默认开放管理页面 `3001`、后端 API `3100`。页面从�
 | 平台 | LLM | TTS | 普通 ASR | 音素/发音评测 | 接入说明 |
 | --- | --- | --- | --- | --- | --- |
 | 阿里云百炼 | OpenAI 兼容 Chat | 百炼语音 HTTP | Qwen Audio ASR HTTP | — | 语音需要 Workspace ID、地域 API Key、模型和音色。 [TTS API](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-http-api) · [ASR API](https://help.aliyun.com/zh/model-studio/qwen-audio-asr-http-api) |
-| 火山引擎 | Ark Chat | TTS V3 HTTP Chunked/SSE | — | — | TTS 需要 API Key、Resource ID、模型和音色。 [TTS API](https://docs.volcengine.com/docs/doubao-voice/http-chunked-sse-unidirectional-streaming-v3?lang=zh) |
+| 火山引擎 | Ark Chat | TTS V3 HTTP Chunked/SSE | 录音识别 HTTP | — | TTS 需要 API Key、Resource ID、模型和音色；普通 ASR 使用录音识别资源 ID 与音频 Base64。 [TTS API](https://docs.volcengine.com/docs/doubao-voice/http-chunked-sse-unidirectional-streaming-v3?lang=zh) · [ASR API](https://docs.volcengine.com/docs/doubao-voice/recording-file-recognition-lite-http?lang=zh) |
 | 百度千帆 | OpenAI 兼容 Chat | 百度语音同步 TTS | 百度短语音 REST ASR | — | 后端用 API Key/Secret Key 换取语音 Token。 [TTS API](https://cloud.baidu.com/doc/SPEECH/s/xmw03avls) · [ASR API](https://cloud.baidu.com/doc/SPEECH/s/0lbxfnc9b) |
 | 科大讯飞星火 | OpenAI 兼容 Chat | WebSocket TTS | WebSocket IAT | ISE 发音评测 | TTS/IAT 使用 AppID、API Key、API Secret；ISE 使用 AppID、API Key。 [TTS API](https://www.xfyun.cn/doc/tts/online_tts/API.html) · [ISE API](https://www.xfyun.cn/doc/voiceservice/ise/API.html) · [ISE 结果结构](https://www.xfyun.cn/doc/voiceservice/ise/ise_protocol.html) |
 | MiniMax 稀宇科技 | OpenAI 兼容 Chat | T2A v2 HTTP | — | — | TTS 使用 MiniMax 原生请求体和 hex 音频响应，不套用 OpenAI Audio。 [对话 API](https://platform.minimaxi.com/document/对话) · [T2A v2](https://platform.minimaxi.com/document/T2A%20V2?key=66719005a427f0c8a5701643) |
-| Ollama | OpenAI 兼容 Chat | — | — | — | 当前只开放 LLM。服务器必须能访问所配置的 Ollama 地址。 [API 兼容说明](https://docs.ollama.com/api/openai-compatibility) |
+| Ollama | OpenAI 兼容 Chat | OpenAI Audio 兼容 Speech | OpenAI Audio 兼容 Transcriptions | — | 预置地址为 `http://localhost:11434/v1`。服务器端 Ollama 部署或兼容服务必须提供 `/audio/speech`、`/audio/transcriptions` 并安装支持对应任务的模型；语速固定为 1，音色由模型决定。服务器必须能访问所配置地址。该项是兼容协议预置，不代表任意 Ollama 安装都内置语音能力。 [Ollama OpenAI 兼容说明](https://docs.ollama.com/api/openai-compatibility) |
+| 硅基流动 | OpenAI 兼容 Chat | OpenAI Audio Speech | OpenAI Audio Transcriptions | — | 同一 API Key 按对应服务权限使用，可按服务覆盖 API 地址。 [TTS](https://docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech) · [ASR](https://docs.siliconflow.cn/docs/api/audio-transcriptions-post) |
+| 腾讯云语音服务 | — | TC3 签名 TTS | TC3 签名一句话识别 | — | 填写 Secret ID、Secret Key 和地域；语音服务凭据独立于腾讯混元。 [TTS](https://cloud.tencent.com/document/api/1073/37995) · [ASR](https://cloud.tencent.com/document/product/1093/134682) |
+| 腾讯云混元 | OpenAI 兼容 Chat | — | — | — | 预置混元 OpenAI 兼容 endpoint，后台只需填写 API Key、模型和可覆盖的接入地址。 [混元文档](https://cloud.tencent.com/document/product/1729) |
 | OpenAI 兼容 | Chat Completions | Audio Speech | Audio Transcriptions | — | 可自定义 API 地址、模型与可选 Key；只有符合标准路径/格式的服务才可直接使用。 |
 | 腾讯云智聆 SOE | — | — | — | SOE WebSocket 录音评测 | 配置 AppID、SecretID、SecretKey；使用目标文本和评测模式。 [SOE API](https://cloud.tencent.com/document/product/1774/107497) |
 | Microsoft Azure Speech | — | — | — | Speech Recognition + Pronunciation Assessment | 配置资源密钥和区域或自定义 endpoint。 [评测说明](https://learn.microsoft.com/azure/ai-services/speech-service/how-to-pronunciation-assessment) · [短音频 REST API](https://learn.microsoft.com/azure/ai-services/speech-service/rest-speech-to-text-short) |
 | Speechace | — | — | — | REST 文本朗读评分 | 使用 API Key、口音和区域 endpoint；支持单词/音节/音素评分、重音和自定义 ARPABET 标注。 [Score Text API](https://api-docs.speechace.com/api-reference/score-text.md) |
 | 驰声英语评测（百度 AI 市场） | — | — | — | Function Calling REST 评测 | 独立的驰声 API Key；市场商品由驰声提供，不能复用千帆凭据。支持单词与句子评测及音素明细。 [驰声 API](https://api-account.cloud.chivox.com/zh/docs) |
 
-未列出的能力不会在目录中展示为可选项。Ollama 的语音能力受本地模型、操作系统和 Ollama 版本影响，不能因为支持 OpenAI Chat API 就推断它兼容 TTS/ASR。
+未列出的能力不会在目录中展示为可选项。Ollama 的语音能力取决于本地安装的语音模型或兼容扩展；预置项只负责按 OpenAI Audio 协议调用，不保证任意 Ollama 模型天然提供 TTS/ASR。
 
 ## ASR 与发音评测
 

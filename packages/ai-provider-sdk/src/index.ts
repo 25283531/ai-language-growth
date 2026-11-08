@@ -9,5 +9,6 @@ export * from './signed-tts';
 export * from './provider-presets';
 export * from './vendor-pronunciation';
 export * from './vendor-speech';
+export * from './vendor-tencent-cloud';
 export * from './mock';
 export * from './config';

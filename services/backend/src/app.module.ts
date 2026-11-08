@@ -27,6 +27,7 @@ import { MemoryAdminController } from './memory/memory-admin.controller';
 import { SpeechQuotaService } from './usage/speech-quota.service';
 import { RoutingConfigController } from './routing/routing-config.controller';
 import { RoutingConfigService } from './routing/routing-config.service';
+import { MembershipAdminController } from './membership/membership-admin.controller';
 
 @Module({
   imports: [ConfigModule],
@@ -41,6 +42,7 @@ import { RoutingConfigService } from './routing/routing-config.service';
     ProviderConfigController,
     MemoryAdminController,
     RoutingConfigController,
+    MembershipAdminController,
   ],
   providers: [
     PrismaService,

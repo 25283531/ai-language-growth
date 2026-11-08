@@ -115,8 +115,6 @@ export class SpeechController {
   ): Promise<void> {
     const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
-    // 旧 Web 原型没有额度头，保留兼容路径；正式 Android 客户端必须同时提供两者。
-    if (!reservationId && !learnerId) return;
     if (!reservationId || !learnerId) {
       throw new HttpException('语音请求缺少额度租约或学习者标识', 400);
     }

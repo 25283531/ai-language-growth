@@ -3,35 +3,37 @@ import { describe, it } from 'node:test';
 import { getProviderPreset, listProviderPresets, presetSupportsService } from '../src/provider-presets.ts';
 
 describe('预置模型接入平台', () => {
-  it('包含约定的七个平台，并为 OpenAI 兼容 LLM 提供默认接入地址', () => {
-    const presets = listProviderPresets();
-    assert.deepEqual(presets.map((preset) => preset.id), [
-      'bailian',
-      'volcengine',
-      'baidu-qianfan',
-      'iflytek-spark',
-      'minimax',
-      'ollama',
-      'openai-compatible',
-      'tencent-soe',
-      'azure-speech',
-      'speechace',
-      'chivox',
-    ]);
-    for (const preset of presets.slice(0, 6)) {
-      assert.match(preset.defaultBaseUrls.llm ?? '', /^https?:\/\//);
+  it('包含要求的平台及各自预置的服务入口', () => {
+    const requiredServices = {
+      bailian: ['llm', 'tts', 'asr'],
+      volcengine: ['llm', 'tts', 'asr'],
+      'baidu-qianfan': ['llm', 'tts', 'asr'],
+      'iflytek-spark': ['llm', 'tts', 'asr', 'pronunciation'],
+      minimax: ['llm', 'tts'],
+      ollama: ['llm', 'tts', 'asr'],
+      siliconflow: ['llm', 'tts', 'asr'],
+      'tencent-cloud': ['tts', 'asr'],
+      'tencent-hunyuan': ['llm'],
+      'openai-compatible': ['llm', 'tts', 'asr'],
+    } as const;
+    for (const [id, services] of Object.entries(requiredServices)) {
+      const preset = getProviderPreset(id);
+      assert.ok(preset, `缺少 ${id} 预置`);
+      assert.deepEqual(preset.services, services);
+      for (const service of services) {
+        assert.match(preset.defaultBaseUrls[service] ?? '', /^https?:\/\//);
+      }
     }
-    assert.equal(presets[6]?.defaultBaseUrls.llm, undefined);
-    assert.deepEqual(presets[7]?.services, ['pronunciation']);
-    assert.deepEqual(presets[8]?.services, ['pronunciation']);
-    assert.deepEqual(presets[9]?.services, ['pronunciation']);
-    assert.deepEqual(presets[10]?.services, ['pronunciation']);
+    assert.deepEqual(getProviderPreset('tencent-soe')?.services, ['pronunciation']);
+    assert.deepEqual(getProviderPreset('azure-speech')?.services, ['pronunciation']);
+    assert.deepEqual(getProviderPreset('speechace')?.services, ['pronunciation']);
+    assert.deepEqual(getProviderPreset('chivox')?.services, ['pronunciation']);
   });
 
-  it('Ollama 只声明已验证的 LLM 服务，未知平台安全返回 undefined', () => {
+  it('Ollama 声明 OpenAI 兼容服务，未知平台安全返回 undefined', () => {
     assert.equal(presetSupportsService('ollama', 'llm'), true);
-    assert.equal(presetSupportsService('ollama', 'tts'), false);
-    assert.equal(presetSupportsService('ollama', 'asr'), false);
+    assert.equal(presetSupportsService('ollama', 'tts'), true);
+    assert.equal(presetSupportsService('ollama', 'asr'), true);
     assert.equal(getProviderPreset('unknown-provider'), undefined);
     assert.equal(presetSupportsService('unknown-provider', 'llm'), false);
   });

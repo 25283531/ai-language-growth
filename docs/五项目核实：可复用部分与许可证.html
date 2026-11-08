@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="color-scheme" content="light dark"/>
+<link rel="icon" href="data:,"/>
+<title>五项目核实：可复用部分与许可证</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f7f6f2; --paper:#ffffff; --ink:#1c211d; --muted:#5b665e; --line:#ddd8cc;
+  --green:#166534; --green-bg:#dcfce7; --amber:#92400e; --amber-bg:#fef3c7; --red:#991b1b; --red-bg:#fee2e2;
+  --teal:#0f766e; --rust:#9a3412; --card:#fcfbF7;
+}
+@media(prefers-color-scheme:dark){
+  :root{--bg:#131614;--paper:#1b1f1c;--ink:#ece9e0;--muted:#a8b0a6;--line:#333a34;--green-bg:#14532d;--amber-bg:#451a03;--red-bg:#450a0a;--card:#1e2320;--green:#86efac;--amber:#fcd34d;--red:#fca5a5}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans SC",system-ui,-apple-system,sans-serif;line-height:1.75;font-size:15.5px}
+a{color:var(--teal);text-decoration:underline;text-underline-offset:3px;word-break:break-all}
+h1,h2,h3{font-family:"Noto Serif SC",serif;line-height:1.25}
+.wrap{max-width:1020px;margin:0 auto;padding:28px 20px 64px}
+.mono{font-family:"IBM Plex Mono",monospace;font-size:.82em}
+.top{border-bottom:3px solid var(--ink);padding-bottom:22px}
+.kicker{font-size:12px;letter-spacing:.14em;font-weight:900;text-transform:uppercase;color:var(--rust)}
+h1{font-size:clamp(28px,5vw,44px);font-weight:900;margin:10px 0 12px;letter-spacing:-.02em}
+.lede{font-size:17px;color:var(--muted);max-width:760px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.meta span{border:1px solid var(--line);background:var(--paper);padding:6px 10px;border-radius:999px;font-size:12.5px}
+.alert{margin:22px 0;background:var(--ink);color:#f5f2e9;padding:18px 20px;border-radius:12px}
+.alert strong{color:#fbbf24}
+.alert p{margin:6px 0 0;color:#e7e2d4}
+section{margin-top:38px}
+h2{font-size:24px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:16px}
+h3{font-size:19px;margin:0 0 8px}
+p{margin:8px 0}
+.small{font-size:13px;color:var(--muted)}
+/* verdict grid */
+.verdicts{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:18px}
+@media(max-width:900px){.verdicts{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.verdicts{grid-template-columns:1fr}}
+.vcard{background:var(--paper);border:1px solid var(--line);border-top:5px solid var(--line);padding:14px;border-radius:10px;cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
+.vcard[data-s="ok"]{border-top-color:#16a34a}.vcard[data-s="warn"]{border-top-color:#d97706}.vcard[data-s="no"]{border-top-color:#dc2626}
+.vcard b{font-size:16px;display:block}
+.vcard span{font-size:12.5px;color:var(--muted);display:block;margin-top:4px;line-height:1.5}
+.pill{display:inline-block!important;padding:2px 8px;border-radius:999px;font-weight:700;font-size:11.5px!important;margin-bottom:6px}
+.pill.ok{background:var(--green-bg);color:var(--green)}.pill.warn{background:var(--amber-bg);color:var(--amber)}.pill.no{background:var(--red-bg);color:var(--red)}
+/* table desktop, cards mobile */
+.tablewrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--paper)}
+table{width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.6}
+th,td{padding:12px 12px;vertical-align:top;text-align:left;border-bottom:1px solid var(--line)}
+th{background:var(--card);font-weight:900;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+@media(max-width:760px){
+  table,thead,tbody,tr,td{display:block;width:100%}
+  thead{display:none}
+  tr{padding:12px 0;border-bottom:2px solid var(--line)}
+  td{border:none;padding:4px 14px}
+  td:first-child{font-weight:900;font-size:15px}
+}
+/* project articles */
+.proj{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:22px;margin:16px 0}
+.proj-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+@media(max-width:720px){.grid2{grid-template-columns:1fr}}
+.box{border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--card)}
+.box h4{margin:0 0 8px;font-size:13px;letter-spacing:.08em}
+.box ul{margin:0;padding-left:18px}
+.box li{margin:4px 0}
+.box.reuse h4{color:var(--teal)} .box.nope h4{color:var(--red)} .box.lic h4{color:var(--amber)}
+.kv{font-size:13.5px}
+.kv dt{font-weight:700;float:left;margin-right:8px}
+.kv dd{margin:0 0 6px;overflow:hidden}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.filters button{border:1px solid var(--line);background:var(--paper);color:var(--ink);padding:8px 14px;border-radius:999px;cursor:pointer;font:inherit;font-size:13.5px;font-weight:700}
+.filters button.active{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.tier{border-left:4px solid var(--teal);background:var(--paper);padding:16px 18px;margin:12px 0;border-radius:0 10px 10px 0;border-top:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.tier.warn{border-left-color:#d97706}.tier.stop{border-left-color:#dc2626}
+.checklist{list-style:none;padding:0;margin:0}
+.checklist li{padding:12px 0;border-bottom:1px solid var(--line);display:flex;gap:10px}
+.checklist li:last-child{border:none}
+.dot{flex:0 0 10px;width:10px;height:10px;border-radius:50%;margin-top:8px}
+.sources{font-size:13px;color:var(--muted)}
+.sources li{margin:6px 0}
+footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:13px}
+.hidden{display:none!important}
+.tag{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:1px 7px;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="kicker">Open-source verification · For AI Language Growth Platform V1.1</div>
+  <h1>五项目核实：哪些是真的，<br>哪些能直接复用</h1>
+  <p class="lede">对 FreeLingo、HiKid、Kid English Reading、Cadence、LinkPal / SpeakPal 五个说法逐个上 GitHub 和官网实开核实。结论不按二手转述算：只有两个项目按所称形态真实存在；一个查无实据；一个是三个同名产品被拼成了一个；一个被宣称的“ESP32 + 网页 + 开源服务端”组合根本不存在。</p>
+  <div class="meta">
+    <span>核实方式：2026-11-06 实开页面查验，约 16:25 UTC（America/Chicago）</span>
+    <span>对照基准：V1.1 — 6–9 岁零基础 · Pre-A1→A1 · 双轨 · 学习者模型 · 音素评估 · 慢速 TTS · L0–L3 路由</span>
+  </div>
+  <div class="verdicts" id="verdicts">
+    <button class="vcard" data-s="ok" data-target="p-freelingo"><span class="pill ok">✓ 真实存在</span><b>FreeLingo</b><span>完整 AI 语言平台大体属实，但面向成人/通用人群。AGPL-3.0。</span></button>
+    <button class="vcard" data-s="ok" data-target="p-hikid"><span class="pill ok">✓ 真实存在</span><b>HiKid</b><span>儿童英语口语陪练属实，全本地离线。但许可证自相矛盾。</span></button>
+    <button class="vcard" data-s="no" data-target="p-kidreading"><span class="pill no">✕ 未核实</span><b>Kid English Reading</b><span>只剩一行 Devpost 列表文字，无仓库、无官网、无功能证据。</span></button>
+    <button class="vcard" data-s="warn" data-target="p-cadence"><span class="pill warn">⚠ 同名混淆</span><b>Cadence</b><span>至少三个不同产品共用此名，没有一个凑齐所称的全部能力。</span></button>
+    <button class="vcard" data-s="no" data-target="p-linkpal"><span class="pill no">✕ 组合不存在</span><b>LinkPal / SpeakPal</b><span>LinkPal 是找学习伙伴的应用；SpeakPal 是闭源商业产品，无 ESP32、无开源服务端。</span></button>
+  </div>
+  <p class="small">点任意一张卡，跳到该项目的完整核实条目。</p>
+</header>
+
+<div class="alert">
+  <strong>给 V1.1 的一句话结论</strong>
+  <p>没有一个项目能整机搬进来。能引入的是零件和模式：FreeLingo 的 CEFR 结构与服务商抽象、HiKid 的本地语音链路、xiaozhi-esp32 的 ESP32 语音协议（替代那个不存在的 LinkPal 基准）。学习者模型、五种掌握状态、慢速拆读、音素评估、L0–L3 路由、双轨课程——五个项目里都没有，仍须自研。</p>
+</div>
+
+<section>
+<h2>一、对比总表</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>项目</th><th>存在？</th><th>许可证</th><th>活跃度（查验时所见）</th><th>真实覆盖</th><th>相对 V1.1 缺什么</th></tr></thead>
+<tbody>
+<tr><td>FreeLingo</td><td>是 ✅</td><td>AGPL-3.0，另有商业许可文件 COMMERCIAL_LICENSE.md</td><td>245 星、65 forks、1,231 commits、133 releases；issue #389 于 2026-10-18 开，至少活跃至 2026 年 10 月。版本徽章 1.12.0</td><td>CEFR A1–C2 课程、测评定级、确定性学习计划、AI 导师 Lingu（文字+语音）、LLM 记忆、SM-2 闪卡、听说读练习、多服务商配置</td><td>儿童设计、Pre-A1、学校英语轨、音素评估、慢速 TTS、掌握状态/证据事件、L0–L3 路由、Android、ESP32</td></tr>
+<tr><td>HiKid</td><td>是 ✅</td><td>LICENSE 文件为 MIT，但 README 免责声明禁止商用——两者冲突</td><td>1,179 星、147 forks、62 commits、1 release；GitHub Topics 列表显示最后更新 2026-04-24</td><td>面向非英语国家儿童的语音优先陪练，全本地离线 ASR→LLM→TTS，故事与单词游戏，卡通界面，macOS 桌面端</td><td>CEFR/课程/定级、发音打分、家长控制、进度与记忆、慢速 TTS、Android/网页/ESP32、路由</td></tr>
+<tr><td>Kid English Reading</td><td>否 ❌ 仅痕迹</td><td>未知</td><td>未知，无可测量对象</td><td>仅 Devpost 趋势列表一行：“a web that helps my son learn English pronunciation”</td><td>所称阅读、发音训练、家长控制、语音评估全部无证据</td></tr>
+<tr><td>Cadence</td><td>含混 ⚠ 3+ 个产品</td><td>Learning Cadence 为闭源商业；Devpost 版未见仓库/许可证</td><td>Learning Cadence 官网在营，Plus $49.99/年或 $8.99/月；Devpost Cadence 发布于 2026-03-01</td><td>Learning Cadence：目标课程+真人感语音练习+语速/填充词/停顿反馈；Devpost 版：口吃不流利检测；CadenceLearn：FSRS + 发音打分（Plus）</td><td>音素反馈（Devpost 版仅列在“下一步”计划里）、CEFR、儿童、开源——均未凑齐</td></tr>
+<tr><td>LinkPal / SpeakPal</td><td>否 ❌ 按所称组合</td><td>SpeakPal 专有闭源；LinkPal 不适用</td><td>SpeakPal 商业官网在营，无仓库/星数</td><td>SpeakPal：30+ 语言 AI 导师、角色扮演、发音教练、实时语法纠正、Teen Safety Mode、带二维码验证的证书</td><td>开源服务端、ESP32、语音链路/服务商配置、6–9 岁设计、CEFR、学习画像、路由——均未找到</td></tr>
+<tr><td>替代基准 xiaozhi-esp32</td><td>是 ✅</td><td>MIT</td><td>约 31,206 星（esp32s.com 快照 2026-10-16；AgentList 记 32.7k，更新于 2026-11-04），最后 push 2026-10-15</td><td>ESP32 语音聊天固件：流式 ASR+LLM+TTS、WebSocket / MQTT+UDP、Opus、离线唤醒词、70+ 板型、可自托管后端、MCP</td><td>英语课程、儿童设计、发音打分、CEFR、学习者模型</td></tr>
+</tbody>
+</table>
+</div>
+<p class="small">来源：各项目 GitHub / 官网于 2026-11-06 实开页面；星数与活跃度均为查验时所见，FreeLingo 与 HiKid 的确切最后 commit 日期在所读仓库页上未显示，活跃度分别以 issue #389（2026-10-18）和 Topics 更新戳（2026-04-24）为据。</p>
+</section>
+
+<section>
+<h2>二、逐个核实</h2>
+
+<article class="proj" id="p-freelingo">
+<div class="proj-head"><div><span class="pill ok">✓ 真实存在 · 已实开核实</span><h3>1. FreeLingo — 通用平台属实，儿童部分不属实</h3></div><span class="tag">AGPL-3.0</span></div>
+<dl class="kv">
+<dt>地址</dt><dd><a href="https://github.com/artcc/freelingo">https://github.com/artcc/freelingo</a>（2026-11-06 16:25 UTC 实开）；项目页 <a href="https://www.arturocarreterocalvo.com/freelingo/">arturocarreterocalvo.com/freelingo</a>；托管版在 freelingo.app</dd>
+<dt>规模</dt><dd>245 星、65 forks、4 watchers、1,231 commits、133 releases，建于 2026-04-30，未归档</dd>
+<dt>技术</dt><dd>Next.js 16 前端 + FastAPI 后端，PostgreSQL 16、Redis 7、Docker Compose，可自托管</dd>
+</dl>
+<div class="grid2">
+<div class="box"><h4>真实覆盖</h4><ul><li>结构化 A1–C2 课程与自适应定级测验</li><li>确定性学习计划：4 / 8 / 12 / 16 周</li><li>AI 导师 “Lingu”：文字 + 语音，WebSocket <span class="mono">/ws/conversation</span></li><li>用户可控的 LLM 记忆（Phase 9）</li><li>SM-2 闪卡、听力与阅读练习、README 所列发音练习</li><li>XP、连续打卡、技能分、等级结业测；13 种目标语言</li><li>LLM：Ollama / OpenAI / Anthropic / DeepSeek；TTS：Kokoro-FastAPI 或 OpenAI；STT：faster-whisper 或 OpenAI</li></ul></div>
+<div class="box"><h4>相对 V1.1 缺失</h4><ul><li>无儿童 / 6–9 岁设计，无 Pre-A1，无学校英语轨，无七阶段</li><li>无带能力状态、证据事件、五种掌握状态的学习者模型</li><li>无音素级发音评估，无 0.55–0.65× 慢速可调 TTS</li><li>无 L0–L3 多模型路由，无 Android/Kotlin，无 ESP32</li><li>记忆按用户全局存放，仅有 <span class="mono">study_plan_id</span> 来源标记——没有学习记忆 / 交互记忆之分</li></ul></div>
+<div class="box reuse"><h4>可直接复用（设计 / 参考）</h4><ul><li>CEFR 课程结构：A1–C2 单元、能力项、前置关系</li><li>定级测验 → 确定性学习计划的流程</li><li>服务商抽象：用环境配置独立选 LLM / TTS / STT</li><li>WebSocket 语音对话模式：轮次式 STT→LLM→TTS，而非实时语音模型</li><li>用户可控记忆的规格形态；SM-2 闪卡调度</li></ul></div>
+<div class="box nope"><h4>不可直接照搬</h4><ul><li>记忆 / 人格实现原样：成人导师 Lingu、按用户全局记忆、无学习/交互拆分、无儿童安全措施</li><li>儿童数据处理：该项目根本没有，无可抄</li><li>成人 UX、文案与多语言广度</li></ul></div>
+</div>
+<div class="box lic" style="margin-top:12px"><h4>许可证核查 ⚠ 先查再用</h4><p style="margin:0">AGPL-3.0 是 copyleft：把修改版作为网络服务运行会触发源码披露义务。闭源 / 商业部署需要其单独的商业许可（仓库内有 <span class="mono">COMMERCIAL_LICENSE.md</span>，用于白标 / 私有使用），或者只做净室式“只借想法”的重新实现。</p></div>
+</article>
+
+<article class="proj" id="p-hikid">
+<div class="proj-head"><div><span class="pill ok">✓ 真实存在 · 已实开核实</span><h3>2. HiKid — 儿童口语陪练属实，但没有课程与评估</h3></div><span class="tag">MIT 文件 vs 禁商用声明</span></div>
+<dl class="kv">
+<dt>地址</dt><dd><a href="https://github.com/xiaochong/hi-kid">https://github.com/xiaochong/hi-kid</a>（2026-11-06 16:25 UTC 实开）</dd>
+<dt>规模</dt><dd>1,179 星、147 forks、8 watchers、62 commits、1 release，建于 2026-04-19；多个 GitHub Topics 列表显示最后更新 2026-04-24</dd>
+<dt>形态</dt><dd>Electron + React + TypeScript 桌面应用，仅 macOS（Windows/Linux 为计划中）</dd>
+</dl>
+<div class="grid2">
+<div class="box"><h4>真实覆盖</h4><ul><li>为非英语国家儿童练习英语听说而做，语音优先</li><li>全本地 / 离线链路：SoX 录音 + VAD → asr-server（Qwen3-ASR-0.6B）→ Ollama（默认 <span class="mono">qwen3:0.6b</span>）→ kitten-tts-server（PCM over SSE）→ SoX 播放</li><li>语音聊天、故事、单词游戏、卡通界面，数据不上传云端</li></ul></div>
+<div class="box"><h4>相对 V1.1 缺失</h4><ul><li>无 CEFR / 课程 / 定级，无发音打分或纠错</li><li>无进度跟踪、无家长控制、无长期记忆或学习者模型</li><li>无自适应规划、无慢速 TTS，无 Android / 网页 / ESP32，无学校英语，无多模型路由</li></ul></div>
+<div class="box reuse"><h4>可直接复用</h4><ul><li>本地语音链路模式：SoX/VAD → ASR → 小型本地 LLM → 流式 TTS</li><li>儿童友好的语音优先 UX：只说不打字、故事与单词游戏</li><li>离线 / 隐私优先架构，作为设计参考</li><li>小模型组合（Qwen3-ASR-0.6B、kitten-tts、Ollama qwen3:0.6b）作为端侧 / 低成本语音可行性参考</li></ul></div>
+<div class="box nope"><h4>不可直接照搬</h4><ul><li>儿童数据处理：它靠“全本地”绕开了这个问题——不要把它的代码搬进云端设计而不补同意、留存、删除控制</li><li>人格 / 记忆逻辑：不存在</li><li>UI 素材（animal-island-ui）：按其免责声明仅作设计参考</li></ul></div>
+</div>
+<div class="box lic" style="margin-top:12px"><h4>许可证核查 ⚠ 冲突未解前按“仅非商用”处理</h4><p style="margin:0">LICENSE 文件写的是 MIT，但 README 免责声明原文写明：“This project is for personal learning, research, and non-commercial demonstration only. Commercial use, resale, or profit-making in any form is prohibited.” 两者直接冲突，不能默认享有 MIT 的自由；任何复用、尤其商用之前，先取得作者书面澄清。</p></div>
+</article>
+
+<article class="proj" id="p-kidreading">
+<div class="proj-head"><div><span class="pill no">✕ 未核实</span><h3>3. Kid English Reading — 查无实据，不要引用为对标</h3></div><span class="tag">无许可证可查</span></div>
+<dl class="kv">
+<dt>地址</dt><dd>无已确立地址。无仓库、无官网、无产品页</dd>
+<dt>唯一痕迹</dt><dd>Devpost 趋势项目列表中的一行条目：“kid-english-reading — A web that helps my son learn English pronunciation”（devpost.com/software/trending，第 2731 页，经搜索发现）。以 <span class="mono">site:github.com</span> 搜 “kid-english-reading” 返回零结果，且未能从所见链接确立其 Devpost 项目直链，故此处不给直链。</dd>
+</dl>
+<div class="grid2">
+<div class="box"><h4>核实结论</h4><ul><li>所称的儿童阅读课程、发音训练、家长控制、语音评估——没有任何证据支持</li><li>可直接复用：无——没有找到任何代码、仓库或站点</li><li>许可证核查：不适用；在找到仓库与许可证之前，不要把该项目当作对标或复用来源引用</li></ul></div>
+<div class="box"><h4>相近但不是同一个项目的真实产品</h4><ul><li><a href="https://www.readabilitytutor.com/ell">Readability Tutor</a>：商业 AI 阅读导师，实时朗读发音反馈，家长面板（时长、准确率、理解），K–6</li><li><a href="https://play.google.com/store/apps/details?id=com.bekids.ff&hl=en">bekids Reading: Oxford English</a>：分级牛津故事书，家长屏幕时间限制，2026-05-13 更新</li><li><a href="https://news.ycombinator.com/item?id=47762556">Early Reader</a>（Show HN）：免费开源自然拼读应用，721 张卡，用语音识别做发音练习，无账号 / 不收集数据</li></ul><p class="small" style="margin:6px 0 0">若需要阅读类对标，须把上面三个当作各自独立的产品另行评估，它们有各自的许可证，不是 Kid English Reading。</p></div>
+</div>
+</article>
+
+<article class="proj" id="p-cadence">
+<div class="proj-head"><div><span class="pill warn">⚠ 同名混淆</span><h3>4. Cadence — 三个产品拼成了一个，没有一个凑齐所称能力</h3></div><span class="tag">均未见开源许可证</span></div>
+<p>所称的“发音训练、音素反馈、引导式口语课程和自由对话”没有任何单一名为 Cadence 的产品同时具备。查到的至少有三个不同产品：</p>
+<div class="grid2">
+<div class="box"><h4>(a) Learning Cadence — 最接近“课程 + 自由对话”（已实开）</h4><p class="kv"><a href="https://learningcadence.app/">https://learningcadence.app/</a>（2026-11-06 16:25 UTC 实开），创始人 Tim Lim，闭源商业产品，站上声明与 Cadence Design Systems 及其他同名公司无关。</p><ul><li>覆盖：目标定制课程（7–30 课）、读/听课、AI 导师 “Spark”（Ask Coach）、口语练习（语速 / 填充词 / 停顿反馈）、实时语音练习（免费 3 分钟/天，Plus 15 分钟/天）、记住滑过的内容、间隔复习；免费 2 课/天、2 个定制课程/月；Plus $49.99/年或 $8.99/月</li><li>不覆盖：发音训练或音素级反馈——反馈只针对表达呈现，且站上称对呈现反馈“does not grade”；不限于英语学习，非 CEFR，非儿童，非开源</li></ul></div>
+<div class="box"><h4>(b) Devpost “Cadence” — 口吃检测黑客松工具（已实开）</h4><p class="kv"><a href="https://devpost.com/software/cadence-8wlidg">https://devpost.com/software/cadence-8wlidg</a>，发布于 2026-03-01。</p><ul><li>覆盖：浏览器工具，检测 4 类不流利（阻塞、重复、延长、填充词），流利度 0–100 分，波形可视化；Learn 系统（4 门课、5 个等级、诊断评估、进度跟踪）；链路为 faster-whisper + wav2vec2-base RandomForest 分类器 + Google Cloud STT (ROVER)，Next.js 14、Firestore/Cloud Run</li><li>不覆盖：音素反馈——“phoneme-level lisp and articulation detection using IPA-trained wav2vec2 models” 只列在 “What's next” 里，尚未实现；页面无仓库链接；非英语学习，非儿童</li></ul></div>
+<div class="box"><h4>(c) Cadence Language Learning — 另一个 SRS 应用</h4><p class="kv"><a href="https://www.cadencelearn.co/">https://www.cadencelearn.co/</a></p><ul><li>FSRS 间隔重复、原声音频，Plus（$6/月）含发音打分与反馈，核心免费；未找到仓库，与上两者是不同产品</li><li>另有 “Cadency: Speech Coach”（iOS）与 my-cadence.net 演讲教练应用，也都是不同产品</li></ul></div>
+<div class="box reuse"><h4>可直接复用（仅设计 / 技术参考）</h4><ul><li>Learning Cadence 的课程生成 + “记住了什么滑过去了”复习闭环，作自适应规划的设计参考</li><li>Devpost Cadence 的 wav2vec2 / faster-whisper 语音分析链路，作分析学习者语音的技术参考（不流利特征、用 CMUDict 音节算语速）</li><li>CadenceLearn 的 FSRS + 发音打分打包方式，作产品参考</li></ul></div>
+</div>
+<div class="box lic" style="margin-top:12px"><h4>许可证核查 ⚠ 一律先按闭源处理</h4><p style="margin:0">任何 Cadence 产品都未找到开源许可证：Learning Cadence 与 CadenceLearn 为闭源，Devpost Cadence 未确立仓库 / 许可证。只能借想法，不能复用代码，直到找到带许可证的仓库。另注意：不要把不流利分数当作发音分数呈现——那是不同的问题。</p></div>
+</article>
+
+<article class="proj" id="p-linkpal">
+<div class="proj-head"><div><span class="pill no">✕ 所称组合不存在</span><h3>5. LinkPal / SpeakPal — 关键对标不成立</h3></div><span class="tag">SpeakPal 专有闭源</span></div>
+<div class="grid2">
+<div class="box"><h4>“LinkPal”：没有这个语音 / 英语产品</h4><p>真实的 LinkPal 是 <a href="https://linkapal.com">https://linkapal.com</a> —— 一个按学科 / 兴趣匹配学习伙伴的学生应用（匹配、档案、社区），与语音、英语、儿童、ESP32 均无关。“LINKPAL” 也是一个 Wayfair 桌垫品牌。</p></div>
+<div class="box"><h4>SpeakPal：真实，但商业闭源（已实开）</h4><p><a href="https://www.speakpal.ai">https://www.speakpal.ai</a>（2026-11-06 16:25 UTC 实开）：AI 语言导师，30+ 语言、真实场景角色扮演、AI 发音教练、自适应导师、实时语法纠正、课程 / 音频下载、Teen Safety Mode、带二维码验证的 AI 证书，网页 / iOS / Android，有免费试用。</p><ul><li>无开源仓库（工具目录明确注明无开源可用性或公开 GitHub 仓库的清晰信息）</li><li>无 ESP32、无服务端仓库、无可见的语音链路 / 服务商配置</li><li>只有青少年模式，非 6–9 岁设计；无 CEFR、无学习画像、无路由</li><li>内部实现无公开信息：语音链路、服务商、路由都无从对标</li></ul></div>
+<div class="box reuse"><h4>可直接复用（仅产品想法）</h4><ul><li>角色扮演场景、青少年安全模式的形态（内容过滤、为低龄用户限制功能）、即时语法纠正的交互、证书 / 二维码模式</li><li>ESP32 + 路由这部分对标，改用下一节的 xiaozhi-esp32 与 esp32-thinks</li></ul></div>
+<div class="box nope"><h4>不可直接照搬</h4><ul><li>SpeakPal 的任何代码：没有可得代码，专有闭源</li><li>xiaozhi 的默认云（xiaozhi.me）用于儿童数据：后端须自托管</li><li>学习记忆 / 人格逻辑：这些项目都没有 V1.1 所要的学习 / 交互记忆拆分</li><li>儿童数据处理：它们都没有演示合规的儿童数据处理</li></ul></div>
+</div>
+<div class="box lic" style="margin-top:12px"><h4>许可证核查</h4><p style="margin:0">SpeakPal 无复用可能（闭源）。xiaozhi-esp32 为 MIT，但要核对所用 release 的 LICENSE 文件，并单独核查其捆绑模型 / 服务的许可证。esp32-thinks 的仓库许可证文件在本轮未确立，复用前须先核。</p></div>
+</article>
+</section>
+
+<section>
+<h2>三、替代基准：ESP32 + 路由的真实出处</h2>
+<p>所称 LinkPal/SpeakPal 的 ESP32 + 网页 + 路由重叠，在下面这些真实项目里才找得到，应以它们替换该对标：</p>
+<div class="grid2">
+<div class="box reuse"><h4>xiaozhi-esp32 — 真正的 ESP32 关键基准</h4><p class="kv"><a href="https://github.com/78/xiaozhi-esp32">https://github.com/78/xiaozhi-esp32</a> · MIT · 约 31,206 星（来源：<a href="https://esp32s.com/blog/10-hottest-esp32-open-source-projects-2026/">esp32s.com 快照</a>，2026-10-16；AgentList 记 32.7k，2026-11-04 更新），最后 push 2026-10-15。</p><ul><li>ESP32 语音聊天固件：流式 ASR + LLM + TTS，走 WebSocket / MQTT+UDP，Opus 音频，离线唤醒词，70+ 板型，可自托管后端，MCP</li><li>可复用：固件 + WebSocket 语音协议、Opus 流式、可自托管后端，作为 ESP32 学伴的参考</li><li>不覆盖：英语课程、儿童、发音打分、CEFR、学习者模型</li></ul></div>
+<div class="box reuse"><h4>esp32-thinks — 最接近所称“服务商配置 / 路由”的真实例子</h4><p class="kv"><a href="https://github.com/raullenchai/esp32-thinks">https://github.com/raullenchai/esp32-thinks</a> · 262 星（来源：<a href="https://skillsllm.com/skill/esp32-thinks">SkillsLLM</a>，扫描于 2026-10-18）。</p><ul><li>基于 Meta muse-gadget-sdk 的 ESP32-S3 语音助手</li><li>一个配置文件里放三个互相独立的 OpenAI 兼容 STT / chat / TTS 端点，预设 openai / quicksilver / openmuse / custom</li><li>可复用：该配置形态，正对 V1.1 的多模型路由设计</li></ul></div>
+<div class="box"><h4>Esp32GPT — 另一参考</h4><p class="kv"><a href="https://github.com/thesunRider/Esp32GPT">https://github.com/thesunRider/Esp32GPT</a></p><ul><li>ESP32 + Zephyr，WebSocket PCM 流式，faster-whisper 服务端，Ollama，Google TTS；设备端很薄，AI 在服务端</li></ul></div>
+</div>
+</section>
+
+<section>
+<h2>四、引入 V1.1 的清单</h2>
+<p>按“能不能直接进项目”分三档。凡涉及代码复用的，都以许可证核查通过为前提。</p>
+<div class="filters" role="group" aria-label="按档位筛选">
+<button class="active" data-f="all">全部</button>
+<button data-f="design">可引入：设计与模式</button>
+<button data-f="check">须先核许可证</button>
+<button data-f="stop">不可引入</button>
+</div>
+
+<div class="tier" data-tier="design"><h3 style="font-size:16px">可引入 — 设计与模式（不复制受限代码）</h3><ul style="margin:6px 0;padding-left:18px">
+<li><strong>FreeLingo</strong>：CEFR 课程结构（单元 / 能力 / 前置）、定级测验 → 确定性学习计划流程、LLM/TTS/STT 用环境配置独立选服务商的抽象、<span class="mono">/ws/conversation</span> 轮次式语音对话模式、SM-2 调度。</li>
+<li><strong>HiKid</strong>：本地语音链路模式（VAD → ASR → 小 LLM → 流式 TTS）、语音优先的儿童 UX、离线 / 隐私优先架构、小模型组合的可行性参考。</li>
+<li><strong>Cadence（各产品）</strong>：仅设计参考——Learning Cadence 的课程生成 + “滑过内容”复习闭环；Devpost 版的 wav2vec2 / faster-whisper 语音分析链路；CadenceLearn 的 FSRS + 发音打分打包。</li>
+<li><strong>SpeakPal</strong>：仅产品想法——角色扮演场景、青少年安全模式形态、即时语法纠正交互、证书 / 二维码。</li>
+<li><strong>xiaozhi-esp32</strong>：固件与 WebSocket 语音协议、Opus 流式、自托管后端形态。</li>
+<li><strong>esp32-thinks</strong>：三端点独立配置 + 服务商预设的配置形态，用于多模型路由设计。</li>
+</ul></div>
+
+<div class="tier warn" data-tier="check"><h3 style="font-size:16px">须先核许可证 — 核完才能决定是否碰代码</h3><ul style="margin:6px 0;padding-left:18px">
+<li><strong>FreeLingo 代码</strong>：AGPL-3.0 copyleft，网络服务触发源码披露；闭源商业部署需其商业许可，或净室重写。</li>
+<li><strong>HiKid 代码</strong>：MIT 文件与 README 禁商用声明冲突，先取得作者书面澄清，未解前按仅非商用处理。</li>
+<li><strong>xiaozhi-esp32</strong>：MIT，但须核对所用 release 的 LICENSE，并单独核查捆绑模型 / 服务的许可证。</li>
+<li><strong>esp32-thinks</strong>：本轮未确立其仓库许可证文件，复用前先核。</li>
+<li><strong>Devpost Cadence 代码</strong>：未确立仓库 / 许可证，不定位到就不复用代码。</li>
+</ul></div>
+
+<div class="tier stop" data-tier="stop"><h3 style="font-size:16px">不可引入 — 没有、闭源，或搬了会出错</h3><ul style="margin:6px 0;padding-left:18px">
+<li><strong>Kid English Reading</strong>：无任何可复用物，不要引用为对标。</li>
+<li><strong>SpeakPal / Learning Cadence / CadenceLearn 代码</strong>：闭源专有，无代码可得。</li>
+<li><strong>FreeLingo 的记忆 / 人格原样</strong>：成人导师、全局记忆、无学习/交互拆分、无儿童安全措施。</li>
+<li><strong>HiKid 的儿童数据处理方式</strong>：它靠全本地绕开问题，搬进云端设计而不补同意 / 留存 / 删除控制会出错；其 UI 素材按声明仅作设计参考。</li>
+<li><strong>xiaozhi 默认云 xiaozhi.me 处理儿童数据</strong>：须自托管后端。</li>
+<li><strong>把不流利分数当发音分数</strong>：Devpost Cadence 测的是口吃不流利，与儿童发音是不同问题。</li>
+</ul></div>
+<p class="small">仍须自研、五项目均未提供的部分：6–9 岁 Pre-A1→A1 双轨与七阶段课程、带证据事件与五种掌握状态的学习者模型、音素级发音评估、0.55–0.65× 慢速拆读、L0–L3 路由、学习记忆与交互记忆拆分及教师人格管理、Android/Kotlin 客户端。</p>
+</section>
+
+<section>
+<h2>五、许可证速览</h2>
+<ul class="checklist">
+<li><span class="dot" style="background:#d97706"></span><div><strong>FreeLingo — AGPL-3.0（+ 商业许可选项）。</strong>风险在“网络服务也要披露源码”。引入方式优先选借结构与流程、净室实现；真要用代码，先谈商业许可。</div></li>
+<li><span class="dot" style="background:#dc2626"></span><div><strong>HiKid — MIT 文件 vs README 禁商用声明。</strong>同一仓库两种说法互相矛盾，这是五个项目里最需要先澄清的一条；澄清前不做任何商用复用假设。</div></li>
+<li><span class="dot" style="background:#16a34a"></span><div><strong>xiaozhi-esp32 — MIT。</strong>五个原始项目之外的替代基准里许可证最干净的一个，但仍须按 release 核 LICENSE、并单独看捆绑模型 / 服务条款。</div></li>
+<li><span class="dot" style="background:#6b7280"></span><div><strong>Cadence 各产品、SpeakPal — 闭源 / 专有。</strong>无开源许可证可依，只能借产品想法。</div></li>
+<li><span class="dot" style="background:#6b7280"></span><div><strong>Kid English Reading — 未知。</strong>无仓库、无许可证、无从核查。</div></li>
+<li><span class="dot" style="background:#d97706"></span><div><strong>esp32-thinks — 本轮未确立。</strong>其仓库许可证文件未在此轮查验中确立，引用其配置模式作设计参考可以，复制代码前须先核。</div></li>
+</ul>
+</section>
+
+<section>
+<h2>六、未能核实（开放问题，明示）</h2>
+<ul>
+<li><strong>Kid English Reading</strong>：无仓库、站点、许可证、星数或功能证据，仅一行 Devpost 列表文字；所称家长控制与语音评估未核实。</li>
+<li><strong>LinkPal/SpeakPal 作为“ESP32 + 网页 + 开源服务端”合并项目</strong>：多轮定向搜索后未找到这样一个项目；其 ESP32 与路由说法疑似把 SpeakPal（商业网页导师）与通用 ESP32 语音项目混在了一起。</li>
+<li><strong>Cadence 作为单一项目</strong>：此名覆盖至少三个不同产品；没有任何一个在售版本实现音素反馈，也没有开源仓库。</li>
+<li><strong>FreeLingo / HiKid 的最后 commit 日期</strong>：所读仓库页未显示确切日期；活跃度证据分别为 issue #389（2026-10-18）与版本徽章 1.12.0、以及 HiKid 在 2026-04-24 的 Topics 更新戳。</li>
+<li><strong>SpeakPal 内部实现</strong>：其语音链路、服务商与路由无公开信息，无可对标的技术内容。</li>
+</ul>
+</section>
+
+<section>
+<h2>来源</h2>
+<ul class="sources">
+<li>FreeLingo 仓库（2026-11-06 16:25 UTC 实开）：<a href="https://github.com/artcc/freelingo">https://github.com/artcc/freelingo</a></li>
+<li>FreeLingo 项目页：<a href="https://www.arturocarreterocalvo.com/freelingo/">https://www.arturocarreterocalvo.com/freelingo/</a></li>
+<li>FreeLingo 竞品调研注（2026-06-29 时星数 44，供趋势参考）：<a href="https://github.com/duct-tape2/ai-language-partner/blob/HEAD/docs/backend/COMPETITIVE_GITHUB_RESEARCH_20260629.md">github.com/duct-tape2/ai-language-partner — COMPETITIVE_GITHUB_RESEARCH_20260629.md</a></li>
+<li>HiKid 仓库（实开）：<a href="https://github.com/xiaochong/hi-kid">https://github.com/xiaochong/hi-kid</a>；概览：<a href="https://goastro.website/forks/ai-agents/xiaochong-hi-kid/">goastro.website/forks/ai-agents/xiaochong-hi-kid</a></li>
+<li>Kid English Reading 痕迹（Devpost 趋势列表）：<a href="https://devpost.com/software/trending?8DwbK=MuXBpU9Rj4&page=2731">devpost.com/software/trending（第 2731 页）</a></li>
+<li>Readability Tutor：<a href="https://www.readabilitytutor.com/ell">https://www.readabilitytutor.com/ell</a>；bekids Reading：<a href="https://play.google.com/store/apps/details?id=com.bekids.ff&hl=en">Play 商店 com.bekids.ff</a>；Early Reader（Show HN）：<a href="https://news.ycombinator.com/item?id=47762556">news.ycombinator.com/item?id=47762556</a></li>
+<li>Learning Cadence（实开）：<a href="https://learningcadence.app/">https://learningcadence.app/</a>；Devpost Cadence（实开）：<a href="https://devpost.com/software/cadence-8wlidg">https://devpost.com/software/cadence-8wlidg</a>；Cadence Language Learning：<a href="https://www.cadencelearn.co/">https://www.cadencelearn.co/</a></li>
+<li>SpeakPal（实开）：<a href="https://www.speakpal.ai">https://www.speakpal.ai</a>；LinkPal（找学习伙伴应用）：<a href="https://linkapal.com">https://linkapal.com</a></li>
+<li>xiaozhi-esp32：<a href="https://github.com/78/xiaozhi-esp32">https://github.com/78/xiaozhi-esp32</a>；星数快照：<a href="https://esp32s.com/blog/10-hottest-esp32-open-source-projects-2026/">esp32s.com — 10 hottest ESP32 open-source projects 2026</a></li>
+<li>esp32-thinks：<a href="https://github.com/raullenchai/esp32-thinks">https://github.com/raullenchai/esp32-thinks</a>；目录页：<a href="https://skillsllm.com/skill/esp32-thinks">skillsllm.com/skill/esp32-thinks</a></li>
+<li>Esp32GPT：<a href="https://github.com/thesunRider/Esp32GPT">https://github.com/thesunRider/Esp32GPT</a></li>
+</ul>
+</section>
+
+<footer>
+核实口径：本页所有数值、许可证与功能描述均来自 2026-11-06 对上述站点的实开查验；报告给出的保留与不确定之处（许可证冲突、星数快照口径、未显示的 commit 日期、未确立的链接）已原样保留在对应条目中。未核实即标未核实，不以推测补齐。
+</footer>
+</div>
+<script>
+document.querySelectorAll('.vcard').forEach(function(c){
+  c.addEventListener('click',function(){
+    var el=document.getElementById(c.getAttribute('data-target'));
+    if(el){el.scrollIntoView({behavior:'smooth',block:'start'});}
+  });
+});
+document.querySelectorAll('.filters button').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.filters button').forEach(function(x){x.classList.remove('active')});
+    b.classList.add('active');
+    var f=b.getAttribute('data-f');
+    document.querySelectorAll('.tier').forEach(function(t){
+      if(f==='all'||t.getAttribute('data-tier')===f){t.classList.remove('hidden')}else{t.classList.add('hidden')}
+    });
+  });
+});
+</script>
+</body>
+</html>

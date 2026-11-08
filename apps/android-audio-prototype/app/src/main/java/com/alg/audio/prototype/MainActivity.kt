@@ -244,8 +244,10 @@ class MainActivity : Activity() {
                 val reservation = reserveQuota("asr", seconds)
                 try {
                     val ref = uploadAudio(file, reservation.reservationId)
-                    settleQuota(reservation.reservationId, seconds)
-                    postTurn(ref, audioDurationMs)
+                    postTurn(ref, audioDurationMs, reservation.reservationId).also {
+                        if (it.error == null) settleQuota(reservation.reservationId, seconds)
+                        else releaseQuota(reservation.reservationId)
+                    }
                 } catch (e: Exception) {
                     releaseQuota(reservation.reservationId)
                     throw e
@@ -292,6 +294,7 @@ class MainActivity : Activity() {
         durationMs: Long = 0,
         requestedSlower: Boolean = false,
         requestedRepeat: Boolean = false,
+        speechQuotaReservationId: String? = null,
     ): TurnResult {
         val base = getString(R.string.backend_base_url).trimEnd('/')
         val currentLessonId = lessonId ?: throw IllegalStateException("课堂尚未开始")
@@ -323,6 +326,9 @@ class MainActivity : Activity() {
                 readTimeout = 15000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                if (!speechQuotaReservationId.isNullOrBlank()) {
+                    setRequestProperty("X-Speech-Quota-Reservation", speechQuotaReservationId)
+                }
             }
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
 

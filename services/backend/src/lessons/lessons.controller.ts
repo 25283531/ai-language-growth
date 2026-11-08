@@ -6,7 +6,7 @@
  *   POST /api/v1/lessons/{id}/turn    ← 全局核心接口
  *   POST /api/v1/lessons/{id}/finish
  */
-import { Body, Controller, Get, HttpException, Inject, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, Inject, Param, Post, Query } from '@nestjs/common';
 import {
   lessonFinishRequestSchema,
   lessonStartRequestSchema,
@@ -15,6 +15,7 @@ import {
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpeechQuotaService } from '../usage/speech-quota.service';
 
 @Controller('api/v1/lessons')
 export class LessonsController {
@@ -22,6 +23,7 @@ export class LessonsController {
     @Inject(OrchestratorService) private readonly orchestrator: OrchestratorService,
     @Inject(LearnerModelService) private readonly learnerModel: LearnerModelService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
   ) {}
 
   @Post('start')
@@ -34,10 +36,40 @@ export class LessonsController {
   }
 
   @Post(':id/turn')
-  async turn(@Param('id') id: string, @Body() body: unknown) {
+  async turn(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('x-speech-quota-reservation') reservationHeader?: string,
+  ) {
     const parsed = turnRequestSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    if (parsed.data.response.audioRef) {
+      const reservationId = String(reservationHeader ?? '').trim();
+      if (!reservationId) throw new HttpException('语音课堂提交缺少 ASR 额度租约', 400);
+      const reservation = await this.quota.assertReservation({
+        reservationId,
+        learnerId: parsed.data.learnerId,
+        serviceKind: 'asr',
+      });
+      try {
+        const result = await this.orchestrator.handleTurn({
+          lessonSessionId: id,
+          learnerId: parsed.data.learnerId,
+          response: parsed.data.response,
+          idempotencyKey: parsed.data.idempotencyKey,
+        });
+        const seconds = Math.min(
+          reservation.requestedUnits,
+          Math.max(0, (parsed.data.response.audioDurationMs ?? 0) / 1000),
+        );
+        await this.quota.settle(reservationId, seconds);
+        return result;
+      } catch (error) {
+        await this.quota.release(reservationId).catch(() => undefined);
+        throw error;
+      }
     }
     try {
       return await this.orchestrator.handleTurn({

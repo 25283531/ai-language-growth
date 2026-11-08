@@ -90,18 +90,14 @@ export class MediaController {
     }
     const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
-    // 旧 Web 原型允许无额度头读取已生成的课程缓存；正式客户端的云端 TTS
-    // 下载必须携带绑定学习者的短期租约，额度不足时不会产生媒体下载。
-    if (reservationId || learnerId) {
-      if (!reservationId || !learnerId) {
-        throw new HttpException('音频下载缺少额度租约或学习者标识', 400);
-      }
-      await this.quota.assertReservation({
-        reservationId,
-        learnerId,
-        serviceKind: 'tts',
-      });
+    if (!reservationId || !learnerId) {
+      throw new HttpException('音频下载缺少额度租约或学习者标识', 400);
     }
+    await this.quota.assertReservation({
+      reservationId,
+      learnerId,
+      serviceKind: 'tts',
+    });
     return new StreamableFile(createReadStream(fullPath), {
       type: audioMimeType(match[1]!.toLowerCase()),
     });
