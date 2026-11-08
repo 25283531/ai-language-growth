@@ -7,6 +7,7 @@ import {
   finishLesson,
   getAbilities,
   getEvidence,
+  getGrowthArchive,
   getHealth,
   getUsage,
   isTurnResponse,
@@ -20,6 +21,7 @@ import type {
   AbilitiesResponse,
   DegradedTurnBody,
   EvidenceRow,
+  GrowthArchiveResponse,
   HealthResponse,
   LessonFinishResponse,
   ResponseForm,
@@ -179,6 +181,8 @@ export default function WorkbenchPage() {
   const [abilitiesError, setAbilitiesError] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<EvidenceRow[]>([]);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [growthArchive, setGrowthArchive] = useState<GrowthArchiveResponse | null>(null);
+  const [growthArchiveError, setGrowthArchiveError] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
 
@@ -206,9 +210,10 @@ export default function WorkbenchPage() {
   }, []);
 
   const refreshPanels = useCallback(async () => {
-    const [a, e, u] = await Promise.allSettled([
+    const [a, e, g, u] = await Promise.allSettled([
       getAbilities(learnerId),
       getEvidence(learnerId),
+      getGrowthArchive(learnerId),
       getUsage(sessionId),
     ]);
     if (a.status === 'fulfilled') {
@@ -224,6 +229,13 @@ export default function WorkbenchPage() {
     } else {
       setEvidence([]);
       setEvidenceError(String(e.reason));
+    }
+    if (g.status === 'fulfilled') {
+      setGrowthArchive(g.value);
+      setGrowthArchiveError(null);
+    } else {
+      setGrowthArchive(null);
+      setGrowthArchiveError(String(g.reason));
     }
     if (u.status === 'fulfilled') {
       setUsage(u.value);
@@ -1040,6 +1052,69 @@ export default function WorkbenchPage() {
                 </tbody>
               </table>
             </div>
+          )}
+        </Panel>
+
+        <Panel
+          title="长期成长档案 · GET /learners/:id/growth"
+          subtitle="每堂课结束时归档结构化证据摘要；不保存原始语音或对话文本"
+        >
+          {growthArchiveError ? (
+            <div className="error-box">接口不可用：{growthArchiveError}</div>
+          ) : !growthArchive ? (
+            <Empty>加载中…</Empty>
+          ) : (
+            <>
+              <div className="notice" style={{ marginTop: 0 }}>
+                <div className="notice-title">学习档案说明</div>
+                <div className="notice-text">{growthArchive.calibrationNotice}</div>
+              </div>
+              <Section title={`长期记忆（${growthArchive.memories.length}）`}>
+                {growthArchive.memories.length === 0 ? (
+                  <Empty>结课并产生证据后，会生成可追溯的结构化学习摘要。</Empty>
+                ) : (
+                  growthArchive.memories.map((memory) => (
+                    <div className="card" key={memory.id}>
+                      <div className="card-title">{memory.memoryType} · {fmtTime(memory.updatedAt)}</div>
+                      <div>{memory.content}</div>
+                      <div className="hint">重要度 {memory.importance.toFixed(2)} · 来源 {memory.source}</div>
+                    </div>
+                  ))
+                )}
+              </Section>
+              <Section title={`课堂成长快照（${growthArchive.snapshots.length}）`}>
+                {growthArchive.snapshots.length === 0 ? (
+                  <Empty>暂无已归档课程。结课后可查看当时的证据、能力状态和待复习项。</Empty>
+                ) : (
+                  growthArchive.snapshots.map((entry) => (
+                    <div className="card" key={entry.id}>
+                      <div className="card-title">
+                        {entry.snapshot.session?.topicId ?? '课堂'} · {fmtTime(entry.snapshot.session?.completedAt ?? entry.createdAt)}
+                      </div>
+                      <div className="hint">
+                        {entry.snapshot.session?.turns ?? 0} 轮 · {entry.snapshot.session?.evidenceCount ?? 0} 条证据 · {entry.snapshot.evidenceBySkill?.length ?? 0} 项能力
+                      </div>
+                      {(entry.snapshot.evidenceBySkill ?? []).map((skill) => (
+                        <div className="hint" key={skill.skillNodeId}>
+                          {skill.skillName || skill.skillNodeId}：独立成功 {skill.independentSuccesses}，待练习 {skill.unsuccessfulAttempts}，不同场景 {skill.independentScenarios.length}
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                )}
+              </Section>
+              <Section title={`待复习（${growthArchive.upcomingReviews.length}）`}>
+                {growthArchive.upcomingReviews.length === 0 ? (
+                  <Empty>暂无待复习项</Empty>
+                ) : (
+                  growthArchive.upcomingReviews.slice(0, 8).map((review, index) => (
+                    <div className="hint" key={`${review.skillNodeId}-${review.dueAt}-${index}`}>
+                      {review.skillNodeId} · {fmtTime(review.dueAt)} · 间隔 {review.intervalDays} 天
+                    </div>
+                  ))
+                )}
+              </Section>
+            </>
           )}
         </Panel>
 

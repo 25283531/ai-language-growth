@@ -11,6 +11,7 @@ import type {
   TurnResponse,
   UsageSummary,
   EvidenceRow,
+  GrowthArchiveResponse,
 } from './types';
 
 /** 后端已 enableCors，Web 直连；可用 NEXT_PUBLIC_API_BASE 覆盖。 */
@@ -155,6 +156,9 @@ export const getAbilities = (learnerId: string): Promise<AbilitiesResponse> =>
 
 export const getEvidence = (learnerId: string): Promise<EvidenceRow[]> =>
   apiRequest<EvidenceRow[]>(`/learners/${encodeURIComponent(learnerId)}/evidence`);
+
+export const getGrowthArchive = (learnerId: string): Promise<GrowthArchiveResponse> =>
+  apiRequest<GrowthArchiveResponse>(`/learners/${encodeURIComponent(learnerId)}/growth`);
 
 export function getUsage(sessionId?: string | null): Promise<UsageSummary> {
   const query = sessionId ? `?lessonSessionId=${encodeURIComponent(sessionId)}` : '';

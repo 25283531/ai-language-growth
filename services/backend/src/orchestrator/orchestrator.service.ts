@@ -14,7 +14,7 @@
  *  - 教学决策全部在后端完成，客户端只渲染（约束一）。
  *  - 掌握状态由规则引擎根据证据计算，不由模型声称（约束三）。
  */
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import {
   advanceMethodLadder,
   initialMethodLadderState,
@@ -482,6 +482,7 @@ export class OrchestratorService {
       where: { id: lessonSessionId },
     });
     if (!session) throw new Error(`课堂 ${lessonSessionId} 不存在`);
+    if (session.learnerId !== learnerId) throw new ForbiddenException('课堂不属于该学习者');
 
     if (session.currentReviewScheduleId) {
       await this.planner.releaseReviewClaim({
@@ -515,6 +516,135 @@ export class OrchestratorService {
       select: { skillNodeId: true, dueAt: true, intervalDays: true },
     });
 
+    const [sessionEvidence, abilityRows] = await Promise.all([
+      this.prisma.learning_evidence.findMany({
+        where: { learnerId, lessonSessionId },
+        include: { skillNode: { select: { name: true, abilityCategory: true } } },
+        orderBy: { occurredAt: 'asc' },
+      }),
+      this.prisma.learner_skill_states.findMany({
+        where: { learnerId },
+        include: { skillNode: { select: { name: true, abilityCategory: true } } },
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+    const bySkill = new Map<string, {
+      skillNodeId: string;
+      skillName: string;
+      abilityCategory: string;
+      evidenceCount: number;
+      independentSuccesses: number;
+      unsuccessfulAttempts: number;
+      scenarios: Set<string>;
+      errorCounts: Map<string, number>;
+    }>();
+    for (const row of sessionEvidence) {
+      const group = bySkill.get(row.skillNodeId) ?? {
+        skillNodeId: row.skillNodeId,
+        skillName: row.skillNode.name,
+        abilityCategory: row.skillNode.abilityCategory,
+        evidenceCount: 0,
+        independentSuccesses: 0,
+        unsuccessfulAttempts: 0,
+        scenarios: new Set<string>(),
+        errorCounts: new Map<string, number>(),
+      };
+      group.evidenceCount += 1;
+      if (row.succeeded && row.independent) group.independentSuccesses += 1;
+      if (!row.succeeded) group.unsuccessfulAttempts += 1;
+      if (row.independent && row.succeeded) group.scenarios.add(row.scenario);
+      if (Array.isArray(row.errorUnits)) {
+        for (const entry of row.errorUnits) {
+          if (!entry || typeof entry !== 'object' || !('unit' in entry)) continue;
+          const unit = (entry as { unit: unknown }).unit;
+          if (typeof unit === 'string' && unit.trim()) {
+            group.errorCounts.set(unit, (group.errorCounts.get(unit) ?? 0) + 1);
+          }
+        }
+      }
+      bySkill.set(row.skillNodeId, group);
+    }
+    const evidenceSummary = Array.from(bySkill.values()).map((group) => ({
+      skillNodeId: group.skillNodeId,
+      skillName: group.skillName,
+      abilityCategory: group.abilityCategory,
+      evidenceCount: group.evidenceCount,
+      independentSuccesses: group.independentSuccesses,
+      unsuccessfulAttempts: group.unsuccessfulAttempts,
+      independentScenarios: Array.from(group.scenarios),
+      commonErrorUnits: Array.from(group.errorCounts.entries())
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 3)
+        .map(([unit, count]) => ({ unit, count })),
+    }));
+    const completedAt = new Date();
+    const summary = `本堂课 ${session.turnCount} 轮，记录 ${sessionEvidence.length} 条学习证据，涉及 ${evidenceSummary.length} 项能力。档案为内部学习记录，状态未经儿童样本校准。`;
+    const snapshot = {
+      session: {
+        lessonSessionId,
+        topicId: session.topicId,
+        turns: session.turnCount,
+        completedAt: completedAt.toISOString(),
+        evidenceCount: sessionEvidence.length,
+      },
+      evidenceBySkill: evidenceSummary,
+      abilities: abilityRows.map((row) => ({
+        skillNodeId: row.skillNodeId,
+        skillName: row.skillNode?.name ?? '',
+        abilityCategory: row.skillNode?.abilityCategory ?? '',
+        masteryCode: row.masteryCode,
+        calibrationStatus: row.calibrationStatus,
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+      upcomingReviews: reviewScheduled.map((review) => ({
+        skillNodeId: review.skillNodeId,
+        dueAt: review.dueAt.toISOString(),
+        intervalDays: review.intervalDays,
+      })),
+      calibrationNotice: '内部原型状态，阈值未经真实儿童样本校准，不代表已掌握。',
+    };
+    const memoryContent = sessionEvidence.length === 0
+      ? `本次课程未产生学习证据。课程主题：${session.topicId}。`
+      : `本次课程结构化学习摘要：${evidenceSummary.map((group) =>
+          `${group.skillName || group.skillNodeId}：独立成功 ${group.independentSuccesses} 项，待练习 ${group.unsuccessfulAttempts} 项` +
+          (group.commonErrorUnits.length > 0
+            ? `，常见待练单元 ${group.commonErrorUnits.map((item) => item.unit).join('、')}`
+            : ''),
+        ).join('；')}。该摘要来自评估证据，不含原始语音或对话文本。`;
+
+    await this.prisma.$transaction([
+      this.prisma.lesson_sessions.update({
+        where: { id: lessonSessionId },
+        data: { summary },
+      }),
+      this.prisma.learner_growth_snapshots.upsert({
+        where: { lessonSessionId },
+        create: {
+          id: `growth-${lessonSessionId}`,
+          learnerId,
+          lessonSessionId,
+          snapshot: snapshot as unknown as object,
+        },
+        update: { snapshot: snapshot as unknown as object },
+      }),
+      this.prisma.interaction_memories.upsert({
+        where: { sourceSessionId: lessonSessionId },
+        create: {
+          id: `memory-${lessonSessionId}`,
+          learnerId,
+          sourceSessionId: lessonSessionId,
+          memoryType: 'lesson_learning_summary',
+          content: memoryContent,
+          importance: Math.min(1, 0.4 + Math.min(sessionEvidence.length, 20) * 0.03),
+          source: 'rule_summary',
+        },
+        update: {
+          content: memoryContent,
+          importance: Math.min(1, 0.4 + Math.min(sessionEvidence.length, 20) * 0.03),
+        },
+      }),
+    ]);
+
     const effectiveTeachingCostCny =
       completedGoals.length > 0 ? usage.totalCostCny / completedGoals.length : usage.totalCostCny;
 
@@ -525,7 +655,7 @@ export class OrchestratorService {
       effectiveTeachingCostCny,
       totalCostCny: usage.totalCostCny,
       stateChanges: [],
-      summary: `本堂课完成 ${session.turnCount} 轮，形成 ${completedGoals.length} 个能力目标。`,
+      summary,
       reviewScheduled: reviewScheduled.map((review) => ({
         skillNodeId: review.skillNodeId,
         dueAt: review.dueAt.toISOString(),

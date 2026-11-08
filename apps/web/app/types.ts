@@ -184,6 +184,37 @@ export interface AbilitiesResponse {
   calibrationNotice: string;
 }
 
+export interface GrowthArchiveResponse {
+  learnerId: string;
+  snapshots: Array<{
+    id: string;
+    lessonSessionId: string;
+    snapshot: {
+      session?: { topicId?: string; turns?: number; completedAt?: string; evidenceCount?: number };
+      evidenceBySkill?: Array<{
+        skillNodeId: string;
+        skillName: string;
+        independentSuccesses: number;
+        unsuccessfulAttempts: number;
+        independentScenarios: string[];
+      }>;
+      [key: string]: unknown;
+    };
+    createdAt: string;
+  }>;
+  memories: Array<{
+    id: string;
+    memoryType: string;
+    content: string;
+    importance: number;
+    source: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  upcomingReviews: Array<{ skillNodeId: string; dueAt: string; intervalDays: number }>;
+  calibrationNotice: string;
+}
+
 /** GET /learners/{id}/evidence 返回 learning_evidence 行数组。 */
 export interface EvidenceRow {
   id: string;

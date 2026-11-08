@@ -43,6 +43,7 @@ export const learnerRoutesSchema = {
   list: { method: 'GET', path: `${API_PREFIX}/learners` },
   profile: { method: 'GET', path: `${API_PREFIX}/learners/{id}/profile` },
   abilities: { method: 'GET', path: `${API_PREFIX}/learners/{id}/abilities` },
+  growth: { method: 'GET', path: `${API_PREFIX}/learners/{id}/growth` },
   createProfile: {
     method: 'POST',
     path: `${API_PREFIX}/learners`,

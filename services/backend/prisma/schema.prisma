@@ -53,6 +53,8 @@ model learner_profiles {
   assessments  assessment_records[]
   interactions interaction_events[]
   reviews      review_schedules[]
+  memories     interaction_memories[]
+  growthSnapshots learner_growth_snapshots[]
 
   @@index([guardianId])
   @@map("learner_profiles")
@@ -276,6 +278,8 @@ model lesson_sessions {
   assessments    assessment_records[]
   evidence       learning_evidence[]
   usage          ai_usage_logs[]
+  memories       interaction_memories[]
+  growthSnapshot learner_growth_snapshots?
 
   @@index([learnerId, startedAt])
   @@map("lesson_sessions")
@@ -451,6 +455,7 @@ model interaction_memories {
   id               String   @id @default(uuid())
   learnerId        String
   teacherProfileId String?
+  sourceSessionId  String?  @unique
   memoryType       String
   content          String
   importance       Float    @default(0.5)
@@ -459,10 +464,26 @@ model interaction_memories {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  teacherProfile   teacher_profiles? @relation(fields: [teacherProfileId], references: [id])
+  learner          learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  teacherProfile   teacher_profiles? @relation(fields: [teacherProfileId], references: [id], onDelete: SetNull)
+  sourceSession    lesson_sessions? @relation(fields: [sourceSessionId], references: [id], onDelete: Cascade)
 
   @@index([learnerId])
   @@map("interaction_memories")
+}
+
+model learner_growth_snapshots {
+  id             String   @id @default(uuid())
+  learnerId      String
+  lessonSessionId String  @unique
+  snapshot       Json
+  createdAt      DateTime @default(now())
+
+  learner       learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  lessonSession lesson_sessions @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+
+  @@index([learnerId, createdAt])
+  @@map("learner_growth_snapshots")
 }
 
 // ========== 模型路由 ==========

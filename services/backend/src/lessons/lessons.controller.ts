@@ -135,4 +135,52 @@ export class LearnersController {
     });
     return rows;
   }
+
+  @Get(':id/growth')
+  async growth(@Param('id') id: string) {
+    const learner = await this.prisma.learner_profiles.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!learner) throw new HttpException({ message: '学习者不存在' }, 404);
+
+    const [snapshots, memories, upcomingReviews] = await Promise.all([
+      this.prisma.learner_growth_snapshots.findMany({
+        where: { learnerId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      }),
+      this.prisma.interaction_memories.findMany({
+        where: {
+          learnerId: id,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        orderBy: [{ importance: 'desc' }, { updatedAt: 'desc' }],
+        take: 30,
+        select: {
+          id: true,
+          memoryType: true,
+          content: true,
+          importance: true,
+          source: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.review_schedules.findMany({
+        where: { learnerId: id, completedAt: null },
+        orderBy: { dueAt: 'asc' },
+        take: 30,
+        select: { skillNodeId: true, dueAt: true, intervalDays: true },
+      }),
+    ]);
+
+    return {
+      learnerId: id,
+      snapshots,
+      memories,
+      upcomingReviews,
+      calibrationNotice: '内部原型记录；能力阈值未经真实儿童样本校准，不代表已掌握。',
+    };
+  }
 }
