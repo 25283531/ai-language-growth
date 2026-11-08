@@ -2,9 +2,8 @@
 <resources>
     <string name="app_name">M1 最小音频链路原型</string>
 
-    <!-- 后端基址：Android 模拟器用 10.0.2.2 指向宿主机；真机改成宿主机局域网 IP。
-         compose 默认把宿主机 3100 映射到容器内 3000。 -->
-    <string name="backend_base_url">http://10.0.2.2:3100/api/v1</string>
+    <!-- 真机测试使用服务器暴露的后端 API。 -->
+    <string name="backend_base_url">http://152.136.230.132:3100/api/v1</string>
 
     <!-- 仅配置要测试的学习者；课堂 ID 由 POST /lessons/start 动态获取。 -->
     <string name="learner_id">child-m1-demo</string>
