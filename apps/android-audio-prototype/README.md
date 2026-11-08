@@ -47,8 +47,8 @@ app/src/main/java/.../MainActivity.kt
 ```
 
 - Android 模拟器用 `10.0.2.2` 访问宿主机；真机请改为宿主机局域网 IP。
-- `deploy/docker/docker-compose.yml` 默认把宿主机 `3100` 映射到容器内 `3000`，
-  容器内 `PORT=3000`；所以模拟器上 `3100` 是正确的对外端口。
+- 当前 Compose 不再把后端端口直接暴露到宿主机；真机联调应访问用户 Web 的
+  `3002/api/v1` 同源代理，生产环境应改为服务器 HTTPS 域名。
 - 后端需以 `AI_GATEWAY_MODE=mock` 启动（不需要任何密钥、不产生费用）。
 - `learner_id` 需要是远程 seed 中存在的测试学习者；课堂 ID 由应用启动后的
   「开始课堂」按钮动态获取。

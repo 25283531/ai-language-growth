@@ -2,11 +2,11 @@
 
 # 部署说明
 
-当前 Docker 部署包含 PostgreSQL、Redis、后端 API 和管理后台。后端默认监听 `3100`，管理后台默认监听 `3001`。完整的远程联调地址、迁移顺序、健康检查和额度验收见 [`remote-services.md`](remote-services.md)。
+当前 Docker 部署包含 PostgreSQL、Redis、后端 API、用户 Web 和管理后台，使用一个 `docker-compose.yml` 一次性部署。数据库、Redis 和后端只在 Compose 内网开放；用户 Web 默认对外 `3002`，管理后台默认对外 `3001`，页面通过同源代理调用后端。完整的远程联调地址、迁移顺序、健康检查、备份还原和额度验收见 [`remote-services.md`](remote-services.md)。
 
 ## 必需环境变量
 
-`ADMIN_CONFIG_TOKEN` 必须在部署服务器的 `.env` 或密钥管理系统中设置，Compose 会透传到 `alg-backend`。管理后台请求时通过 `x-admin-token` 发送，不写入镜像、APK、GitHub Actions 日志或 Git 仓库。模型供应商凭据由管理后台加密写入数据库，`MODEL_CONFIG_ENCRYPTION_KEY` 更换后旧凭据无法解密。
+`ADMIN_CONFIG_TOKEN` 必须在部署服务器的 `.env` 或密钥管理系统中设置，Compose 会透传到 `alg-backend`。管理后台请求时通过 `x-admin-token` 发送，不写入镜像、APK、GitHub Actions 日志或 Git 仓库。模型供应商凭据由管理后台加密写入数据库，`MODEL_CONFIG_ENCRYPTION_KEY` 更换后旧凭据无法解密。SMTP 也在后台“系统设置”页面配置并加密保存，不再要求把 SMTP 密码写入 Compose 环境变量。
 
 会员语音额度由服务端按学习者等级决定：
 
@@ -16,6 +16,8 @@
 - `advanced`：服务端不限制额度，当前不在手机客户端开放购买或升级。
 
 额度预留、结算和阻断由后端数据库账本负责，手机端计时不能提升等级或绕过额度。
+
+备份页面只备份数据库，不备份 `.cache/audio` 音频缓存；还原前会自动保护性备份当前数据库。远程备份可填写 WebDAV 或 OpenList 的 WebDAV 地址。
 
 ## 供应商配置
 

@@ -49,7 +49,7 @@ const IMAGE_IDS = ['img-apple', 'img-ball', 'img-cat', 'img-dog', 'img-cup'];
 function playableAudioUrl(ref: string | null | undefined): string | null {
   if (!ref) return null;
   if (/^https?:\/\//i.test(ref)) return ref;
-  if (ref.startsWith('/')) return new URL(ref, API_BASE).toString();
+  if (ref.startsWith('/')) return ref;
   return null;
 }
 

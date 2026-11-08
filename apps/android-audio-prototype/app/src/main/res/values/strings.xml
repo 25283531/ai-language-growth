@@ -2,8 +2,8 @@
 <resources>
     <string name="app_name">M1 最小音频链路原型</string>
 
-    <!-- 真机测试使用服务器暴露的后端 API。 -->
-    <string name="backend_base_url">http://152.136.230.132:3100/api/v1</string>
+    <!-- 真机联调通过用户 Web 的同源 API 代理访问后端；生产环境应替换为 HTTPS 域名。 -->
+    <string name="backend_base_url">http://152.136.230.132:3002/api/v1</string>
 
     <!-- 仅配置要测试的学习者；课堂 ID 由 POST /lessons/start 动态获取。 -->
     <string name="learner_id">child-m1-demo</string>

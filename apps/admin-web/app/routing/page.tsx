@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { AdminNav } from '../admin-nav';
 
-function apiRoot() { return process.env.NEXT_PUBLIC_BACKEND_URL || (typeof window === 'undefined' ? '' : `${window.location.protocol}//${window.location.hostname}:3100`); }
+function apiRoot() { return ''; }
 
 export default function RoutingPage() {
   const [token, setToken] = useState(''); const [value, setValue] = useState(''); const [message, setMessage] = useState('');

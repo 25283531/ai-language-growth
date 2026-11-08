@@ -9,9 +9,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-ai_language_growth}
       TZ: Asia/Shanghai
       PGTZ: Asia/Shanghai
-    ports:
-      # 5433 对外暴露，避开服务器上已有的其他服务端口
-      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -35,8 +32,6 @@ services:
       - 256mb
       - --maxmemory-policy
       - allkeys-lru
-    ports:
-      - "${REDIS_PORT:-6380}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -100,13 +95,6 @@ services:
       PRONUNCIATION_MODEL: ${PRONUNCIATION_MODEL:-}
       ADMIN_CONFIG_TOKEN: ${ADMIN_CONFIG_TOKEN:-}
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
-      MAIL_HOST: ${MAIL_HOST:-}
-      MAIL_PORT: ${MAIL_PORT:-587}
-      MAIL_SECURE: ${MAIL_SECURE:-false}
-      MAIL_USER: ${MAIL_USER:-}
-      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
-      MAIL_FROM: ${MAIL_FROM:-}
-      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
       PASSWORD_RESET_URL: ${PASSWORD_RESET_URL:-http://localhost:3002/reset-password}
       MAIL_DISABLED: ${MAIL_DISABLED:-false}
       FREE_ASR_DAILY_QUOTA_SECONDS: ${FREE_ASR_DAILY_QUOTA_SECONDS:-300}
@@ -115,8 +103,8 @@ services:
       MEMBER_ASR_DAILY_QUOTA_SECONDS: ${MEMBER_ASR_DAILY_QUOTA_SECONDS:-1800}
       MEMBER_TTS_DAILY_QUOTA_SECONDS: ${MEMBER_TTS_DAILY_QUOTA_SECONDS:-1800}
       MEMBER_PRONUNCIATION_DAILY_QUOTA_SECONDS: ${MEMBER_PRONUNCIATION_DAILY_QUOTA_SECONDS:-1800}
-    ports:
-      - "${BACKEND_PORT:-3100}:3000"
+    volumes:
+      - backenddata:/app/.cache
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
@@ -135,6 +123,8 @@ services:
     depends_on:
       backend:
         condition: service_started
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:3000
     ports:
       - "${ADMIN_WEB_PORT:-3001}:3001"
     networks:
@@ -145,12 +135,14 @@ services:
       context: ../..
       dockerfile: apps/web/Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:3100/api/v1}
+        NEXT_PUBLIC_API_BASE: /api/v1
     container_name: alg-web
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_started
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:3000
     ports:
       - "${WEB_PORT:-3002}:3000"
     networks:
@@ -159,6 +151,7 @@ services:
 volumes:
   pgdata:
   redisdata:
+  backenddata:
 
 networks:
   alg-net:

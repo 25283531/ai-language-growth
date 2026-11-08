@@ -14,6 +14,7 @@ import { ModelRouterImpl } from '@alg/model-router';
 import { resolveLiveServices, resolveTtsProtocol } from '@alg/ai-provider-sdk';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
+import { AuthService, extractBearerToken } from '../auth/auth.service';
 
 const synthesizeSchema = z.object({
   text: z.string().min(1).max(500),
@@ -42,6 +43,7 @@ export class SpeechController {
     @Inject(AiGatewayService) private readonly gateway: AiGatewayService,
     @Inject(ModelRouterImpl) private readonly router: ModelRouterImpl,
     @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
+    @Inject(AuthService) private readonly auth: AuthService,
   ) {}
 
   @Post('synthesize')
@@ -118,22 +120,36 @@ export class SpeechController {
     if (!reservationId || !learnerId) {
       throw new HttpException('语音请求缺少额度租约或学习者标识', 400);
     }
+    await this.auth.assertLearnerOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      learnerId,
+    );
     await this.quota.assertReservation({ reservationId, learnerId, serviceKind });
   }
 }
 
 @Controller('api/v1/speech/quota')
 export class SpeechQuotaController {
-  constructor(@Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService) {}
+  constructor(
+    @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
+    @Inject(AuthService) private readonly auth: AuthService,
+  ) {}
 
   @Get('status')
-  async status(@Query('learnerId') learnerId?: string) {
+  async status(
+    @Query('learnerId') learnerId: string | undefined,
+    @Req() request: Request,
+  ) {
     if (!learnerId) throw new HttpException('缺少 learnerId', 400);
+    await this.auth.assertLearnerOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      learnerId,
+    );
     return this.quota.status(learnerId);
   }
 
   @Post('reserve')
-  async reserve(@Body() body: unknown) {
+  async reserve(@Body() body: unknown, @Req() request: Request) {
     const parsed = z
       .object({
         learnerId: z.string().min(1),
@@ -146,6 +162,10 @@ export class SpeechQuotaController {
     if (!parsed.success) {
       throw new HttpException({ message: '额度预留参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.auth.assertLearnerOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      parsed.data.learnerId,
+    );
     return this.quota.reserve({
       learnerId: parsed.data.learnerId,
       serviceKind: parsed.data.serviceKind,
@@ -156,22 +176,30 @@ export class SpeechQuotaController {
   }
 
   @Post('settle')
-  async settle(@Body() body: unknown) {
+  async settle(@Body() body: unknown, @Req() request: Request) {
     const parsed = z
       .object({ reservationId: z.string().uuid(), seconds: z.number().min(0).max(120) })
       .safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '额度结算参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.auth.assertReservationOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      parsed.data.reservationId,
+    );
     return this.quota.settle(parsed.data.reservationId, parsed.data.seconds);
   }
 
   @Post('release')
-  async release(@Body() body: unknown) {
+  async release(@Body() body: unknown, @Req() request: Request) {
     const parsed = z.object({ reservationId: z.string().uuid() }).safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '额度释放参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.auth.assertReservationOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      parsed.data.reservationId,
+    );
     return this.quota.release(parsed.data.reservationId);
   }
 }

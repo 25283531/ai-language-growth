@@ -311,6 +311,14 @@ export class ProviderConfigService {
     }
   }
 
+  encryptSecretRecord(value: Record<string, string>): string {
+    return this.encrypt(value);
+  }
+
+  decryptSecretRecord(value: string): Record<string, string> {
+    return this.decrypt(value);
+  }
+
   private toPublic(row: {
     serviceKind: string;
     providerPresetId: string;

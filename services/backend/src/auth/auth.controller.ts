@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpException, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, Post, Put, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { AuthService, extractBearerToken } from './auth.service';
@@ -95,8 +95,23 @@ export class EmailAdminController {
   ) {}
 
   @Get('status')
-  status(@Headers('x-admin-token') token: string | undefined) {
+  async status(@Headers('x-admin-token') token: string | undefined) {
     this.adminConfig.assertAdminToken(token);
-    return { configured: this.email.isConfigured() };
+    return { configured: await this.email.isConfigured(), settings: await this.email.getSettings() };
+  }
+
+  @Put('settings')
+  async save(
+    @Headers('x-admin-token') token: string | undefined,
+    @Body() body: unknown,
+  ) {
+    this.adminConfig.assertAdminToken(token);
+    return this.email.saveSettings(body);
+  }
+
+  @Post('test')
+  async test(@Headers('x-admin-token') token: string | undefined) {
+    this.adminConfig.assertAdminToken(token);
+    return this.email.testSettings();
   }
 }

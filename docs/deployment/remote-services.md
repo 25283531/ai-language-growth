@@ -9,10 +9,11 @@
 - PostgreSQL 容器：`alg-postgres`
 - Redis 容器：`alg-redis`
 - 后端容器：`alg-backend`
-- PostgreSQL 对外端口：`5433`，容器内端口：`5432`
-- Redis 对外端口：`6380`，容器内端口：`6379`
-- 后端对外端口：`3100`，容器内端口：`3000`
-- 数据卷：`docker_pgdata`、`docker_redisdata`
+- PostgreSQL 仅 Compose 内网端口：`5432`
+- Redis 仅 Compose 内网端口：`6379`
+- 后端仅 Compose 内网端口：`3000`
+- 对外入口：Web `3002`、管理后台 `3001`；两者通过 Next.js 同源代理访问后端
+- 数据卷：`docker_pgdata`、`docker_redisdata`、`docker_backenddata`
 
 服务器用户名、密码、数据库密码和供应商密钥不得写入 GitHub、代码、日志或本文档。使用服务器上的 `deploy/docker/.env` 或受控的密钥注入方式；本地如需读取 SSH 凭据，从工作目录外的安全文件读取。
 
@@ -23,14 +24,6 @@
 后台任务路由的 `dailyBudgetCny` 是每 UTC 自然日、每任务路由的人民币预算，设为 `0` 时关闭预算。预算按账本已估算成本累计；模型必须为实际用量涉及的所有计费单位配置单价。遇到未计价的外部调用时，为避免把未知费用视为免费，该路由会熔断至 L0。预算临近上限时 Router 先选择低等级备选；已耗尽且没有更低等级备选时使用 L0 本地规则。每次并发预算预留暂由单个后端进程维护，当前部署按单后端副本运行；增加副本前需实现共享的原子预算预留。
 
 ## 连接变量
-
-服务器外部客户端使用：
-
-```text
-DATABASE_URL=postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@152.136.230.132:5433/<POSTGRES_DB>?schema=public
-REDIS_URL=redis://152.136.230.132:6380
-AI_GATEWAY_MODE=mock
-```
 
 后端容器通过 Compose 网络访问服务，使用：
 
@@ -81,12 +74,20 @@ docker compose up -d --build backend
 
 有新迁移时，先构建含新 schema 的镜像并完成 `migrate deploy`，再启动新后端容器。不要先重建后端再迁移，否则应用可能在初始化查询新增字段时反复退出。
 
-确认后端健康：
+确认后端健康（在服务器上从容器内部执行）：
 
 ```bash
-curl --fail http://127.0.0.1:3100/api/v1/health
+docker compose exec backend node -e "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 docker compose ps
 ```
+
+手机端和浏览器不应直接访问 PostgreSQL、Redis 或后端容器端口。真机需要使用服务器已有的 HTTPS 入口，并将 `/api` 反向代理到 `alg-web:3000`（管理后台使用 `alg-admin-web:3001`）；如果没有反向代理，可临时开放 Web 的 `3002` 端口进行联调。
+
+## 备份与音频缓存
+
+管理后台“备份与还原”页面创建的是 PostgreSQL `pg_dump` 数据库备份，压缩包内部只有 `database.dump`。它包含账户、会员、供应商配置、课程和学习记录等数据库数据，**不包含 `.cache/audio` 下的音频缓存文件**。音频缓存属于可再生临时文件，不能通过数据库还原恢复。
+
+定时备份可保留在后端的 `backenddata` 卷，也可通过 WebDAV 上传。百度网盘和阿里云盘使用 OpenList 提供的 WebDAV 地址接入；项目不保存网盘登录协议。还原时服务端会先创建当前数据库的保护性备份，再执行 `pg_restore`，音频缓存仍不会被导入。
 
 ## API 冒烟顺序
 

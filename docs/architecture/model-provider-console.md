@@ -6,9 +6,11 @@
 
 部署时设置 `ADMIN_CONFIG_TOKEN` 和 `MODEL_CONFIG_ENCRYPTION_KEY`。第二项必须为 32 字节的十六进制值；例如使用 `openssl rand -hex 32` 生成。模型密钥以 AES-256-GCM 加密后写入 `ai_provider_configs`。更换加密密钥会导致已有凭据无法解密。
 
-Docker Compose 默认开放管理页面 `3001`、后端 API `3100`。页面从浏览器所在主机的 `3100` 端口连接后端；改变 API 外部端口或使用反向代理时，应设置 `NEXT_PUBLIC_BACKEND_URL` 为浏览器可访问的后端地址，并重新构建管理页面。运行数据库迁移后即可使用配置 API。
+Docker Compose 默认开放管理页面 `3001` 和用户 Web `3002`。数据库、Redis、后端 API 均只在 Compose 内网可见；两个 Next.js 页面通过同源 `/api/v1` rewrite 访问 `backend:3000`，浏览器不需要直接访问后端端口。真机和外部浏览器应使用 Web 的 HTTPS 入口，或临时访问 Web 的 `3002` 端口。
 
 配置保存后会立即更新对应服务的运行时 adapter 和 Router 别名。各服务的 API 地址可在界面中覆盖；平台域名、区域或自建兼容端点变化时无需改业务代码。
+
+SMTP 配置、备份目标和 WebDAV 凭据均在管理后台保存到数据库并加密敏感字段。数据库备份压缩包只包含 `database.dump`，不包含后端 `.cache/audio` 音频缓存；OpenList 仅作为百度网盘或阿里云盘的 WebDAV 适配入口。
 
 ## 预置服务和协议
 

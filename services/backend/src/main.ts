@@ -5,7 +5,7 @@
  * 本进程是唯一决定「孩子下一步学什么」的地方。
  */
 import 'reflect-metadata';
-import { Logger } from '@nestjs/common';
+import { Logger, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { json, raw } from 'express';
 import type { NextFunction, Response } from 'express';
@@ -14,6 +14,7 @@ import { AppModule } from './app.module';
 import { assertLiveProviderConfig } from '@alg/ai-provider-sdk';
 import { loadConfig } from './config/config.module';
 import { SpeechQuotaService } from './usage/speech-quota.service';
+import { AuthService, extractBearerToken } from './auth/auth.service';
 
 async function bootstrap(): Promise<void> {
   // live 模式下配置漏填必须立刻失败，不能等到运行期静默回落 Mock
@@ -39,7 +40,9 @@ async function bootstrap(): Promise<void> {
 
   // JSON body 体积上限：M1 语音以引用方式传递，不内联大 base64
   app.use(json({ limit: '2mb' }));
+  app.use('/api/v1/admin/backups/restore', raw({ type: 'application/octet-stream', limit: '512mb' }));
   const speechQuota = app.get(SpeechQuotaService);
+  const auth = app.get(AuthService);
   app.use('/api/v1/media/audio/uploads', async (request: Request, response: Response, next: NextFunction) => {
     const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
@@ -48,10 +51,19 @@ async function bootstrap(): Promise<void> {
       return;
     }
     try {
+      await auth.assertLearnerOwnership(
+        extractBearerToken(request.headers.authorization, request.headers.cookie),
+        learnerId,
+      );
       await speechQuota.assertReservation({ reservationId, learnerId, serviceKind: 'asr' });
       next();
-    } catch {
-      response.status(429).json({ message: '语音额度租约无效或已超额，已阻止音频上传' });
+    } catch (error) {
+      const status = error instanceof UnauthorizedException
+        ? 401
+        : error instanceof ForbiddenException
+          ? 403
+          : 429;
+      response.status(status).json({ message: '语音额度租约无效或已超额，已阻止音频上传' });
     }
   });
   // Android 原型将录音字节直接 POST 到该路径；只对上传路由启用原始字节解析。

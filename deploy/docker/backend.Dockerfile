@@ -15,7 +15,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Prisma 6 在 Alpine 上需要 openssl
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl postgresql16-client
 
 # 先复制依赖清单与源码（node_modules / dist / .env 由 .dockerignore 排除）
 COPY package.json package-lock.json ./
@@ -45,7 +45,7 @@ FROM node:20-alpine AS runtime
 
 WORKDIR /app
 
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl postgresql16-client
 
 ENV NODE_ENV=production \
     PORT=3100 \

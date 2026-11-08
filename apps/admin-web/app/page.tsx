@@ -18,6 +18,8 @@ export default function AdminHomePage() {
         <Link className="admin-card" href="/learning"><strong>学习与记忆</strong><span>教师风格和长期记忆</span></Link>
         <Link className="admin-card" href="/routing"><strong>任务路由</strong><span>主备模型、并发和预算</span></Link>
         <Link className="admin-card" href="/membership"><strong>会员管理</strong><span>会员等级和语音额度</span></Link>
+        <Link className="admin-card" href="/settings"><strong>系统设置</strong><span>SMTP 邮件服务</span></Link>
+        <Link className="admin-card" href="/backups"><strong>备份还原</strong><span>定时备份、WebDAV 与数据库恢复</span></Link>
       </section>
     </main>
   );

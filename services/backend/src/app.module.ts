@@ -33,6 +33,8 @@ import { AuthController, EmailAdminController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
 import { EmailService } from './auth/email.service';
 import { MembershipController, MembershipUsersAdminController } from './membership/membership.controller';
+import { BackupController } from './backup/backup.controller';
+import { BackupService } from './backup/backup.service';
 
 @Module({
   imports: [ConfigModule],
@@ -53,6 +55,7 @@ import { MembershipController, MembershipUsersAdminController } from './membersh
     EmailAdminController,
     MembershipController,
     MembershipUsersAdminController,
+    BackupController,
   ],
   providers: [
     PrismaService,
@@ -65,6 +68,7 @@ import { MembershipController, MembershipUsersAdminController } from './membersh
     RoutingConfigService,
     AuthService,
     EmailService,
+    BackupService,
     {
       provide: ModelRouterImpl,
       useFactory: (prisma: PrismaService) => {

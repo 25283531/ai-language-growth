@@ -891,3 +891,15 @@ model consent_records {
   @@index([userId])
   @@map("consent_records")
 }
+
+/// 可迁移的后台配置。敏感字段只保存 AES-GCM 密文，普通配置保存 JSON。
+model app_settings {
+  id                String   @id @default(uuid())
+  key               String   @unique
+  value             Json     @default("{}")
+  secretCiphertext  String?
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+
+  @@map("app_settings")
+}

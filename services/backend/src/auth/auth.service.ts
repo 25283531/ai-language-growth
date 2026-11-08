@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -228,6 +229,27 @@ export class AuthService {
 
   async me(rawToken: string | undefined) {
     return publicUser(await this.resolveSession(rawToken));
+  }
+
+  async assertLearnerOwnership(rawToken: string | undefined, learnerId: string): Promise<string> {
+    const user = await this.resolveSession(rawToken);
+    const learner = await this.prisma.learner_profiles.findUnique({
+      where: { id: learnerId },
+      select: { userId: true, guardianId: true },
+    });
+    if (!learner || learner.userId !== user.id || learner.guardianId !== user.id) {
+      throw new ForbiddenException('无权访问该学习者档案');
+    }
+    return user.id;
+  }
+
+  async assertReservationOwnership(rawToken: string | undefined, reservationId: string): Promise<void> {
+    const reservation = await this.prisma.speech_quota_reservations.findUnique({
+      where: { id: reservationId },
+      select: { learnerId: true },
+    });
+    if (!reservation) throw new UnauthorizedException('额度租约无效');
+    await this.assertLearnerOwnership(rawToken, reservation.learnerId);
   }
 }
 

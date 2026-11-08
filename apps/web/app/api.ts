@@ -15,8 +15,7 @@ import type {
 } from './types';
 
 /** 后端已 enableCors，Web 直连；可用 NEXT_PUBLIC_API_BASE 覆盖。 */
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:3100/api/v1';
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api/v1';
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;

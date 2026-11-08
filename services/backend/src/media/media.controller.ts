@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { AUDIO_EXTENSIONS, audioMimeType, resolveAudioDir } from '@alg/ai-provider-sdk';
 import type { Request } from 'express';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
+import { AuthService, extractBearerToken } from '../auth/auth.service';
 
 const FILE_PATTERN = new RegExp(
   `^[a-f0-9]{24}\\.(${AUDIO_EXTENSIONS.join('|')})$`,
@@ -20,7 +21,10 @@ const FILE_PATTERN = new RegExp(
 
 @Controller('api/v1/media/audio')
 export class MediaController {
-  constructor(private readonly quota: SpeechQuotaService) {}
+  constructor(
+    private readonly quota: SpeechQuotaService,
+    private readonly auth: AuthService,
+  ) {}
 
   /**
    * 原型音频上传：客户端直接提交录音字节，服务端只保存内容指纹文件并返回
@@ -57,6 +61,10 @@ export class MediaController {
     if (!reservationId || !learnerId) {
       throw new HttpException('音频请求缺少额度租约或学习者标识', 400);
     }
+    await this.auth.assertLearnerOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      learnerId,
+    );
     await this.quota.assertReservation({
       reservationId,
       learnerId,
@@ -93,6 +101,10 @@ export class MediaController {
     if (!reservationId || !learnerId) {
       throw new HttpException('音频下载缺少额度租约或学习者标识', 400);
     }
+    await this.auth.assertLearnerOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      learnerId,
+    );
     await this.quota.assertReservation({
       reservationId,
       learnerId,

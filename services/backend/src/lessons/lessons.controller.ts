@@ -16,6 +16,7 @@ import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
+import { AuthService, extractBearerToken } from '../auth/auth.service';
 
 @Controller('api/v1/lessons')
 export class LessonsController {
@@ -24,6 +25,7 @@ export class LessonsController {
     @Inject(LearnerModelService) private readonly learnerModel: LearnerModelService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
+    @Inject(AuthService) private readonly auth: AuthService,
   ) {}
 
   @Post('start')
@@ -40,11 +42,14 @@ export class LessonsController {
     @Param('id') id: string,
     @Body() body: unknown,
     @Headers('x-speech-quota-reservation') reservationHeader?: string,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
   ) {
     const parsed = turnRequestSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.auth.assertLearnerOwnership(extractBearerToken(authorization, cookie), parsed.data.learnerId);
     if (parsed.data.response.audioRef) {
       const reservationId = String(reservationHeader ?? '').trim();
       if (!reservationId) throw new HttpException('语音课堂提交缺少 ASR 额度租约', 400);

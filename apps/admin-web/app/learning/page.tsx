@@ -24,8 +24,7 @@ type Memory = {
 };
 
 function apiRoot() {
-  return process.env.NEXT_PUBLIC_BACKEND_URL
-    || (typeof window === 'undefined' ? '' : `${window.location.protocol}//${window.location.hostname}:3100`);
+  return '';
 }
 
 export default function LearningPage() {

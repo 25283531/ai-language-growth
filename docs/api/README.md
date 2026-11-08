@@ -44,7 +44,7 @@
 | `GET /membership/me` | Cookie 或 Bearer | 当前账户等级、学习者、申请和变更记录 |
 | `POST /membership/requests` | `{ tier?: "member", note? }` | 创建普通会员待审核申请；高级会员仅能由管理员在后台调整 |
 
-SMTP 由 Docker 部署环境变量配置，不通过 API 返回密钥。管理端的邮箱状态只显示是否已配置，不显示凭据。开发环境未配置 SMTP 时会把重置链接写入后端日志；生产环境必须配置完整 `MAIL_*` 参数，否则找回邮件无法发送。生产环境登录 Cookie 带 `Secure` 标记。
+SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，不通过 API 返回密码。开发环境未配置 SMTP 时会把重置链接写入后端日志；生产环境必须配置完整 SMTP 信息，否则找回邮件无法发送。生产环境登录 Cookie 带 `Secure` 标记。
 
 `response` 字段来自 `learnerResponseSchema`：`text?: string|null`、`audioRef?: string|null`、`audioDurationMs?: integer|null`（0–120000）、`selectedImageId?: string|null`、`requestedSlower?: boolean`、`requestedRepeat?: boolean`、`freeUtterance?: string|null`。schema 为缺省项提供默认值。
 

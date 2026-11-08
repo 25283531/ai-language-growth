@@ -32,8 +32,7 @@ type ModelBenchmark = {
   benchmarks: Array<{ id: string; score: number; sampleCount: number; passed: boolean; notes: string | null; testedAt: string }>;
 };
 function apiRoot(): string {
-  if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
-  return typeof window === 'undefined' ? '' : `${window.location.protocol}//${window.location.hostname}:3100`;
+  return '';
 }
 const services: Array<{ id: ServiceKind; title: string; help: string }> = [
   { id: 'llm', title: '文本模型 LLM', help: '教学对话、解释与学习计划' },
