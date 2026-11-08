@@ -22,6 +22,7 @@ import { MediaController } from './media/media.controller';
 import { ProviderConfigController } from './providers/provider-config.controller';
 import { ProviderConfigService } from './providers/provider-config.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
+import { MemoryAdminController } from './memory/memory-admin.controller';
 
 @Module({
   imports: [ConfigModule],
@@ -33,6 +34,7 @@ import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
     HealthController,
     MediaController,
     ProviderConfigController,
+    MemoryAdminController,
   ],
   providers: [
     PrismaService,

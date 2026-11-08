@@ -1204,7 +1204,11 @@ export class OrchestratorService {
       teacherUtteranceZh: string;
     };
 
-    const baseSpeed = 0.65;
+    const teacherProfile = await this.prisma.teacher_profiles.findFirst({ orderBy: { createdAt: 'asc' }, select: { adjustable: true, style: true } });
+    const adjustable = teacherProfile?.adjustable && typeof teacherProfile.adjustable === 'object' && !Array.isArray(teacherProfile.adjustable)
+      ? teacherProfile.adjustable as Record<string, unknown>
+      : {};
+    const baseSpeed = typeof adjustable.speakingRate === 'number' ? Math.min(0.85, Math.max(0.45, adjustable.speakingRate)) : 0.65;
     const teacherSpeed = resolveTeacherSpeed(baseSpeed, input.methodState.current);
     const targetWord = activity.targetWords[0] ?? '';
     const syllables = splitWord(targetWord);
@@ -1237,7 +1241,7 @@ export class OrchestratorService {
       targetWords: input.isReview ? [] : activity.targetWords,
       voice: {
         teacherSpeed,
-        voiceStyle: 'gentle',
+        voiceStyle: adjustable.tone === 'lively' ? 'encouraging' : adjustable.tone === 'calm' ? 'warm' : 'gentle',
         pauseAfterSentenceMs: 1000,
         pronunciationMode:
           input.methodState.current === 'method_syllable_split' ||
@@ -1248,7 +1252,12 @@ export class OrchestratorService {
       allowRepeat: true,
       methodVariant: input.methodState.current,
       consecutiveFailures: input.methodState.consecutiveFailures,
-      personaHint: '耐心、温柔、积极鼓励；不嘲笑、不催促；诚实说明自己是 AI 老师。',
+      personaHint: [
+        teacherProfile?.style === 'playful_companion' ? '活泼友好的学习伙伴' : teacherProfile?.style === 'calm_coach' ? '沉稳的耐心教练' : '耐心温和的引导老师',
+        adjustable.encouragement === 'frequent' ? '多给予具体鼓励' : adjustable.encouragement === 'light' ? '简短自然地鼓励' : '适度给予具体鼓励',
+        adjustable.correctionStyle === 'model_first' ? '纠错时先示范正确说法' : adjustable.correctionStyle === 'encourage_retry' ? '纠错时先邀请孩子再试一次' : '纠错时先给提示再示范',
+        '始终保护儿童安全，不嘲笑、不施压，诚实说明自己是 AI 老师。',
+      ].join('；'),
     };
   }
 
