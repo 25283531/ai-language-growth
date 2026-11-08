@@ -17,6 +17,10 @@
 
 代码节点按功能分别提交到 GitHub，并以 GitHub Actions 验证；不在本机执行构建或测试。
 
+## 远程联调证据
+
+远程联调地址和操作方式见 [`docs/deployment/remote-services.md`](deployment/remote-services.md)。2026 年 11 月 8 日在 `152.136.230.132` 使用 `alg-postgres`、`alg-redis` 和 `alg-backend` 完成了数据库重建、Prisma 迁移、seed 及 M1 API 冒烟；结果包括 health、TTS 缓存、开课、重复、慢速、提问、幂等重放、结课和成长归档。该结果不替代真实供应商和真实儿童样本验收。
+
 ## 仍需外部实测的验收
 
 - 使用不同年龄、口音和基础的真实儿童样本评测 ASR 与音素级发音评估，并标定阈值。
