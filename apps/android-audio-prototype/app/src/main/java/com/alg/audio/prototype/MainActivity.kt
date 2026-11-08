@@ -244,7 +244,11 @@ class MainActivity : Activity() {
                 val reservation = reserveQuota("asr", seconds)
                 try {
                     val ref = uploadAudio(file, reservation.reservationId)
-                    postTurn(ref, audioDurationMs, reservation.reservationId).also {
+                    postTurn(
+                        ref,
+                        audioDurationMs,
+                        speechQuotaReservationId = reservation.reservationId,
+                    ).also {
                         if (it.error == null) settleQuota(reservation.reservationId, seconds)
                         else releaseQuota(reservation.reservationId)
                     }
