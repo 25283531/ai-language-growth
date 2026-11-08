@@ -109,7 +109,15 @@ export class CurriculumAdminController {
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const textbook = await this.prisma.textbook_catalogs.findUnique({ where: { id: textbookId }, select: { id: true } });
     if (!textbook) throw new BadRequestException('教材不存在');
-    return this.prisma.textbook_units.create({ data: { textbook: { connect: { id: textbookId } }, ...parsed.data } });
+    return this.prisma.textbook_units.create({
+      data: {
+        textbook: { connect: { id: textbookId } },
+        unitCode: parsed.data.unitCode,
+        title: parsed.data.title,
+        order: parsed.data.order,
+        metadata: parsed.data.metadata as Prisma.InputJsonValue,
+      },
+    });
   }
 
   @Get('drafts')
