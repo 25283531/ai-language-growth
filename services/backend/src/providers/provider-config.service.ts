@@ -33,6 +33,21 @@ const benchmarkInput = z.object({
   passed: z.boolean(),
   notes: z.string().max(2000).optional(),
 });
+const priceTypeSchema = z.enum([
+  'input_token',
+  'output_token',
+  'per_character',
+  'per_second',
+  'per_call',
+]);
+const pricesInput = z.object({
+  serviceKind: z.enum(serviceKinds),
+  modelAlias: z.string().trim().min(1).max(160),
+  prices: z.array(z.object({
+    priceType: priceTypeSchema,
+    unitPrice: z.number().finite().min(0).max(1_000_000),
+  })).max(5),
+});
 
 export type ProviderConfigInput = z.input<typeof configInput>;
 
@@ -202,6 +217,60 @@ export class ProviderConfigService {
       },
     });
     return { ...benchmark, serviceKind: value.serviceKind };
+  }
+
+  async listPrices(serviceKind: ServiceKind) {
+    const provider = await this.prisma.ai_providers.findUnique({
+      where: { alias: `configured_${serviceKind}` },
+      select: { id: true },
+    });
+    if (!provider) return [];
+    const model = await this.prisma.ai_models.findFirst({
+      where: { providerId: provider.id, enabled: true },
+      include: { prices: { orderBy: { priceType: 'asc' } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return model?.prices.map(({ id, priceType, unitPrice, checkedAt }) => ({
+      id,
+      serviceKind,
+      modelAlias: model.alias,
+      priceType,
+      unitPrice,
+      checkedAt: checkedAt.toISOString(),
+    })) ?? [];
+  }
+
+  async savePrices(input: unknown) {
+    const parsed = pricesInput.safeParse(input);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    const value = parsed.data;
+    if (new Set(value.prices.map((price) => price.priceType)).size !== value.prices.length) {
+      throw new BadRequestException('同一计价单位不能重复填写');
+    }
+    const provider = await this.prisma.ai_providers.findUnique({
+      where: { alias: `configured_${value.serviceKind}` },
+      select: { id: true },
+    });
+    if (!provider) throw new BadRequestException('请先保存该服务的模型接入配置');
+    const model = await this.prisma.ai_models.findUnique({
+      where: { providerId_alias: { providerId: provider.id, alias: value.modelAlias } },
+      select: { id: true },
+    });
+    if (!model) throw new BadRequestException('当前服务配置中没有该模型');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ai_model_prices.deleteMany({ where: { modelId: model.id } });
+      if (value.prices.length) {
+        await tx.ai_model_prices.createMany({
+          data: value.prices.map((price) => ({
+            modelId: model.id,
+            priceType: price.priceType,
+            unitPrice: price.unitPrice,
+            checkedAt: new Date(),
+          })),
+        });
+      }
+    });
+    return this.listPrices(value.serviceKind);
   }
 
   async hasPassingBenchmark(serviceKind: ServiceKind, modelAlias: string): Promise<boolean> {

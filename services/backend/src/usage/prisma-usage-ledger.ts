@@ -12,8 +12,11 @@ export class PrismaUsageLedger implements UsageLedger {
         alias: record.modelAlias,
         provider: { is: { alias: record.providerAlias, kind: record.serviceKind } },
       },
-      select: { id: true },
+      include: { prices: { select: { priceType: true, unitPrice: true } } },
     });
+    const estimatedCostCny = model?.prices.length
+      ? estimateCost(record, model.prices)
+      : record.estimatedCostCny;
     await this.prisma.ai_usage_logs.create({
       data: {
         id: record.id,
@@ -30,7 +33,7 @@ export class PrismaUsageLedger implements UsageLedger {
         ttsCharacters: record.ttsCharacters,
         asrSeconds: record.asrSeconds,
         pronunciationCalls: record.pronunciationCalls,
-        estimatedCostCny: record.estimatedCostCny,
+        estimatedCostCny,
         latencyMs: record.latencyMs,
         createdAt: new Date(record.createdAt),
       },
@@ -87,4 +90,25 @@ export class PrismaUsageLedger implements UsageLedger {
     }
     return { totalCostCny, byService, byLevel };
   }
+}
+
+function estimateCost(
+  record: UsageRecord,
+  prices: Array<{ priceType: string; unitPrice: number }>,
+): number {
+  const quantities: Record<string, number> = {
+    input_token: record.inputTokens,
+    output_token: record.outputTokens,
+    per_character: record.ttsCharacters,
+    per_second: record.asrSeconds,
+    per_call: record.pronunciationCalls,
+  };
+  const used = Object.entries(quantities).filter(([, quantity]) => quantity > 0);
+  if (!used.length) return record.estimatedCostCny;
+  const priceByType = new Map(prices.map((price) => [price.priceType, price.unitPrice]));
+  if (used.some(([priceType]) => !priceByType.has(priceType))) return 0;
+  return used.reduce(
+    (total, [priceType, quantity]) => total + quantity * priceByType.get(priceType)!,
+    0,
+  );
 }

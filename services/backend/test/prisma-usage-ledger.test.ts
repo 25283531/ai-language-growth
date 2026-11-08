@@ -37,6 +37,46 @@ describe('PrismaUsageLedger', () => {
     assert.equal(inserted?.modelId, null);
   });
 
+  it('estimates cost from configured per-unit prices and metered usage', async () => {
+    let inserted: Record<string, unknown> | undefined;
+    const prisma = {
+      ai_models: {
+        findFirst: async () => ({
+          id: 'model-id',
+          prices: [
+            { priceType: 'input_token', unitPrice: 0.000001 },
+            { priceType: 'output_token', unitPrice: 0.000002 },
+          ],
+        }),
+      },
+      ai_usage_logs: {
+        create: async ({ data }: { data: Record<string, unknown> }) => { inserted = data; },
+      },
+    } as unknown as PrismaService;
+
+    await new PrismaUsageLedger(prisma).add({
+      id: 'usage-priced',
+      learnerId: 'learner-1',
+      lessonSessionId: 'session-1',
+      serviceKind: 'llm',
+      taskRoute: 'llm.simple_dialogue',
+      level: 'L1',
+      providerAlias: 'configured_llm',
+      modelAlias: 'model-a',
+      inputTokens: 1200,
+      outputTokens: 300,
+      ttsCharacters: 0,
+      asrSeconds: 0,
+      pronunciationCalls: 0,
+      estimatedCostCny: 0,
+      latencyMs: 42,
+      createdAt: '2026-11-08T00:00:00.000Z',
+    });
+
+    assert.equal(inserted?.modelId, 'model-id');
+    assert.ok(Math.abs(Number(inserted?.estimatedCostCny) - 0.0018) < 1e-9);
+  });
+
   it('builds persistent cost totals grouped by service and level', async () => {
     const prisma = {
       ai_usage_logs: {

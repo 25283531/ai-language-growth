@@ -16,6 +16,8 @@
 
 服务器用户名、密码、数据库密码和供应商密钥不得写入 GitHub、代码、日志或本文档。使用服务器上的 `deploy/docker/.env` 或受控的密钥注入方式；本地如需读取 SSH 凭据，从工作目录外的安全文件读取。
 
+要启用模型接入管理页，服务器 `.env` 必须配置独立的 `ADMIN_CONFIG_TOKEN` 与 32 字节十六进制 `MODEL_CONFIG_ENCRYPTION_KEY`。这两个值只保存在服务器环境中，不能提交到 GitHub；管理 API 在未设置 `ADMIN_CONFIG_TOKEN` 时会返回 503。
+
 ## 连接变量
 
 服务器外部客户端使用：
@@ -62,6 +64,7 @@ docker exec alg-redis redis-cli ping
 
 ```bash
 cd /opt/ai-language-growth/deploy/docker
+docker compose build backend
 docker compose run --rm backend \
   npx prisma migrate deploy \
   --schema /app/services/backend/prisma/schema.prisma
@@ -71,6 +74,8 @@ docker compose run --rm backend \
 
 docker compose up -d --build backend
 ```
+
+有新迁移时，先构建含新 schema 的镜像并完成 `migrate deploy`，再启动新后端容器。不要先重建后端再迁移，否则应用可能在初始化查询新增字段时反复退出。
 
 确认后端健康：
 

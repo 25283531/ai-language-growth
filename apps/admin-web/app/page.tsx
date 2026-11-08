@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 
 type ServiceKind = 'llm' | 'tts' | 'asr' | 'pronunciation';
+type PriceType = 'input_token' | 'output_token' | 'per_character' | 'per_second' | 'per_call';
+type ModelPrice = { modelAlias: string; priceType: PriceType; unitPrice: number };
 type Preset = {
   id: string;
   name: string;
@@ -56,6 +58,15 @@ const services: Array<{ id: ServiceKind; title: string; help: string }> = [
   { id: 'asr', title: '普通语音识别 ASR', help: '只转写“说了什么”，不评判发音对错' },
   { id: 'pronunciation', title: '音素级发音评测', help: '对照目标文本评估单词、音节或音素发音；需要支持评测的专用服务' },
 ];
+const priceFields: Record<ServiceKind, Array<{ type: PriceType; label: string }>> = {
+  llm: [
+    { type: 'input_token', label: '输入 Token 单价（元/Token）' },
+    { type: 'output_token', label: '输出 Token 单价（元/Token）' },
+  ],
+  tts: [{ type: 'per_character', label: '合成字符单价（元/字符）' }],
+  asr: [{ type: 'per_second', label: '识别时长单价（元/秒）' }],
+  pronunciation: [{ type: 'per_call', label: '单次评测单价（元/次）' }],
+};
 const credentialLabels: Record<string, Array<[string, string]>> = {
   bailian: [['apiKey', '百炼 API Key']],
   volcengine: [['apiKey', '火山 API Key']],
@@ -87,6 +98,7 @@ export default function AdminPage() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [benchmarks, setBenchmarks] = useState<ModelBenchmark[]>([]);
+  const [pricing, setPricing] = useState<Partial<Record<PriceType, string>>>({});
   const [benchmarkScore, setBenchmarkScore] = useState('');
   const [benchmarkSamples, setBenchmarkSamples] = useState('');
   const [benchmarkPassed, setBenchmarkPassed] = useState(false);
@@ -118,6 +130,11 @@ export default function AdminPage() {
       .catch((error) => setMessage(error instanceof Error ? error.message : '读取 Benchmark 失败'));
   }, [active, token]);
 
+  useEffect(() => {
+    if (!token) return;
+    void loadPrices().catch((error) => setMessage(error instanceof Error ? error.message : '读取单价失败'));
+  }, [active, token]);
+
   async function loadConfigs() {
     const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs`, { headers: { 'x-admin-token': token } });
     if (!res.ok) throw new Error((await res.json()).message ?? `读取失败 (${res.status})`);
@@ -134,6 +151,35 @@ export default function AdminPage() {
     if (!res.ok) throw new Error((await res.json()).message ?? `读取路由规则失败 (${res.status})`);
     const body: RouterConfig = await res.json();
     setRoutingJson(JSON.stringify(body, null, 2));
+  }
+
+  async function loadPrices() {
+    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/prices?serviceKind=${active}`, { headers: { 'x-admin-token': token } });
+    if (!res.ok) throw new Error((await res.json()).message ?? `读取模型单价失败 (${res.status})`);
+    const rows: ModelPrice[] = await res.json();
+    setPricing(Object.fromEntries(rows.map((row) => [row.priceType, String(row.unitPrice)])));
+  }
+
+  async function savePrices() {
+    setBusy(true);
+    try {
+      const prices = priceFields[active]
+        .filter(({ type }) => pricing[type] !== undefined && pricing[type] !== '')
+        .map(({ type }) => ({ priceType: type, unitPrice: Number(pricing[type]) }));
+      const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/prices`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-admin-token': token },
+        body: JSON.stringify({ serviceKind: active, modelAlias: current.modelAlias, prices }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.message ?? `保存模型单价失败 (${res.status})`);
+      setPricing(Object.fromEntries((body as ModelPrice[]).map((row) => [row.priceType, String(row.unitPrice)])));
+      setMessage('模型单价已保存；后续用量将按实际 Token、字符或时长估算成本。');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '保存模型单价失败');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveRouting() {
@@ -289,6 +335,12 @@ export default function AdminPage() {
             <label className="switch"><input type="checkbox" checked={benchmarkPassed} onChange={(event) => setBenchmarkPassed(event.target.checked)}/><span>该模型通过本服务专项测试</span></label>
             <button className="secondary" disabled={!token || !current.modelAlias || !benchmarkScore || !benchmarkSamples || busy} onClick={() => void saveBenchmark()}>保存测试结果并刷新模型接入</button>
             <div className="benchmark-list">{benchmarks.flatMap((model) => model.benchmarks.map((entry) => <div className="helper" key={entry.id}>{model.modelAlias} · {entry.passed ? '通过' : '未通过'} · 分数 {entry.score} · 样本 {entry.sampleCount} · {new Date(entry.testedAt).toLocaleDateString()}</div>))}</div>
+          </section>
+          <section className="benchmark">
+            <h3>模型计价</h3>
+            <p className="helper">按供应商账单填写人民币单价。空白表示尚未配置；明确免费的项目填 0。Token 单价按每个 Token 填写，成本会写入用量账本。</p>
+            <div className="fields">{priceFields[active].map(({ type, label }) => <label key={type}>{label}<input type="number" min="0" step="any" value={pricing[type] ?? ''} onChange={(event) => setPricing((old) => ({ ...old, [type]: event.target.value }))}/></label>)}</div>
+            <button className="secondary" disabled={!token || !current.modelAlias || busy} onClick={() => void savePrices()}>{busy ? '保存中…' : '保存模型单价'}</button>
           </section>
         </>}
         <footer><span className="status">{message}</span><button disabled={!token || !current.providerPresetId || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存并应用'}</button></footer>
