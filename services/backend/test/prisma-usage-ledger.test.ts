@@ -51,6 +51,7 @@ describe('PrismaUsageLedger', () => {
 
     assert.equal(summary.totalCostCny, 0.6);
     assert.deepEqual(summary.byService.llm, { calls: 2, costCny: 0.5 });
-    assert.deepEqual(summary.byLevel.L1, { calls: 2, costCny: 0.3 });
+    assert.equal(summary.byLevel.L1.calls, 2);
+    assert.ok(Math.abs(summary.byLevel.L1.costCny - 0.3) < 1e-9);
   });
 });
