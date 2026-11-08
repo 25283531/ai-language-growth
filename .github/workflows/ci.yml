@@ -12,14 +12,29 @@ permissions:
   contents: read
 
 env:
-  # 占位连接串仅用于 prisma generate（该命令只生成客户端，不连接数据库），不是真实凭据。
-  DATABASE_URL: postgresql://ci_placeholder:ci_placeholder@127.0.0.1:5432/ci_placeholder?schema=public
+  # Workflow-local disposable PostgreSQL; no production credentials or datasets.
+  DATABASE_URL: postgresql://alg_ci:alg_ci@127.0.0.1:5432/alg_ci?schema=public
+  NODE_ENV: development
   # 不调用任何外部服务；教学逻辑与模型选择都在后端 mock 模式内完成。
   AI_GATEWAY_MODE: mock
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: alg_ci
+          POSTGRES_PASSWORD: alg_ci
+          POSTGRES_DB: alg_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alg_ci -d alg_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,6 +65,11 @@ jobs:
           npm run build --workspace @alg/skill-graph
           npm run build --workspace @alg/backend
 
+      - name: Apply schema and seed reviewed prototype curriculum
+        run: |
+          npm run prisma:migrate --workspace @alg/backend
+          npm run prisma:seed --workspace @alg/backend
+
       - name: Build web workbench
         run: npm run build --workspace @alg/web
 
@@ -69,3 +89,16 @@ jobs:
             packages/skill-graph/test/mastery.test.ts \
             packages/model-router/test/router.test.ts \
             packages/ai-provider-sdk/test/*.test.ts
+
+      - name: Start mock API for M1 integration acceptance
+        run: |
+          nohup node services/backend/dist/main.js >/tmp/alg-backend.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3100/api/v1/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/alg-backend.log
+          exit 1
+
+      - name: M1 API flow, TTS cache, idempotency, and growth archive
+        run: npx tsx --test services/backend/test/m1-api.integration.test.ts
