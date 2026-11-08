@@ -18,6 +18,7 @@ import { Curriculum } from '@alg/curriculum';
 import { SkillGraph } from '@alg/skill-graph';
 import type { MasteryState, TeachingActivity } from '@alg/shared-contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { chooseReviewActivity, nextReviewIntervalDays } from './review-policy';
 
 export interface PlannedStep {
   activity: TeachingActivity;
@@ -25,7 +26,10 @@ export interface PlannedStep {
   rationale: string;
   /** 是否为复习 */
   isReview: boolean;
+  reviewScheduleId: string | null;
 }
+
+const REVIEW_CLAIM_TTL_MS = 30 * 60 * 1000;
 
 @Injectable()
 export class PlannerService {
@@ -45,29 +49,77 @@ export class PlannerService {
   async planNext(input: {
     topicId: string;
     learnerId: string;
+    lessonSessionId: string;
     excludeActivityIds: string[];
   }): Promise<PlannedStep | null> {
     // —— 1. 先看有没有到期的复习项 ——
+    const now = new Date();
     const dueReviews = await this.prisma.review_schedules.findMany({
       where: {
         learnerId: input.learnerId,
         completedAt: null,
-        dueAt: { lte: new Date() },
+        dueAt: { lte: now },
+        OR: [
+          { claimedBySessionId: null },
+          { claimedBySessionId: input.lessonSessionId },
+          { claimExpiresAt: { lte: now } },
+        ],
       },
       orderBy: { dueAt: 'asc' },
-      take: 5,
+      take: 10,
     });
 
     for (const review of dueReviews) {
-      const reviewActivities = this.curriculum
-        .activitiesForSkill(review.skillNodeId)
-        .filter((a) => a.m1Scope);
-      const candidate = reviewActivities.find((a) => !input.excludeActivityIds.includes(a.id));
+      const reviewActivities = this.curriculum.activitiesForSkill(review.skillNodeId)
+        .filter((activity) => activity.m1Scope && !input.excludeActivityIds.includes(activity.id));
+      const originalActivity = review.learningItemId
+        ? this.curriculum.getActivity(review.learningItemId)
+        : undefined;
+      const originalWords = new Set((originalActivity?.targetWords ?? []).map((word) => word.toLowerCase()));
+      const sameKnowledgeActivities = originalWords.size === 0
+        ? reviewActivities
+        : reviewActivities.filter((activity) =>
+            activity.targetWords.some((word) => originalWords.has(word.toLowerCase())),
+          );
+      const recentEvidence = await this.prisma.learning_evidence.findMany({
+        where: {
+          learnerId: input.learnerId,
+          skillNodeId: review.skillNodeId,
+          ...(review.learningItemId ? { learningItemId: review.learningItemId } : {}),
+          succeeded: true,
+          independent: true,
+        },
+        orderBy: { occurredAt: 'desc' },
+        take: 20,
+        select: { scenario: true },
+      });
+      const candidate = chooseReviewActivity(
+        sameKnowledgeActivities.length > 0 ? sameKnowledgeActivities : reviewActivities,
+        recentEvidence.map((evidence) => evidence.scenario),
+      );
       if (candidate) {
+        const claimed = await this.prisma.review_schedules.updateMany({
+          where: {
+            id: review.id,
+            completedAt: null,
+            dueAt: { lte: now },
+            OR: [
+              { claimedBySessionId: null },
+              { claimedBySessionId: input.lessonSessionId },
+              { claimExpiresAt: { lte: now } },
+            ],
+          },
+          data: {
+            claimedBySessionId: input.lessonSessionId,
+            claimExpiresAt: new Date(now.getTime() + REVIEW_CLAIM_TTL_MS),
+          },
+        });
+        if (claimed.count !== 1) continue;
         return {
           activity: candidate,
-          rationale: `复习到期：${review.skillNodeId} 的间隔重复项`,
+          rationale: `复习到期：${review.skillNodeId}；优先使用近期较少练习的场景 ${candidate.scenario}`,
           isReview: true,
+          reviewScheduleId: review.id,
         };
       }
     }
@@ -89,6 +141,7 @@ export class PlannerService {
           activity,
           rationale: `主题「${this.topicName(input.topicId)}」的下一个活动，能力节点 ${activity.skillNodeIds.join(',')} 的硬前置已达成`,
           isReview: false,
+          reviewScheduleId: null,
         };
       }
     }
@@ -104,6 +157,7 @@ export class PlannerService {
       activity: fallback,
       rationale: '目标能力的硬前置尚未达成，先做门槛较低的活动，不阻塞整体推进（D-004）',
       isReview: false,
+      reviewScheduleId: null,
     };
   }
 
@@ -151,21 +205,110 @@ export class PlannerService {
    *  - 次日做一次无提示回忆
    *  - 之后按表现调整间隔：稳定则扩大，出现遗忘则缩短
    */
-  async scheduleReview(input: {
+  async scheduleInitialReview(input: {
     learnerId: string;
     skillNodeId: string;
-    consecutiveSuccesses: number;
+    learningItemId: string | null;
+    now?: Date;
   }): Promise<void> {
-    const intervalDays = Math.min(30, 1 * Math.pow(2, Math.max(0, input.consecutiveSuccesses)));
-    const dueAt = new Date(Date.now() + intervalDays * 86400000);
-    await this.prisma.review_schedules.create({
-      data: {
-        learnerId: input.learnerId,
-        skillNodeId: input.skillNodeId,
-        intervalDays,
-        dueAt,
-      },
+    const activeKey = this.activeReviewKey(input.learnerId, input.skillNodeId, input.learningItemId);
+    const existing = await this.prisma.review_schedules.findUnique({ where: { activeKey } });
+    if (existing) return;
+
+    const intervalDays = 1;
+    const now = input.now ?? new Date();
+    try {
+      await this.prisma.review_schedules.create({
+        data: {
+          learnerId: input.learnerId,
+          skillNodeId: input.skillNodeId,
+          learningItemId: input.learningItemId,
+          activeKey,
+          intervalDays,
+          dueAt: new Date(now.getTime() + intervalDays * 86400000),
+        },
+      });
+      this.logger.log(`安排复习 ${input.skillNodeId}，首次间隔 ${intervalDays} 天`);
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'P2002') throw error;
+      // Concurrent successful attempts may race to create the same pending review.
+    }
+  }
+
+  /** Complete the claimed review and atomically schedule the next interval. */
+  async resolveReview(input: {
+    learnerId: string;
+    lessonSessionId: string;
+    reviewScheduleId: string;
+    succeeded: boolean;
+    now?: Date;
+  }): Promise<void> {
+    const now = input.now ?? new Date();
+    await this.prisma.$transaction(async (tx) => {
+      const review = await tx.review_schedules.findFirst({
+        where: {
+          id: input.reviewScheduleId,
+          learnerId: input.learnerId,
+          claimedBySessionId: input.lessonSessionId,
+          completedAt: null,
+        },
+      });
+      if (!review) return;
+
+      const completed = await tx.review_schedules.updateMany({
+        where: { id: review.id, completedAt: null, claimedBySessionId: input.lessonSessionId },
+        data: { completedAt: now, activeKey: null, claimedBySessionId: null, claimExpiresAt: null },
+      });
+      if (completed.count !== 1) return;
+
+      const consecutiveSuccesses = input.succeeded ? review.consecutiveSuccesses + 1 : 0;
+      const intervalDays = nextReviewIntervalDays(review.consecutiveSuccesses, input.succeeded);
+      await tx.review_schedules.create({
+        data: {
+          learnerId: review.learnerId,
+          skillNodeId: review.skillNodeId,
+          learningItemId: review.learningItemId,
+          activeKey: this.activeReviewKey(review.learnerId, review.skillNodeId, review.learningItemId),
+          consecutiveSuccesses,
+          intervalDays,
+          dueAt: new Date(now.getTime() + intervalDays * 86400000),
+        },
+      });
+      this.logger.log(
+        `复习完成 ${review.skillNodeId}：${input.succeeded ? '成功' : '未通过'}，下次间隔 ${intervalDays} 天`,
+      );
     });
-    this.logger.log(`安排复习 ${input.skillNodeId}，间隔 ${intervalDays} 天`);
+  }
+
+  async releaseReviewClaim(input: { lessonSessionId: string; reviewScheduleId: string }): Promise<void> {
+    await this.prisma.review_schedules.updateMany({
+      where: {
+        id: input.reviewScheduleId,
+        claimedBySessionId: input.lessonSessionId,
+        completedAt: null,
+      },
+      data: { claimedBySessionId: null, claimExpiresAt: null },
+    });
+  }
+
+  async getReviewTarget(input: {
+    learnerId: string;
+    lessonSessionId: string;
+    reviewScheduleId: string;
+  }): Promise<{ skillNodeId: string; learningItemId: string | null } | null> {
+    const review = await this.prisma.review_schedules.findFirst({
+      where: {
+        id: input.reviewScheduleId,
+        learnerId: input.learnerId,
+        claimedBySessionId: input.lessonSessionId,
+        completedAt: null,
+      },
+      select: { skillNodeId: true, learningItemId: true },
+    });
+    return review;
+  }
+
+  private activeReviewKey(learnerId: string, skillNodeId: string, learningItemId: string | null): string {
+    return `${learnerId}::${skillNodeId}::${learningItemId ?? '*'}`;
   }
 }

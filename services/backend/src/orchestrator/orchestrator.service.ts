@@ -49,6 +49,7 @@ import { PrismaService } from '../prisma/prisma.service';
 const OFFLINE_DIRECTIVE: TeachingDirective = {
   targetSkillNodeId: 'LA.LISTEN.greeting_core',
   taskType: 'listening_comprehension',
+  isReview: false,
   scenario: 'greeting_scene',
   teacherUtterance: '我们先听一听，跟着老师慢慢说：hello。',
   demonstrationText: 'hello',
@@ -74,6 +75,7 @@ const OFFLINE_DIRECTIVE: TeachingDirective = {
 interface SessionRuntimeState {
   methodLadder: MethodLadderState;
   currentActivityId: string | null;
+  currentReviewScheduleId: string | null;
   turnCount: number;
   /** 本堂课已完成的活动 */
   completedActivities: string[];
@@ -111,6 +113,7 @@ export class OrchestratorService {
     this.runtime.set(session.id, {
       methodLadder: initialMethodLadderState(),
       currentActivityId: null,
+      currentReviewScheduleId: null,
       turnCount: 0,
       completedActivities: [],
       consecutiveSuccesses: {},
@@ -119,6 +122,7 @@ export class OrchestratorService {
     const step = await this.planner.planNext({
       topicId,
       learnerId: input.learnerId,
+      lessonSessionId: session.id,
       excludeActivityIds: [],
     });
 
@@ -126,12 +130,24 @@ export class OrchestratorService {
       throw new Error(`主题 ${topicId} 没有可用活动`);
     }
 
+    await this.prisma.lesson_sessions.update({
+      where: { id: session.id },
+      data: {
+        currentActivityId: step.activity.id,
+        currentReviewScheduleId: step.reviewScheduleId,
+      },
+    });
+    const startState = this.getRuntime(session.id);
+    startState.currentActivityId = step.activity.id;
+    startState.currentReviewScheduleId = step.reviewScheduleId;
+
     const directive = await this.buildDirective({
       activityId: step.activity.id,
       learnerId: input.learnerId,
       sessionId: session.id,
       methodState: this.getRuntime(session.id).methodLadder,
       errorUnits: [],
+      isReview: step.isReview,
     });
 
     const speech = await this.synthesize(directive);
@@ -182,6 +198,12 @@ export class OrchestratorService {
     }
 
     const state = this.getRuntime(input.lessonSessionId);
+    state.currentActivityId = session.currentActivityId;
+    state.currentReviewScheduleId = session.currentReviewScheduleId;
+    state.turnCount = session.turnCount;
+    if (session.methodState && typeof session.methodState === 'object') {
+      state.methodLadder = session.methodState as unknown as MethodLadderState;
+    }
     const activityId = session.currentActivityId;
     const activity = activityId
       ? (await this.prisma.learning_items.findUnique({ where: { id: activityId } }))
@@ -209,6 +231,7 @@ export class OrchestratorService {
       const step = await this.planner.planNext({
         topicId: session.topicId,
         learnerId: input.learnerId,
+        lessonSessionId: input.lessonSessionId,
         excludeActivityIds: state.completedActivities,
       });
       if (!step) {
@@ -217,10 +240,23 @@ export class OrchestratorService {
       currentActivity = step.activity as unknown as typeof currentActivity;
       await this.prisma.lesson_sessions.update({
         where: { id: input.lessonSessionId },
-        data: { currentActivityId: step.activity.id },
+        data: {
+          currentActivityId: step.activity.id,
+          currentReviewScheduleId: step.reviewScheduleId,
+        },
       });
       state.currentActivityId = step.activity.id;
+      state.currentReviewScheduleId = step.reviewScheduleId;
     }
+
+    const reviewTarget = state.currentReviewScheduleId
+      ? await this.planner.getReviewTarget({
+          learnerId: input.learnerId,
+          lessonSessionId: input.lessonSessionId,
+          reviewScheduleId: state.currentReviewScheduleId,
+        })
+      : null;
+    const isReviewRound = Boolean(state.currentReviewScheduleId);
 
     // —— 第三步：按需评估 ——
     const assessment = await this.assess({
@@ -234,6 +270,7 @@ export class OrchestratorService {
     const evidence = await this.recordEvidence({
       assessment,
       activity: currentActivity,
+      reviewTarget,
       learnerId: input.learnerId,
       lessonSessionId: input.lessonSessionId,
     });
@@ -242,6 +279,28 @@ export class OrchestratorService {
       learnerId: input.learnerId,
       activity: currentActivity,
     });
+
+    if (state.currentReviewScheduleId) {
+      await this.planner.resolveReview({
+        learnerId: input.learnerId,
+        lessonSessionId: input.lessonSessionId,
+        reviewScheduleId: state.currentReviewScheduleId,
+        succeeded: assessment.passed,
+      });
+      state.currentReviewScheduleId = null;
+    }
+
+    if (assessment.passed) {
+      for (const skillNodeId of currentActivity!.skillNodeIds) {
+        await this.planner.scheduleInitialReview({
+          learnerId: input.learnerId,
+          skillNodeId,
+          learningItemId: reviewTarget?.skillNodeId === skillNodeId && reviewTarget.learningItemId
+            ? reviewTarget.learningItemId
+            : currentActivity!.id,
+        });
+      }
+    }
 
     // —— 第五步：调整下一次教学（方法阶梯，L0 规则）——
     const ladder = advanceMethodLadder({
@@ -264,6 +323,7 @@ export class OrchestratorService {
       sessionId: input.lessonSessionId,
       methodState: state.methodLadder,
       errorUnits: assessment.errorUnits,
+      isReview: isReviewRound,
     });
 
     // —— 第五步半：孩子突然提问时，LLM 只补一句回应话术 ——
@@ -318,6 +378,8 @@ export class OrchestratorService {
       state.completedActivities.push(currentActivity!.id);
       state.consecutiveSuccesses[currentActivity!.skillNodeIds[0] ?? ''] =
         (state.consecutiveSuccesses[currentActivity!.skillNodeIds[0] ?? ''] ?? 0) + 1;
+      state.currentActivityId = null;
+      state.currentReviewScheduleId = null;
     }
 
     const lessonFinished = state.completedActivities.length >= 4;
@@ -327,6 +389,7 @@ export class OrchestratorService {
         turnCount: state.turnCount,
         methodState: state.methodLadder as unknown as object,
         currentActivityId: lessonFinished ? null : state.currentActivityId,
+        currentReviewScheduleId: lessonFinished ? null : state.currentReviewScheduleId,
       },
     });
 
@@ -420,6 +483,13 @@ export class OrchestratorService {
     });
     if (!session) throw new Error(`课堂 ${lessonSessionId} 不存在`);
 
+    if (session.currentReviewScheduleId) {
+      await this.planner.releaseReviewClaim({
+        lessonSessionId,
+        reviewScheduleId: session.currentReviewScheduleId,
+      });
+    }
+
     const usage = await this.router.usageSummary({ lessonSessionId });
     const stateChanges = await this.prisma.learner_skill_states.findMany({
       where: { learnerId },
@@ -431,7 +501,18 @@ export class OrchestratorService {
 
     await this.prisma.lesson_sessions.update({
       where: { id: lessonSessionId },
-      data: { status: 'finished', finishedAt: new Date() },
+      data: {
+        status: 'finished',
+        finishedAt: new Date(),
+        currentActivityId: null,
+        currentReviewScheduleId: null,
+      },
+    });
+
+    const reviewScheduled = await this.prisma.review_schedules.findMany({
+      where: { learnerId, completedAt: null },
+      orderBy: { dueAt: 'asc' },
+      select: { skillNodeId: true, dueAt: true, intervalDays: true },
     });
 
     const effectiveTeachingCostCny =
@@ -445,7 +526,11 @@ export class OrchestratorService {
       totalCostCny: usage.totalCostCny,
       stateChanges: [],
       summary: `本堂课完成 ${session.turnCount} 轮，形成 ${completedGoals.length} 个能力目标。`,
-      reviewScheduled: [],
+      reviewScheduled: reviewScheduled.map((review) => ({
+        skillNodeId: review.skillNodeId,
+        dueAt: review.dueAt.toISOString(),
+        intervalDays: review.intervalDays,
+      })),
       calibrationStatus: 'uncalibrated' as const,
     };
   }
@@ -832,7 +917,8 @@ export class OrchestratorService {
   /** 写证据（只 INSERT）。 */
   private async recordEvidence(input: {
     assessment: Awaited<ReturnType<OrchestratorService['assess']>>;
-    activity: { skillNodeIds: string[]; taskType: string; scenario: string } | null;
+    activity: { id: string; skillNodeIds: string[]; taskType: string; scenario: string } | null;
+    reviewTarget: { skillNodeId: string; learningItemId: string | null } | null;
     learnerId: string;
     lessonSessionId: string;
   }) {
@@ -849,11 +935,14 @@ export class OrchestratorService {
     const occurredAt = new Date().toISOString();
     return Promise.all(
       targets.map(async ({ skillNodeId, abilityCategory }) => {
+        const learningItemId = input.reviewTarget?.skillNodeId === skillNodeId && input.reviewTarget.learningItemId
+          ? input.reviewTarget.learningItemId
+          : activity.id;
         const id = await this.learnerModel.appendEvidence({
           learnerId: input.learnerId,
           lessonSessionId: input.lessonSessionId,
           skillNodeId,
-          learningItemId: null,
+          learningItemId,
           abilityCategory,
           vocabularyDimension: null,
           source,
@@ -875,7 +964,7 @@ export class OrchestratorService {
           learnerId: input.learnerId,
           lessonSessionId: input.lessonSessionId,
           skillNodeId,
-          learningItemId: null,
+          learningItemId,
           abilityCategory,
           vocabularyDimension: null,
           source: source as never,
@@ -927,6 +1016,7 @@ export class OrchestratorService {
     sessionId: string;
     methodState: MethodLadderState;
     errorUnits: Array<{ unit: string; kind: string; detail: string | null }>;
+    isReview: boolean;
   }): Promise<TeachingDirective> {
     const item = await this.prisma.learning_items.findUnique({
       where: { id: input.activityId },
@@ -955,16 +1045,22 @@ export class OrchestratorService {
     const pronunciationUnits = demo.focusOnErrorOnly
       ? demo.focusUnits.map((u) => ({ text: u, kind: 'syllable' as const, isFocus: true }))
       : syllables.map((s) => ({ text: s, kind: 'syllable' as const, isFocus: false }));
+    const expectedResponse = expectedResponseOf(activity.taskType);
 
     return {
       targetSkillNodeId: activity.skillNodeIds[0] ?? 'LA.LISTEN.greeting_core',
       taskType: activity.taskType as TeachingDirective['taskType'],
+      isReview: input.isReview,
       scenario: activity.scenario as TeachingDirective['scenario'],
-      teacherUtterance: activity.teacherUtteranceZh,
-      demonstrationText: demo.demonstrationText,
-      pronunciationUnits,
-      expectedResponse: expectedResponseOf(activity.taskType),
-      targetWords: activity.targetWords,
+      teacherUtterance: input.isReview
+        ? expectedResponse === 'tap_image'
+          ? '我们来做一次复习。请回想之前学过的内容，选择对应的图片。'
+          : '我们来做一次复习。请回想之前学过的内容，试着自己回答。'
+        : activity.teacherUtteranceZh,
+      demonstrationText: input.isReview ? null : demo.demonstrationText,
+      pronunciationUnits: input.isReview ? [] : pronunciationUnits,
+      expectedResponse: input.isReview && expectedResponse !== 'tap_image' ? 'speak' : expectedResponse,
+      targetWords: input.isReview ? [] : activity.targetWords,
       voice: {
         teacherSpeed,
         voiceStyle: 'gentle',
@@ -1039,6 +1135,7 @@ export class OrchestratorService {
       state = {
         methodLadder: initialMethodLadderState(),
         currentActivityId: null,
+        currentReviewScheduleId: null,
         turnCount: 0,
         completedActivities: [],
         consecutiveSuccesses: {},

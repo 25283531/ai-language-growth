@@ -59,6 +59,8 @@ export const teachingDirectiveSchema = z.object({
   targetSkillNodeId: z.string(),
   /** 本轮任务类型 */
   taskType: z.enum(TASK_TYPES),
+  /** 是否为无提示的间隔复习 */
+  isReview: z.boolean().default(false),
   /** 本轮场景 */
   scenario: z.enum(EVIDENCE_SCENARIOS),
   /** 老师要说的话（中文可含英文教学句） */

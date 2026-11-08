@@ -150,6 +150,7 @@ model learning_items {
   skillNode      skill_nodes          @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
   evidence       learning_evidence[]
   assessments    assessment_records[]
+  reviewSchedules review_schedules[]
 
   @@index([skillNodeId])
   @@index([itemType])
@@ -265,6 +266,7 @@ model lesson_sessions {
   turnCount      Int      @default(0)
   methodState    Json     @default("{}")
   currentActivityId String?
+  currentReviewScheduleId String?
   startedAt      DateTime @default(now())
   finishedAt     DateTime?
   summary        String?
@@ -364,17 +366,23 @@ model learning_evidence {
 }
 
 model review_schedules {
-  id          String   @id @default(uuid())
-  learnerId   String
-  skillNodeId String
-  intervalDays Int     @default(1)
-  dueAt       DateTime
-  completedAt DateTime?
-  createdAt   DateTime @default(now())
+  id                    String   @id @default(uuid())
+  learnerId             String
+  skillNodeId           String
+  learningItemId        String?
+  intervalDays          Int      @default(1)
+  consecutiveSuccesses  Int      @default(0)
+  activeKey             String?  @unique
+  claimedBySessionId    String?  @unique
+  claimExpiresAt        DateTime?
+  dueAt                 DateTime
+  completedAt           DateTime?
+  createdAt             DateTime @default(now())
 
   learner     learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  learningItem  learning_items? @relation(fields: [learningItemId], references: [id], onDelete: Cascade)
 
-  @@index([learnerId, dueAt])
+  @@index([learnerId, completedAt, dueAt])
   @@map("review_schedules")
 }
 

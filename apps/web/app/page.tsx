@@ -515,6 +515,7 @@ export default function WorkbenchPage() {
                 <KV
                   rows={[
                     { k: '目标能力节点', v: <span className="mono">{directive.targetSkillNodeId}</span> },
+                    { k: '教学模式', v: directive.isReview ? '间隔复习（无答案提示）' : '新内容 / 练习' },
                     { k: 'methodVariant', v: <span className="mono">{directive.methodVariant}</span> },
                     { k: 'consecutiveFailures', v: String(directive.consecutiveFailures) },
                   ]}

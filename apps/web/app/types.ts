@@ -32,6 +32,7 @@ export interface ErrorUnit {
 export interface TeachingDirective {
   targetSkillNodeId: string;
   taskType: string;
+  isReview: boolean;
   scenario: string;
   teacherUtterance: string;
   demonstrationText: string | null;
