@@ -1,0 +1,4 @@
+ALTER TABLE "ai_task_routes"
+  ADD COLUMN "maxConcurrency" INTEGER NOT NULL DEFAULT 8,
+  ADD COLUMN "dailyBudgetCny" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN "fallbackOrder" JSONB NOT NULL DEFAULT '["L1", "L2", "L3"]'::jsonb;

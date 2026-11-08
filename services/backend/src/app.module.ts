@@ -25,6 +25,8 @@ import { ProviderConfigService } from './providers/provider-config.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
 import { MemoryAdminController } from './memory/memory-admin.controller';
 import { SpeechQuotaService } from './usage/speech-quota.service';
+import { RoutingConfigController } from './routing/routing-config.controller';
+import { RoutingConfigService } from './routing/routing-config.service';
 
 @Module({
   imports: [ConfigModule],
@@ -38,6 +40,7 @@ import { SpeechQuotaService } from './usage/speech-quota.service';
     MediaController,
     ProviderConfigController,
     MemoryAdminController,
+    RoutingConfigController,
   ],
   providers: [
     PrismaService,
@@ -47,6 +50,7 @@ import { SpeechQuotaService } from './usage/speech-quota.service';
     PlannerService,
     OrchestratorService,
     SpeechQuotaService,
+    RoutingConfigService,
     {
       provide: ModelRouterImpl,
       useFactory: (prisma: PrismaService) => {

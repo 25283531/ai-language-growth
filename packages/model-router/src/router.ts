@@ -111,6 +111,14 @@ export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
       enabled: true,
     },
     {
+      taskRoute: 'tts.narrative',
+      primary: { providerAlias: 'lowcost_tts', modelAlias: 'lowcost_tts_01', level: 'L1' },
+      fallback: [{ providerAlias: 'premium_tts', modelAlias: 'premium_tts_01', level: 'L2' }],
+      maxConcurrency: 6,
+      dailyBudgetCny: 80,
+      enabled: true,
+    },
+    {
       taskRoute: 'asr.free_speech',
       primary: { providerAlias: 'free_asr', modelAlias: 'free_asr_01', level: 'L1' },
       fallback: [{ providerAlias: 'paid_asr', modelAlias: 'paid_asr_01', level: 'L1' }],
@@ -255,6 +263,11 @@ export class ModelRouterImpl {
   /** Replace policy after a validated admin/database configuration update. */
   setConfig(config: RouterConfig): void {
     this.config = config;
+  }
+
+  /** Return a snapshot for persistence and the admin console. */
+  getConfig(): RouterConfig {
+    return this.config;
   }
 
   get usageLedger(): UsageLedger {

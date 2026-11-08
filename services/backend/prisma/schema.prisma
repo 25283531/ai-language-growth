@@ -591,6 +591,9 @@ model ai_task_routes {
   serviceKind String
   primaryModelId String?
   fallbackModelIds Json @default("[]")
+  maxConcurrency Int   @default(8)
+  dailyBudgetCny Float @default(0)
+  fallbackOrder   Json   @default("[\"L1\", \"L2\", \"L3\"]")
   enabled     Boolean  @default(true)
   updatedAt   DateTime @updatedAt
 

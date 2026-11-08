@@ -33,6 +33,18 @@ type TeacherProfile = {
   adjustable: { tone: 'gentle' | 'lively' | 'calm'; encouragement: 'light' | 'balanced' | 'frequent'; correctionStyle: 'model_first' | 'hint_first' | 'encourage_retry'; speakingRate: number };
 };
 type Memory = { id: string; memoryType: string; content: string; importance: number; source: string; expiresAt: string | null };
+type RouterConfig = {
+  rules: Array<{
+    taskRoute: string;
+    primary: { providerAlias: string; modelAlias: string; level: string };
+    fallback: Array<{ providerAlias: string; modelAlias: string; level: string }>;
+    maxConcurrency: number;
+    dailyBudgetCny: number;
+    enabled: boolean;
+  }>;
+  escalationTargets: Record<string, Record<string, string>>;
+  fallbackOrder: string[];
+};
 
 function apiRoot(): string {
   if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -85,6 +97,7 @@ export default function AdminPage() {
   const [learnerId, setLearnerId] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
+  const [routingJson, setRoutingJson] = useState('');
   const service = services.find((item) => item.id === active)!;
   const available = useMemo(() => catalog.filter((item) => item.services.includes(active)), [catalog, active]);
   const current = configs[active];
@@ -112,7 +125,36 @@ export default function AdminPage() {
     setConfigs((old) => ({ ...old, ...Object.fromEntries(rows.map((row) => [row.serviceKind, row])) }));
     await loadBenchmarks();
     await loadLearningSettings();
+    await loadRouting();
     setMessage('已读取现有配置。');
+  }
+
+  async function loadRouting() {
+    const res = await fetch(`${apiRoot()}/api/v1/admin/model-routing`, { headers: { 'x-admin-token': token } });
+    if (!res.ok) throw new Error((await res.json()).message ?? `读取路由规则失败 (${res.status})`);
+    const body: RouterConfig = await res.json();
+    setRoutingJson(JSON.stringify(body, null, 2));
+  }
+
+  async function saveRouting() {
+    setBusy(true);
+    try {
+      let parsed: unknown;
+      try { parsed = JSON.parse(routingJson); } catch { throw new Error('路由规则必须是合法 JSON'); }
+      const res = await fetch(`${apiRoot()}/api/v1/admin/model-routing`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-admin-token': token },
+        body: JSON.stringify(parsed),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.message ?? `保存路由规则失败 (${res.status})`);
+      setRoutingJson(JSON.stringify(body, null, 2));
+      setMessage('路由规则已保存并立即生效。');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '保存路由规则失败');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function loadLearningSettings() {
@@ -269,6 +311,13 @@ export default function AdminPage() {
       <div className="benchmark-list">{memories.map((memory) => <div className="helper" key={memory.id}><strong>{memory.memoryType}</strong> · {memory.content} · 重要度 {memory.importance} · {memory.source}<button className="secondary" onClick={() => setEditingMemory({ ...memory })}>纠正</button><button className="secondary" onClick={() => void deleteMemory(memory.id).catch((error) => setMessage(error.message))}>删除</button></div>)}</div>
       {editingMemory && <div className="fields"><label>记忆内容<input value={editingMemory.content} onChange={(event) => setEditingMemory({ ...editingMemory, content: event.target.value })}/></label><label>记忆类型<select value={editingMemory.memoryType} onChange={(event) => setEditingMemory({ ...editingMemory, memoryType: event.target.value })}><option value="learning_preference">学习偏好</option><option value="encouragement_preference">鼓励偏好</option><option value="lesson_learning_summary">课堂学习摘要</option><option value="caregiver_note">照护者备注</option></select></label><button disabled={!editingMemory.content.trim()} onClick={() => void saveMemoryEdit().then(() => setMessage('记忆已纠正。')).catch((error) => setMessage(error.message))}>保存纠正</button><button className="secondary" onClick={() => setEditingMemory(null)}>取消</button></div>}
       <p className="helper">记忆编辑与删除目前由管理令牌保护；面向监护人的专用账号与授权仍待账户体系实现。</p>
+    </section>
+    <section className="panel" style={{ marginTop: 24 }}>
+      <div className="panel-head"><div><p className="eyebrow">MODEL ROUTING</p><h2>任务路由规则</h2><p className="muted">可编辑全部 LLM、TTS、ASR 和发音评测任务的主模型、备选模型、并发预算与升级信号。保存后后端立即重载。</p></div></div>
+      {!routingJson ? <button className="secondary" disabled={!token} onClick={() => void loadRouting().catch((error) => setMessage(error.message))}>读取路由规则</button> : <>
+        <textarea className="routing-editor" value={routingJson} onChange={(event) => setRoutingJson(event.target.value)} spellCheck={false} aria-label="任务路由 JSON" />
+        <footer><span className="status">修改前请保留 taskRoute、serviceKind 前缀和 L0-L3 级别格式。</span><button disabled={!token || busy} onClick={() => void saveRouting()}>{busy ? '保存中…' : '保存并立即生效'}</button></footer>
+      </>}
     </section>
   </main>;
 }
