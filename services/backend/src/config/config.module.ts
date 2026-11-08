@@ -15,6 +15,17 @@ export interface AppConfig {
   tts: { apiKey?: string; baseUrl?: string; model?: string };
   asr: { apiKey?: string; baseUrl?: string; model?: string };
   pronunciation: { apiKey?: string; baseUrl?: string; model?: string };
+  mail: {
+    host?: string;
+    port: number;
+    secure: boolean;
+    user?: string;
+    password?: string;
+    from?: string;
+    replyTo?: string;
+    resetUrl: string;
+    disabled: boolean;
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -34,6 +45,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     tts: pick('TTS'),
     asr: pick('ASR'),
     pronunciation: pick('PRONUNCIATION'),
+    mail: {
+      host: env.MAIL_HOST || undefined,
+      port: Number(env.MAIL_PORT ?? 587),
+      secure: env.MAIL_SECURE === 'true',
+      user: env.MAIL_USER || undefined,
+      password: env.MAIL_PASSWORD || undefined,
+      from: env.MAIL_FROM || undefined,
+      replyTo: env.MAIL_REPLY_TO || undefined,
+      resetUrl: env.PASSWORD_RESET_URL || 'http://localhost:3000/reset-password',
+      disabled: env.MAIL_DISABLED === 'true',
+    },
   };
 }
 

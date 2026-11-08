@@ -266,3 +266,25 @@ table.data tr:last-child td { border-bottom: none; }
 .card-title { font-weight: 700; margin-bottom: 4px; word-break: break-all; }
 
 .footer-note { color: var(--sub); font-size: 11.5px; margin-top: 16px; line-height: 1.7; }
+
+.account-page { max-width:760px; margin:0 auto; padding:28px 18px 56px; }
+.account-page header { margin:30px 0 22px; }
+.account-page h1 { font-size:26px; margin:0 0 5px; }
+.account-page h2 { font-size:17px; margin:0 0 12px; }
+.account-subtitle,.account-muted { color:var(--sub); font-size:13px; line-height:1.6; }
+.account-nav { display:flex; gap:16px; flex-wrap:wrap; padding:10px 0 14px; border-bottom:1px solid var(--line); }
+.account-nav a,.account-links a,.account-muted a { color:#28674f; text-decoration:none; font-weight:600; }
+.account-form,.account-panel,.account-user { background:white; border:1px solid var(--line); border-radius:8px; padding:18px; margin:12px 0; }
+.account-form { display:grid; gap:14px; }
+.account-form label { display:grid; gap:6px; color:var(--sub); font-size:12px; font-weight:700; }
+.account-form input { width:100%; padding:10px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+.account-form small { color:var(--sub); font-weight:400; }
+.account-button { width:max-content; background:#247457; color:white; border:0; border-radius:6px; padding:10px 15px; font:inherit; font-weight:700; cursor:pointer; }
+.account-button.secondary { background:#eaf0eb; color:#365344; }
+.account-button:disabled { opacity:.5; cursor:not-allowed; }
+.account-links { display:flex; gap:16px; }
+.account-error { color:#a5362b; font-size:13px; }
+.account-success { color:#247457; font-size:13px; }
+.account-user { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:center; font-size:13px; }
+.account-user .account-button { grid-column:1/-1; }
+@media(max-width:600px) { .account-user { grid-template-columns:1fr; } }

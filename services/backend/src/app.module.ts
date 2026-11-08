@@ -29,6 +29,10 @@ import { RoutingConfigController } from './routing/routing-config.controller';
 import { RoutingConfigService } from './routing/routing-config.service';
 import { MembershipAdminController } from './membership/membership-admin.controller';
 import { CurriculumAdminController } from './curriculum/curriculum-admin.controller';
+import { AuthController, EmailAdminController } from './auth/auth.controller';
+import { AuthService } from './auth/auth.service';
+import { EmailService } from './auth/email.service';
+import { MembershipController, MembershipUsersAdminController } from './membership/membership.controller';
 
 @Module({
   imports: [ConfigModule],
@@ -45,6 +49,10 @@ import { CurriculumAdminController } from './curriculum/curriculum-admin.control
     RoutingConfigController,
     MembershipAdminController,
     CurriculumAdminController,
+    AuthController,
+    EmailAdminController,
+    MembershipController,
+    MembershipUsersAdminController,
   ],
   providers: [
     PrismaService,
@@ -55,6 +63,8 @@ import { CurriculumAdminController } from './curriculum/curriculum-admin.control
     OrchestratorService,
     SpeechQuotaService,
     RoutingConfigService,
+    AuthService,
+    EmailService,
     {
       provide: ModelRouterImpl,
       useFactory: (prisma: PrismaService) => {

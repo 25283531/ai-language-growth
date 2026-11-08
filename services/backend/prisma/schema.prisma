@@ -19,59 +19,127 @@ datasource db {
 // ========== 用户与档案 ==========
 
 model users {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  role         String   @default("guardian") // guardian | operator | admin
-  displayName  String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String    @id @default(uuid())
+  email             String    @unique
+  passwordHash      String
+  role              String    @default("guardian") // guardian | operator | admin
+  displayName       String
+  membershipTier    String    @default("free") // free | member | advanced; guest is for non-registered clients
+  emailVerifiedAt   DateTime?
+  passwordChangedAt DateTime?
+  disabledAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  learners     learner_profiles[]
-  consents     consent_records[]
+  learners            learner_profiles[]
+  consents            consent_records[]
+  sessions            auth_sessions[]
+  passwordResetTokens password_reset_tokens[]
+  membershipEvents    membership_events[]
+  membershipRequests  membership_requests[]
 
   @@map("users")
 }
 
 model learner_profiles {
-  id           String   @id @default(uuid())
-  userId       String
-  displayName  String
-  ageGroup     String   @default("6-9")
-  entryLevel   String   @default("pre_a1")
-  target       String   @default("daily_communication")
-  membershipTier String  @default("guest") // guest | free | member | advanced; effective tier is server managed
-  guardianId   String
-  currentTopic String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(uuid())
+  userId         String
+  displayName    String
+  ageGroup       String   @default("6-9")
+  entryLevel     String   @default("pre_a1")
+  target         String   @default("daily_communication")
+  membershipTier String   @default("guest") // guest | free | member | advanced; effective tier is server managed
+  guardianId     String
+  currentTopic   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  user         users               @relation(fields: [userId], references: [id])
-  preferences  learner_preferences?
-  skillStates  learner_skill_states[]
-  sessions     lesson_sessions[]
-  evidence     learning_evidence[]
-  assessments  assessment_records[]
-  interactions interaction_events[]
-  reviews      review_schedules[]
-  memories     interaction_memories[]
+  user            users                      @relation(fields: [userId], references: [id])
+  preferences     learner_preferences?
+  skillStates     learner_skill_states[]
+  sessions        lesson_sessions[]
+  evidence        learning_evidence[]
+  assessments     assessment_records[]
+  interactions    interaction_events[]
+  reviews         review_schedules[]
+  memories        interaction_memories[]
   growthSnapshots learner_growth_snapshots[]
-  teacherProfile teacher_profiles?
+  teacherProfile  teacher_profiles?
 
   @@index([guardianId])
   @@map("learner_profiles")
 }
 
-model learner_preferences {
-  id           String   @id @default(uuid())
-  learnerId    String   @unique
-  speechSpeed  Float    @default(0.65)
-  repeatMode   String   @default("patient")
-  feedbackStyle String  @default("encouraging")
-  theme        String   @default("default")
-  updatedAt    DateTime @updatedAt
+model auth_sessions {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime  @default(now())
+  user       users     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  learner      learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+model password_reset_tokens {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model membership_events {
+  id        String   @id @default(uuid())
+  userId    String
+  fromTier  String
+  toTier    String
+  source    String
+  note      String?
+  createdAt DateTime @default(now())
+  user      users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("membership_events")
+}
+
+model membership_requests {
+  id            String    @id @default(uuid())
+  userId        String
+  requestedTier String
+  status        String    @default("pending") // pending | approved | rejected | cancelled
+  note          String?
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  user          users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@map("membership_requests")
+}
+
+model learner_preferences {
+  id            String   @id @default(uuid())
+  learnerId     String   @unique
+  speechSpeed   Float    @default(0.65)
+  repeatMode    String   @default("patient")
+  feedbackStyle String   @default("encouraging")
+  theme         String   @default("default")
+  updatedAt     DateTime @updatedAt
+
+  learner learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
 
   @@map("learner_preferences")
 }
@@ -79,24 +147,24 @@ model learner_preferences {
 // ========== 能力知识图谱 ==========
 
 model skill_nodes {
-  id               String   @id
-  code             String   @unique
-  name             String
-  abilityCategory  String
-  growthStage      Int
-  track            String
-  dimensions       Json     @default("[]")
-  objective        String
-  masteryCriteria  String
-  m1Scope          Boolean  @default(false)
-  createdAt        DateTime @default(now())
+  id              String   @id
+  code            String   @unique
+  name            String
+  abilityCategory String
+  growthStage     Int
+  track           String
+  dimensions      Json     @default("[]")
+  objective       String
+  masteryCriteria String
+  m1Scope         Boolean  @default(false)
+  createdAt       DateTime @default(now())
 
-  dependencies     skill_dependencies[] @relation("dependent")
-  dependedOn       skill_dependencies[] @relation("prerequisite")
-  states           learner_skill_states[]
-  evidence         learning_evidence[]
-  assessments      assessment_records[]
-  learningItems    learning_items[]
+  dependencies  skill_dependencies[]   @relation("dependent")
+  dependedOn    skill_dependencies[]   @relation("prerequisite")
+  states        learner_skill_states[]
+  evidence      learning_evidence[]
+  assessments   assessment_records[]
+  learningItems learning_items[]
 
   @@index([abilityCategory])
   @@index([growthStage])
@@ -104,14 +172,14 @@ model skill_nodes {
 }
 
 model skill_dependencies {
-  id                    String  @id @default(uuid())
-  skillNodeId           String
-  dependsOnSkillNodeId  String
-  dependencyType        String  // prerequisite | related | parallel | subsequent
-  required              Boolean @default(true)
+  id                   String  @id @default(uuid())
+  skillNodeId          String
+  dependsOnSkillNodeId String
+  dependencyType       String // prerequisite | related | parallel | subsequent
+  required             Boolean @default(true)
 
-  skillNode             skill_nodes @relation("dependent", fields: [skillNodeId], references: [id], onDelete: Cascade)
-  dependsOn             skill_nodes @relation("prerequisite", fields: [dependsOnSkillNodeId], references: [id], onDelete: Cascade)
+  skillNode skill_nodes @relation("dependent", fields: [skillNodeId], references: [id], onDelete: Cascade)
+  dependsOn skill_nodes @relation("prerequisite", fields: [dependsOnSkillNodeId], references: [id], onDelete: Cascade)
 
   @@unique([skillNodeId, dependsOnSkillNodeId, dependencyType])
   @@index([dependsOnSkillNodeId])
@@ -119,19 +187,19 @@ model skill_dependencies {
 }
 
 model learner_skill_states {
-  id                     String   @id @default(uuid())
+  id                     String    @id @default(uuid())
   learnerId              String
   skillNodeId            String
-  masteryCode            Int      @default(0) // 0-4，见 shared-contracts MASTERY_STATE_CODES
-  evidenceIds            Json     @default("[]")
-  independentScenarios   Json     @default("[]")
+  masteryCode            Int       @default(0) // 0-4，见 shared-contracts MASTERY_STATE_CODES
+  evidenceIds            Json      @default("[]")
+  independentScenarios   Json      @default("[]")
   lastUnpromptedRecallAt DateTime?
   lastIndependentUseAt   DateTime?
-  calibrationStatus      String   @default("uncalibrated")
-  updatedAt              DateTime @updatedAt
+  calibrationStatus      String    @default("uncalibrated")
+  updatedAt              DateTime  @updatedAt
 
-  learner                learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
-  skillNode              skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+  learner   learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  skillNode skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
 
   @@unique([learnerId, skillNodeId])
   @@index([learnerId])
@@ -141,19 +209,19 @@ model learner_skill_states {
 // ========== 学习内容 ==========
 
 model learning_items {
-  id             String   @id @default(uuid())
-  skillNodeId    String
-  itemType       String   // vocabulary | phoneme | sentence_pattern | letter | phonics_rule
-  refId          String   // 指向 vocabulary_items / phoneme_items 等
-  content        Json
-  topicId        String?
-  reviewStatus   String   @default("pending_review")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id           String   @id @default(uuid())
+  skillNodeId  String
+  itemType     String // vocabulary | phoneme | sentence_pattern | letter | phonics_rule
+  refId        String // 指向 vocabulary_items / phoneme_items 等
+  content      Json
+  topicId      String?
+  reviewStatus String   @default("pending_review")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  skillNode      skill_nodes          @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
-  evidence       learning_evidence[]
-  assessments    assessment_records[]
+  skillNode       skill_nodes          @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+  evidence        learning_evidence[]
+  assessments     assessment_records[]
   reviewSchedules review_schedules[]
 
   @@index([skillNodeId])
@@ -162,9 +230,9 @@ model learning_items {
 }
 
 model curriculum_stages {
-  id          String @id @default(uuid())
-  stage       Int    @unique
-  code        String @unique
+  id          String  @id @default(uuid())
+  stage       Int     @unique
+  code        String  @unique
   name        String
   objective   String
   description String?
@@ -173,18 +241,19 @@ model curriculum_stages {
 }
 
 model curriculum_units {
-  id          String   @id @default(uuid())
-  topicId     String
-  stage       Int
-  level       String   @default("A")
-  title       String
-  description String?
-  order       Int      @default(0)
-  reviewStatus String  @default("pending_review")
+  id             String    @id @default(uuid())
+  topicId        String
+  stage          Int
+  level          String    @default("A")
+  title          String
+  description    String?
+  order          Int       @default(0)
+  reviewStatus   String    @default("pending_review")
   textbookUnitId String?
-  publishedAt DateTime?
+  publishedAt    DateTime?
 
   textbookUnit textbook_units? @relation(fields: [textbookUnitId], references: [id], onDelete: SetNull)
+
   @@index([topicId])
   @@index([level, reviewStatus])
   @@index([textbookUnitId])
@@ -201,7 +270,7 @@ model textbook_catalogs {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  units textbook_units[]
+  units  textbook_units[]
   drafts curriculum_drafts[]
 
   @@unique([publisher, publicationYear, grade, title, edition])
@@ -210,18 +279,18 @@ model textbook_catalogs {
 }
 
 model textbook_units {
-  id          String   @id @default(uuid())
-  textbookId  String
-  unitCode    String
-  title       String
-  order       Int      @default(0)
-  metadata    Json     @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  textbookId String
+  unitCode   String
+  title      String
+  order      Int      @default(0)
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  textbook textbook_catalogs @relation(fields: [textbookId], references: [id], onDelete: Cascade)
+  textbook        textbook_catalogs   @relation(fields: [textbookId], references: [id], onDelete: Cascade)
   curriculumUnits curriculum_units[]
-  drafts curriculum_drafts[]
+  drafts          curriculum_drafts[]
 
   @@unique([textbookId, unitCode])
   @@index([textbookId, order])
@@ -229,27 +298,27 @@ model textbook_units {
 }
 
 model curriculum_drafts {
-  id             String   @id @default(uuid())
-  title          String
-  level          String
-  topicId        String?
-  textbookId     String?
-  textbookUnitId String?
-  wordList       Json
+  id               String    @id @default(uuid())
+  title            String
+  level            String
+  topicId          String?
+  textbookId       String?
+  textbookUnitId   String?
+  wordList         Json
   generatedContent Json?
-  status         String   @default("draft") // draft | generated | under_review | approved | published | rejected | archived
-  createdBy      String?
-  reviewedBy     String?
-  reviewNote     String?
-  generatedAt    DateTime?
-  publishedAt    DateTime?
-  version        Int      @default(1)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  status           String    @default("draft") // draft | generated | under_review | approved | published | rejected | archived
+  createdBy        String?
+  reviewedBy       String?
+  reviewNote       String?
+  generatedAt      DateTime?
+  publishedAt      DateTime?
+  version          Int       @default(1)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  textbook textbook_catalogs? @relation(fields: [textbookId], references: [id], onDelete: SetNull)
-  textbookUnit textbook_units? @relation(fields: [textbookUnitId], references: [id], onDelete: SetNull)
-  reviews curriculum_review_records[]
+  textbook     textbook_catalogs?          @relation(fields: [textbookId], references: [id], onDelete: SetNull)
+  textbookUnit textbook_units?             @relation(fields: [textbookUnitId], references: [id], onDelete: SetNull)
+  reviews      curriculum_review_records[]
 
   @@index([status, level])
   @@index([textbookId, textbookUnitId])
@@ -257,13 +326,13 @@ model curriculum_drafts {
 }
 
 model curriculum_review_records {
-  id          String   @id @default(uuid())
-  draftId     String
-  action      String   // generated | submitted | approved | rejected | published | archived
-  reviewer    String?
-  note        String?
-  snapshot    Json
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  draftId   String
+  action    String // generated | submitted | approved | rejected | published | archived
+  reviewer  String?
+  note      String?
+  snapshot  Json
+  createdAt DateTime @default(now())
 
   draft curriculum_drafts @relation(fields: [draftId], references: [id], onDelete: Cascade)
 
@@ -272,44 +341,44 @@ model curriculum_review_records {
 }
 
 model vocabulary_items {
-  id                  String   @id @default(uuid())
-  topicId             String
-  word                String
-  phonetic            String
-  syllables           Json
-  meaningZh           String
-  imageRef            String?
-  collocations        Json     @default("[]")
-  exampleSentences    Json     @default("[]")
-  difficultPhonemes   Json     @default("[]")
-  skillNodeIds        Json     @default("[]")
-  relatedWords        Json     @default("[]")
-  reviewStatus        String   @default("pending_review")
-  createdAt           DateTime @default(now())
+  id                String   @id @default(uuid())
+  topicId           String
+  word              String
+  phonetic          String
+  syllables         Json
+  meaningZh         String
+  imageRef          String?
+  collocations      Json     @default("[]")
+  exampleSentences  Json     @default("[]")
+  difficultPhonemes Json     @default("[]")
+  skillNodeIds      Json     @default("[]")
+  relatedWords      Json     @default("[]")
+  reviewStatus      String   @default("pending_review")
+  createdAt         DateTime @default(now())
 
   @@index([topicId])
   @@map("vocabulary_items")
 }
 
 model phoneme_items {
-  id            String   @id @default(uuid())
-  phoneme       String   @unique
+  id            String @id @default(uuid())
+  phoneme       String @unique
   ipa           String
   descriptionZh String
-  difficulty    Int      @default(1)
-  reviewStatus  String   @default("pending_review")
+  difficulty    Int    @default(1)
+  reviewStatus  String @default("pending_review")
 
   @@map("phoneme_items")
 }
 
 model sentence_patterns {
-  id           String   @id @default(uuid())
+  id           String @id @default(uuid())
   topicId      String
   pattern      String
   zh           String
-  examples     Json     @default("[]")
-  skillNodeIds Json     @default("[]")
-  reviewStatus String   @default("pending_review")
+  examples     Json   @default("[]")
+  skillNodeIds Json   @default("[]")
+  reviewStatus String @default("pending_review")
 
   @@index([topicId])
   @@map("sentence_patterns")
@@ -322,25 +391,25 @@ model scenarios {
   description       String
   countsForTransfer Boolean @default(true)
 
-  evidence          learning_evidence[]
-  assessments       assessment_records[]
+  evidence    learning_evidence[]
+  assessments assessment_records[]
 
   @@map("scenarios")
 }
 
 model assessment_thresholds {
-  id                        String   @id @default(uuid())
-  taskType                  String
-  scenario                  String?
-  passScore                 Float
-  minSamplesForming         Int      @default(2)
-  minSamplesMastered        Int      @default(2)
-  minScenariosTransferred   Int      @default(2)
-  minIntervalTransferredMs  Int      @default(86400000)
-  source                    String   @default("m1_provisional")
-  calibrationStatus         String   @default("uncalibrated")
-  version                   String
-  createdAt                 DateTime @default(now())
+  id                       String   @id @default(uuid())
+  taskType                 String
+  scenario                 String?
+  passScore                Float
+  minSamplesForming        Int      @default(2)
+  minSamplesMastered       Int      @default(2)
+  minScenariosTransferred  Int      @default(2)
+  minIntervalTransferredMs Int      @default(86400000)
+  source                   String   @default("m1_provisional")
+  calibrationStatus        String   @default("uncalibrated")
+  version                  String
+  createdAt                DateTime @default(now())
 
   @@index([taskType, version])
   @@map("assessment_thresholds")
@@ -349,21 +418,21 @@ model assessment_thresholds {
 // ========== 课堂与证据 ==========
 
 model lesson_sessions {
-  id             String   @id @default(uuid())
-  learnerId      String
-  topicId        String
-  status         String   @default("active")
-  turnCount      Int      @default(0)
-  methodState    Json     @default("{}")
-  currentActivityId String?
+  id                      String    @id @default(uuid())
+  learnerId               String
+  topicId                 String
+  status                  String    @default("active")
+  turnCount               Int       @default(0)
+  methodState             Json      @default("{}")
+  currentActivityId       String?
   currentReviewScheduleId String?
-  currentDirective Json?
-  currentSpeech Json?
-  startedAt      DateTime @default(now())
-  finishedAt     DateTime?
-  summary        String?
+  currentDirective        Json?
+  currentSpeech           Json?
+  startedAt               DateTime  @default(now())
+  finishedAt              DateTime?
+  summary                 String?
 
-  learner        learner_profiles    @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  learner        learner_profiles          @relation(fields: [learnerId], references: [id], onDelete: Cascade)
   interactions   interaction_events[]
   assessments    assessment_records[]
   evidence       learning_evidence[]
@@ -376,19 +445,19 @@ model lesson_sessions {
 }
 
 model interaction_events {
-  id               String   @id @default(uuid())
-  lessonSessionId  String
-  learnerId        String
-  turnIndex        Int
-  idempotencyKey   String   @unique
-  intent           String
-  input            Json
-  output           Json
-  latencyMs        Int      @default(0)
-  createdAt        DateTime @default(now())
+  id              String   @id @default(uuid())
+  lessonSessionId String
+  learnerId       String
+  turnIndex       Int
+  idempotencyKey  String   @unique
+  intent          String
+  input           Json
+  output          Json
+  latencyMs       Int      @default(0)
+  createdAt       DateTime @default(now())
 
-  lessonSession    lesson_sessions @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
-  learner          learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  lessonSession lesson_sessions  @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  learner       learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
 
   @@unique([lessonSessionId, turnIndex])
   @@index([learnerId])
@@ -412,11 +481,11 @@ model assessment_records {
   thresholdVersion String?
   createdAt        DateTime @default(now())
 
-  learner          learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
-  lessonSession    lesson_sessions @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
-  skillNode        skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
-  learningItem     learning_items?  @relation(fields: [learningItemId], references: [id])
-  scenarioRef      scenarios        @relation(fields: [scenario], references: [code])
+  learner       learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  lessonSession lesson_sessions  @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  skillNode     skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+  learningItem  learning_items?  @relation(fields: [learningItemId], references: [id])
+  scenarioRef   scenarios        @relation(fields: [scenario], references: [code])
 
   @@index([learnerId, createdAt])
   @@index([lessonSessionId])
@@ -448,11 +517,11 @@ model learning_evidence {
   thresholdVersion       String?
   ruleVersion            String?
 
-  learner                learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
-  skillNode              skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
-  learningItem           learning_items?  @relation(fields: [learningItemId], references: [id])
-  lessonSession          lesson_sessions? @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
-  scenarioRef            scenarios        @relation(fields: [scenario], references: [code])
+  learner       learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  skillNode     skill_nodes      @relation(fields: [skillNodeId], references: [id], onDelete: Cascade)
+  learningItem  learning_items?  @relation(fields: [learningItemId], references: [id])
+  lessonSession lesson_sessions? @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  scenarioRef   scenarios        @relation(fields: [scenario], references: [code])
 
   @@index([learnerId, skillNodeId, occurredAt])
   @@index([lessonSessionId])
@@ -460,52 +529,52 @@ model learning_evidence {
 }
 
 model review_schedules {
-  id                    String   @id @default(uuid())
-  learnerId             String
-  skillNodeId           String
-  learningItemId        String?
-  intervalDays          Int      @default(1)
-  consecutiveSuccesses  Int      @default(0)
-  activeKey             String?  @unique
-  claimedBySessionId    String?  @unique
-  claimExpiresAt        DateTime?
-  dueAt                 DateTime
-  completedAt           DateTime?
-  createdAt             DateTime @default(now())
+  id                   String    @id @default(uuid())
+  learnerId            String
+  skillNodeId          String
+  learningItemId       String?
+  intervalDays         Int       @default(1)
+  consecutiveSuccesses Int       @default(0)
+  activeKey            String?   @unique
+  claimedBySessionId   String?   @unique
+  claimExpiresAt       DateTime?
+  dueAt                DateTime
+  completedAt          DateTime?
+  createdAt            DateTime  @default(now())
 
-  learner     learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
-  learningItem  learning_items? @relation(fields: [learningItemId], references: [id], onDelete: Cascade)
+  learner      learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  learningItem learning_items?  @relation(fields: [learningItemId], references: [id], onDelete: Cascade)
 
   @@index([learnerId, completedAt, dueAt])
   @@map("review_schedules")
 }
 
 model textbook_mappings {
-  id          String   @id @default(uuid())
-  learnerId   String
-  grade       String
-  publisher   String
-  version     String
-  currentUnit String
-  skillNodeIds Json    @default("[]")
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(uuid())
+  learnerId    String
+  grade        String
+  publisher    String
+  version      String
+  currentUnit  String
+  skillNodeIds Json     @default("[]")
+  updatedAt    DateTime @updatedAt
 
   @@map("textbook_mappings")
 }
 
 model media_assets {
-  id          String   @id @default(uuid())
-  kind        String   // image | audio
-  ref         String
-  voiceIdentity String?
-  teacherSpeed Float?
-  durationMs  Int?
-  checksum    String?
-  sourceUrl   String?
-  attribution String?
-  license     String?
+  id             String   @id @default(uuid())
+  kind           String // image | audio
+  ref            String
+  voiceIdentity  String?
+  teacherSpeed   Float?
+  durationMs     Int?
+  checksum       String?
+  sourceUrl      String?
+  attribution    String?
+  license        String?
   sourceProvider String?
-  createdAt   DateTime @default(now())
+  createdAt      DateTime @default(now())
 
   @@index([checksum])
   @@map("media_assets")
@@ -514,20 +583,20 @@ model media_assets {
 // ========== 记忆与人格 ==========
 
 model teacher_profiles {
-  id          String   @id @default(uuid())
-  name        String
-  coreTraits  Json
-  adjustable  Json
-  style       String
-  stage       Int      @default(0)
-  version     Int      @default(1)
-  learnerId   String?  @unique
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  name       String
+  coreTraits Json
+  adjustable Json
+  style      String
+  stage      Int      @default(0)
+  version    Int      @default(1)
+  learnerId  String?  @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  memories    interaction_memories[]
-  history     persona_history[]
-  learner     learner_profiles? @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  memories interaction_memories[]
+  history  persona_history[]
+  learner  learner_profiles?      @relation(fields: [learnerId], references: [id], onDelete: Cascade)
 
   @@map("teacher_profiles")
 }
@@ -542,41 +611,41 @@ model persona_history {
   rollbackOf       String?
   createdAt        DateTime @default(now())
 
-  teacherProfile   teacher_profiles @relation(fields: [teacherProfileId], references: [id], onDelete: Cascade)
+  teacherProfile teacher_profiles @relation(fields: [teacherProfileId], references: [id], onDelete: Cascade)
 
   @@map("persona_history")
 }
 
 model interaction_memories {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   learnerId        String
   teacherProfileId String?
-  sourceSessionId  String?  @unique
+  sourceSessionId  String?   @unique
   memoryType       String
   content          String
-  importance       Float    @default(0.5)
-  source           String   @default("batch_extract")
+  importance       Float     @default(0.5)
+  source           String    @default("batch_extract")
   expiresAt        DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  learner          learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
-  teacherProfile   teacher_profiles? @relation(fields: [teacherProfileId], references: [id], onDelete: SetNull)
-  sourceSession    lesson_sessions? @relation(fields: [sourceSessionId], references: [id], onDelete: Cascade)
+  learner        learner_profiles  @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+  teacherProfile teacher_profiles? @relation(fields: [teacherProfileId], references: [id], onDelete: SetNull)
+  sourceSession  lesson_sessions?  @relation(fields: [sourceSessionId], references: [id], onDelete: Cascade)
 
   @@index([learnerId])
   @@map("interaction_memories")
 }
 
 model learner_growth_snapshots {
-  id             String   @id @default(uuid())
-  learnerId      String
-  lessonSessionId String  @unique
-  snapshot       Json
-  createdAt      DateTime @default(now())
+  id              String   @id @default(uuid())
+  learnerId       String
+  lessonSessionId String   @unique
+  snapshot        Json
+  createdAt       DateTime @default(now())
 
   learner       learner_profiles @relation(fields: [learnerId], references: [id], onDelete: Cascade)
-  lessonSession lesson_sessions @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  lessonSession lesson_sessions  @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
 
   @@index([learnerId, createdAt])
   @@map("learner_growth_snapshots")
@@ -585,17 +654,17 @@ model learner_growth_snapshots {
 // ========== 模型路由 ==========
 
 model ai_providers {
-  id          String   @id @default(uuid())
-  alias       String   @unique
-  kind        String   // llm | tts | asr | pronunciation
-  baseUrl     String?
-  enabled     Boolean  @default(true)
-  concurrencyLimit Int  @default(8)
-  circuitBreaker Json  @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(uuid())
+  alias            String   @unique
+  kind             String // llm | tts | asr | pronunciation
+  baseUrl          String?
+  enabled          Boolean  @default(true)
+  concurrencyLimit Int      @default(8)
+  circuitBreaker   Json     @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  models      ai_models[]
+  models ai_models[]
 
   @@map("ai_providers")
 }
@@ -618,21 +687,21 @@ model ai_provider_configs {
 }
 
 model ai_models {
-  id          String   @id @default(uuid())
-  providerId  String
-  alias       String
-  modelId     String
-  version     String?
-  level       String   // L0 | L1 | L2 | L3
-  enabled     Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  providerId String
+  alias      String
+  modelId    String
+  version    String?
+  level      String // L0 | L1 | L2 | L3
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
 
-  provider    ai_providers           @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  capabilities ai_model_capabilities[]
-  prices      ai_model_prices[]
-  limits      ai_model_limits[]
-  benchmarks  ai_model_benchmarks[]
-  usageLogs   ai_usage_logs[]
+  provider         ai_providers            @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  capabilities     ai_model_capabilities[]
+  prices           ai_model_prices[]
+  limits           ai_model_limits[]
+  benchmarks       ai_model_benchmarks[]
+  usageLogs        ai_usage_logs[]
   primaryForRoutes ai_task_routes[]
 
   @@unique([providerId, alias])
@@ -640,111 +709,111 @@ model ai_models {
 }
 
 model ai_model_capabilities {
-  id          String  @id @default(uuid())
-  modelId     String
-  capability  String
-  score       Float?
-  verified    Boolean @default(false)
+  id         String  @id @default(uuid())
+  modelId    String
+  capability String
+  score      Float?
+  verified   Boolean @default(false)
 
-  model       ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
   @@unique([modelId, capability])
   @@map("ai_model_capabilities")
 }
 
 model ai_model_prices {
-  id          String   @id @default(uuid())
-  modelId     String
-  priceType   String   // input_token | output_token | per_byte | per_second | per_call
-  unitPrice   Float
-  checkedAt   DateTime
+  id        String   @id @default(uuid())
+  modelId   String
+  priceType String // input_token | output_token | per_byte | per_second | per_call
+  unitPrice Float
+  checkedAt DateTime
 
-  model       ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
   @@unique([modelId, priceType])
   @@map("ai_model_prices")
 }
 
 model ai_model_limits {
-  id           String  @id @default(uuid())
-  modelId      String
-  limitType    String
-  limitValue   Float
-  window       String?
-  enabled      Boolean @default(true)
+  id         String  @id @default(uuid())
+  modelId    String
+  limitType  String
+  limitValue Float
+  window     String?
+  enabled    Boolean @default(true)
 
-  model        ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
   @@unique([modelId, limitType])
   @@map("ai_model_limits")
 }
 
 model ai_task_routes {
-  id          String   @id @default(uuid())
-  taskRoute   String
-  serviceKind String
-  primaryModelId String?
-  fallbackModelIds Json @default("[]")
-  maxConcurrency Int   @default(8)
-  dailyBudgetCny Float @default(0)
-  fallbackOrder   Json   @default("[\"L1\", \"L2\", \"L3\"]")
-  enabled     Boolean  @default(true)
-  updatedAt   DateTime @updatedAt
+  id               String   @id @default(uuid())
+  taskRoute        String
+  serviceKind      String
+  primaryModelId   String?
+  fallbackModelIds Json     @default("[]")
+  maxConcurrency   Int      @default(8)
+  dailyBudgetCny   Float    @default(0)
+  fallbackOrder    Json     @default("[\"L1\", \"L2\", \"L3\"]")
+  enabled          Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
 
-  primary     ai_models? @relation(fields: [primaryModelId], references: [id])
+  primary ai_models? @relation(fields: [primaryModelId], references: [id])
 
   @@unique([taskRoute, serviceKind])
   @@map("ai_task_routes")
 }
 
 model ai_route_rules {
-  id             String   @id @default(uuid())
-  taskRoute      String
+  id               String  @id @default(uuid())
+  taskRoute        String
   escalationSignal String
-  targetLevel    String
-  enabled        Boolean  @default(true)
+  targetLevel      String
+  enabled          Boolean @default(true)
 
   @@unique([taskRoute, escalationSignal])
   @@map("ai_route_rules")
 }
 
 model ai_model_benchmarks {
-  id          String   @id @default(uuid())
-  modelId     String
+  id            String   @id @default(uuid())
+  modelId       String
   benchmarkType String
-  score       Float
-  sampleCount Int      @default(0)
-  passed      Boolean  @default(false)
-  notes       String?
-  testedAt    DateTime @default(now())
+  score         Float
+  sampleCount   Int      @default(0)
+  passed        Boolean  @default(false)
+  notes         String?
+  testedAt      DateTime @default(now())
 
-  model       ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model ai_models @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
   @@index([modelId])
   @@map("ai_model_benchmarks")
 }
 
 model ai_usage_logs {
-  id             String   @id @default(uuid())
-  learnerId      String?
-  lessonSessionId String?
-  modelId        String?
-  providerAlias  String   @default("unknown")
-  modelAlias     String   @default("unknown")
-  serviceKind    String
-  taskRoute      String
-  level          String
-  inputTokens    Int      @default(0)
-  outputTokens   Int      @default(0)
-  ttsCharacters  Int      @default(0)
-  asrSeconds     Float    @default(0)
-  pronunciationCalls Int  @default(0)
-  estimatedCostCny Float  @default(0)
-  latencyMs      Int      @default(0)
-  createdAt      DateTime @default(now())
+  id                 String   @id @default(uuid())
+  learnerId          String?
+  lessonSessionId    String?
+  modelId            String?
+  providerAlias      String   @default("unknown")
+  modelAlias         String   @default("unknown")
+  serviceKind        String
+  taskRoute          String
+  level              String
+  inputTokens        Int      @default(0)
+  outputTokens       Int      @default(0)
+  ttsCharacters      Int      @default(0)
+  asrSeconds         Float    @default(0)
+  pronunciationCalls Int      @default(0)
+  estimatedCostCny   Float    @default(0)
+  latencyMs          Int      @default(0)
+  createdAt          DateTime @default(now())
 
-  lessonSession  lesson_sessions? @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
-  model          ai_models?       @relation(fields: [modelId], references: [id])
+  lessonSession lesson_sessions? @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+  model         ai_models?       @relation(fields: [modelId], references: [id])
 
   @@index([learnerId, createdAt])
   @@index([lessonSessionId])
@@ -754,14 +823,14 @@ model ai_usage_logs {
 /// Per-learner, per-day reservation ledger for client-side speech access.
 /// Units are seconds for ASR, TTS and pronunciation assessment.
 model speech_quota_buckets {
-  id             String   @id @default(uuid())
-  learnerId      String
-  usageDate      DateTime @db.Date
-  serviceKind    String
-  limitUnits     Float
-  reservedUnits  Float    @default(0)
-  consumedUnits  Float    @default(0)
-  updatedAt      DateTime @updatedAt
+  id            String   @id @default(uuid())
+  learnerId     String
+  usageDate     DateTime @db.Date
+  serviceKind   String
+  limitUnits    Float
+  reservedUnits Float    @default(0)
+  consumedUnits Float    @default(0)
+  updatedAt     DateTime @updatedAt
 
   reservations speech_quota_reservations[]
 
@@ -771,15 +840,15 @@ model speech_quota_buckets {
 }
 
 model speech_quota_reservations {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   learnerId      String
   serviceKind    String
   requestedUnits Float
-  consumedUnits  Float    @default(0)
-  status         String   @default("reserved") // reserved | settled | released
-  idempotencyKey String   @unique
+  consumedUnits  Float     @default(0)
+  status         String    @default("reserved") // reserved | settled | released
+  idempotencyKey String    @unique
   expiresAt      DateTime
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
   settledAt      DateTime?
   bucketId       String
 
@@ -791,14 +860,14 @@ model speech_quota_reservations {
 }
 
 model ai_fallback_logs {
-  id           String   @id @default(uuid())
-  learnerId    String?
+  id              String   @id @default(uuid())
+  learnerId       String?
   lessonSessionId String?
-  taskRoute    String
-  fromModelId  String?
-  toModelId    String?
-  reason       String
-  createdAt    DateTime @default(now())
+  taskRoute       String
+  fromModelId     String?
+  toModelId       String?
+  reason          String
+  createdAt       DateTime @default(now())
 
   @@index([lessonSessionId])
   @@map("ai_fallback_logs")
@@ -807,17 +876,17 @@ model ai_fallback_logs {
 // ========== 隐私与合规 ==========
 
 model consent_records {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   userId      String
   learnerId   String?
-  consentType String   // voice_processing | ai_service | data_retention
-  granted     Boolean  @default(false)
-  scope       Json     @default("{}")
+  consentType String // voice_processing | ai_service | data_retention
+  granted     Boolean   @default(false)
+  scope       Json      @default("{}")
   grantedAt   DateTime?
   revokedAt   DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
-  user         users @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user users @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("consent_records")

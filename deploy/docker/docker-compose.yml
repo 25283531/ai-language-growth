@@ -100,6 +100,15 @@ services:
       PRONUNCIATION_MODEL: ${PRONUNCIATION_MODEL:-}
       ADMIN_CONFIG_TOKEN: ${ADMIN_CONFIG_TOKEN:-}
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_SECURE: ${MAIL_SECURE:-false}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      PASSWORD_RESET_URL: ${PASSWORD_RESET_URL:-http://localhost:3002/reset-password}
+      MAIL_DISABLED: ${MAIL_DISABLED:-false}
       FREE_ASR_DAILY_QUOTA_SECONDS: ${FREE_ASR_DAILY_QUOTA_SECONDS:-300}
       FREE_TTS_DAILY_QUOTA_SECONDS: ${FREE_TTS_DAILY_QUOTA_SECONDS:-300}
       FREE_PRONUNCIATION_DAILY_QUOTA_SECONDS: ${FREE_PRONUNCIATION_DAILY_QUOTA_SECONDS:-300}
@@ -128,6 +137,22 @@ services:
         condition: service_started
     ports:
       - "${ADMIN_WEB_PORT:-3001}:3001"
+    networks:
+      - alg-net
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:3100/api/v1}
+    container_name: alg-web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "${WEB_PORT:-3002}:3000"
     networks:
       - alg-net
 

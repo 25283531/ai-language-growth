@@ -3,7 +3,7 @@
 > **状态：M0 冻结快照（原型范围）。** 本文从当前 NestJS controller 与
 > `packages/shared-contracts` 整理，用于联调；冻结版本、数据库迁移和已知缺口见
 > [`docs/M0-freeze.md`](../M0-freeze.md)。代码新增接口时必须同步本文并由 CI 覆盖。
-> 当前没有生成式 OpenAPI 文档，认证和监护人授权仍未实现。
+> 当前没有生成式 OpenAPI 文档；账户认证已实现，学习者接口仍需继续接入监护人归属校验。
 
 ## 基本约定
 
@@ -28,6 +28,23 @@
 | `GET /learners/{id}/abilities` | 无 | 能力状态与未校准提示 | 无 |
 | `GET /learners/{id}/evidence?skillNodeId=...` | 可选筛选 | 最近最多 100 条学习证据 | 无 |
 | `GET /learners/{id}/growth` | 无 | 最近成长快照、最多 30 条未过期记忆、最多 30 条待复习计划及未校准提示 | 无 |
+
+## 账户与会员
+
+账户使用规范化后的邮箱作为用户名。密码至少 8 位，并拒绝连续数字、重复字符和常见简单密码。服务端只保存 bcrypt 哈希；登录会签发 30 天数据库会话，同时设置 HttpOnly `alg_session` Cookie。客户端也可用 `Authorization: Bearer <accessToken>` 访问接口。
+
+| Method / path | 请求 | 成功响应 / 行为 |
+| --- | --- | --- |
+| `POST /auth/register` | `{ email, password, displayName? }` | 创建注册用户、免费会员学习者档案并返回会话 |
+| `POST /auth/login` | `{ email, password }` | 返回用户资料和会话 |
+| `GET /auth/me` | Cookie 或 Bearer | 当前用户资料 |
+| `POST /auth/logout` | Cookie 或 Bearer | 撤销当前会话 |
+| `POST /auth/forgot-password` | `{ email }` | 无论邮箱是否存在都返回统一提示；已注册邮箱发送 30 分钟一次性链接 |
+| `POST /auth/reset-password` | `{ token, newPassword }` | 消费令牌、修改密码并撤销旧会话 |
+| `GET /membership/me` | Cookie 或 Bearer | 当前账户等级、学习者、申请和变更记录 |
+| `POST /membership/requests` | `{ tier?: "member", note? }` | 创建普通会员待审核申请；高级会员仅能由管理员在后台调整 |
+
+SMTP 由 Docker 部署环境变量配置，不通过 API 返回密钥。管理端的邮箱状态只显示是否已配置，不显示凭据。开发环境未配置 SMTP 时会把重置链接写入后端日志；生产环境必须配置完整 `MAIL_*` 参数，否则找回邮件无法发送。生产环境登录 Cookie 带 `Secure` 标记。
 
 `response` 字段来自 `learnerResponseSchema`：`text?: string|null`、`audioRef?: string|null`、`audioDurationMs?: integer|null`（0–120000）、`selectedImageId?: string|null`、`requestedSlower?: boolean`、`requestedRepeat?: boolean`、`freeUtterance?: string|null`。schema 为缺省项提供默认值。
 
@@ -84,6 +101,15 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 
 `advanced` 仅供后台配置，手机客户端暂不提供购买或升级入口。
 
+注册用户的账户级会员接口：
+
+| `GET /admin/users?q=邮箱或名称` | 搜索注册用户并返回其学习者档案 |
+| `GET /admin/users/membership-requests` | 查看待处理会员申请 |
+| `PUT /admin/users/{userId}/membership` | `{ tier, note? }`，同步账户和其全部学习者，并写入变更记录 |
+| `GET /admin/email/status` | 查看 SMTP 是否已配置，不返回任何密钥 |
+
+管理员可将账户调整为 `guest`、`free`、`member` 或 `advanced`。新注册账户默认 `free`；`guest` 用于未注册访客，`advanced` 暂不提供手机客户端申请或购买入口。
+
 ## 管理 API
 
 以下端点以 `x-admin-token` 校验 `ADMIN_API_TOKEN`。该 token 是原型运维凭据，不授权家长读取儿童资料。
@@ -107,7 +133,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 
 1. OpenAPI 3 文档尚未生成；管理配置、结课和数据库响应仍缺统一的 Zod schema 与字段级响应约束。
 2. 没有统一的错误码表、分页规范、速率限制和版本兼容策略。
-3. Guardian 注册/登录、consent 记录、按监护关系鉴权、授权撤销和儿童数据删除 API 尚未实现。
+3. 学习者教学 API 仍需把已登录用户与 `guardianId` 归属校验接入所有读写路径；当前账户认证接口已具备。
 4. 原型音频上传已实现，但短期保留、自动删除、对象存储和正式访问控制尚未实现。
 5. 本 API 快照与 M0 冻结验收记录尚未建立，不能称为“contracts are locked in M0”。
 

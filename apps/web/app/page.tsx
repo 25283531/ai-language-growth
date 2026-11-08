@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import {
   API_BASE,
   buildTurnRequestBody,
@@ -414,6 +415,7 @@ export default function WorkbenchPage() {
   return (
     <main className="app">
       <header>
+        <nav className="account-nav"><Link href="/account">账户中心</Link><Link href="/login">登录</Link><Link href="/register">注册</Link></nav>
         <h1>M1 教学实验台 · 成长型 AI 儿童英语语言习得平台</h1>
         <p className="brand-sub">
           教 / 听 / 评估 / 调整 / 记录 五动作闭环验证台 · 教学决策 100% 由后端返回，Web 只渲染 directive 与采集作答 ·
