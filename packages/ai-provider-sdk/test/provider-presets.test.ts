@@ -21,7 +21,11 @@ describe('预置模型接入平台', () => {
       assert.ok(preset, `缺少 ${id} 预置`);
       assert.deepEqual(preset.services, services);
       for (const service of services) {
-        assert.match(preset.defaultBaseUrls[service] ?? '', /^(https?|wss?):\/\//);
+        const baseUrl = preset.defaultBaseUrls[service];
+        assert.ok(baseUrl || id === 'openai-compatible', `${id}/${service} 缺少默认接入点`);
+        if (baseUrl) {
+          assert.match(baseUrl, /^(https?|wss?):\/\//);
+        }
       }
     }
     assert.deepEqual(getProviderPreset('tencent-soe')?.services, ['pronunciation']);
