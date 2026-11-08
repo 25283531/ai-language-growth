@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { AssessmentThreshold, LearningEvidence } from '@alg/shared-contracts';
-import { evaluateMastery, fromCode, SkillGraph, toCode } from '../src/index.ts';
+import { evaluateMastery, fromCode, resolveEvidenceTargets, SkillGraph, toCode } from '../src/index.ts';
 
 const THRESHOLD: AssessmentThreshold = {
   id: 'th-1',
@@ -163,6 +163,21 @@ describe('掌握状态机 R1-R7', () => {
 
 describe('能力图谱', () => {
   const graph = new SkillGraph();
+
+  it('同一活动的所有能力节点都映射到各自的能力分类', () => {
+    assert.deepEqual(
+      resolveEvidenceTargets(['LA.SPEAK.imitation', 'LA.PRON.syllable']),
+      [
+        { skillNodeId: 'LA.SPEAK.imitation', abilityCategory: 'speaking' },
+        { skillNodeId: 'LA.PRON.syllable', abilityCategory: 'pronunciation' },
+      ],
+    );
+  });
+
+  it('重复节点只生成一条证据目标，未知节点拒绝写入', () => {
+    assert.equal(resolveEvidenceTargets(['LA.SPEAK.imitation', 'LA.SPEAK.imitation']).length, 1);
+    assert.throws(() => resolveEvidenceTargets(['LA.UNKNOWN.node']), /Unknown skill node/);
+  });
 
   it('能力节点编码符合 <LA|SE>.<DOMAIN>.<slug> 格式', () => {
     for (const node of graph.allNodes()) {

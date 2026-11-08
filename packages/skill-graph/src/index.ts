@@ -6,3 +6,4 @@
  */
 export * from './mastery';
 export * from './graph';
+export * from './evidence';

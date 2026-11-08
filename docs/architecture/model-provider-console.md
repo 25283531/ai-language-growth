@@ -34,6 +34,6 @@ Docker Compose 默认开放管理页面 `3001`、后端 API `3100`。页面从�
 - `pronunciation` 接收音频、目标文本、语言和评测粒度，输出总体分数及单词/音节/音素明细。
 - Azure 直接返回音素级 `AccuracyScore`；腾讯 SOE 返回其逐音素结果；讯飞 ISE 的明细结构包含 word/syllable/phone 层级。平台的音频格式、时长、语言和音素格式要求不同，超出平台能力时应由各自调用报错，不做 ASR 结果伪装。
 - Speechace 使用单独的订阅 API Key 和区域 endpoint，英文支持 `en-us` / `en-gb`；其 Score Text API 可返回单词、音节、音素及重音分数。驰声在百度 AI 市场的产品来自独立服务商，运行时使用驰声 API 而不是百度千帆鉴权。
-- 阿里云智能科教内容生成平台的口语评测与 DashScope 模型 API 是不同产品：官方接入页说明通过独立 AppKey/AppSecret 与端侧 SDK/临时 Token 使用。当前没有将其误配为 DashScope 语音接口；服务端评测适配仍需基于其受支持的服务端接入协议实现。
+- 阿里云智能科教内容生成平台（SSECP）的口语评测与 DashScope 模型 API 是不同产品。评测由 Android 端官方 SDK 采集音频并连接评测引擎；服务端只负责安全签发 `warrant_id`，Web 管理后台只管理 AppKey/AppSecret 和授权服务地址，不执行评测。Android 客户端接入应遵循[官方 Android SDK 文档](https://help.aliyun.com/zh/document_detail/2873524.html)；服务端签发流程见[授权接口文档](https://help.aliyun.com/zh/document_detail/2865622.html)。该 SDK 包需从 SSECP 控制台项目下载，尚未纳入 Android 工程。
 
 腾讯与 Azure 适配器需 Node.js 20.10 或更高版本提供全局 WebSocket 能力。Azure REST 适配器面向平台短音频识别限制；长音频应在后续接入其连续评测协议。

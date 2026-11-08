@@ -34,6 +34,7 @@ import type {
   TeachingDirective,
   TurnResponse,
 } from '@alg/shared-contracts';
+import { resolveEvidenceTargets } from '@alg/skill-graph';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PlannerService } from '../planner/planner.service';
@@ -835,7 +836,8 @@ export class OrchestratorService {
     learnerId: string;
     lessonSessionId: string;
   }) {
-    if (!input.activity) return [];
+    const activity = input.activity;
+    if (!activity) return [];
 
     const source = input.assessment.performedPronunciationAssessment
       ? 'pronunciation_api'
@@ -843,51 +845,56 @@ export class OrchestratorService {
         ? 'asr'
         : 'task_result';
 
-    const id = await this.learnerModel.appendEvidence({
-      learnerId: input.learnerId,
-      lessonSessionId: input.lessonSessionId,
-      skillNodeId: input.activity.skillNodeIds[0] ?? 'LA.LISTEN.greeting_core',
-      learningItemId: null,
-      abilityCategory: 'listening',
-      vocabularyDimension: null,
-      source,
-      taskType: input.activity.taskType as never,
-      prompted: input.assessment.prompted,
-      independent: input.assessment.independent,
-      scenario: input.activity.scenario as never,
-      succeeded: input.assessment.passed,
-      score: input.assessment.score,
-      errorUnits: input.assessment.errorUnits,
-      note: null,
-      thresholdVersion: input.assessment.thresholdVersion,
-      ruleVersion: 'R1-R7',
-    });
+    const targets = resolveEvidenceTargets(activity.skillNodeIds);
+    const occurredAt = new Date().toISOString();
+    return Promise.all(
+      targets.map(async ({ skillNodeId, abilityCategory }) => {
+        const id = await this.learnerModel.appendEvidence({
+          learnerId: input.learnerId,
+          lessonSessionId: input.lessonSessionId,
+          skillNodeId,
+          learningItemId: null,
+          abilityCategory,
+          vocabularyDimension: null,
+          source,
+          taskType: activity.taskType as never,
+          prompted: input.assessment.prompted,
+          independent: input.assessment.independent,
+          scenario: activity.scenario as never,
+          succeeded: input.assessment.passed,
+          score: input.assessment.score,
+          errorUnits: input.assessment.errorUnits,
+          note: null,
+          thresholdVersion: input.assessment.thresholdVersion,
+          ruleVersion: 'R1-R7',
+          occurredAt: new Date(occurredAt),
+        });
 
-    return [
-      {
-        id,
-        learnerId: input.learnerId,
-        lessonSessionId: input.lessonSessionId,
-        skillNodeId: input.activity.skillNodeIds[0] ?? 'LA.LISTEN.greeting_core',
-        learningItemId: null,
-        abilityCategory: 'listening' as const,
-        vocabularyDimension: null,
-        source: source as never,
-        taskType: input.activity.taskType as never,
-        prompted: input.assessment.prompted,
-        independent: input.assessment.independent,
-        scenario: input.activity.scenario as never,
-        occurredAt: new Date().toISOString(),
-        credibility: source === 'pronunciation_api' ? 1 : 0.9,
-        contributesToPromotion: true,
-        succeeded: input.assessment.passed,
-        score: input.assessment.score,
-        errorUnits: input.assessment.errorUnits,
-        note: null,
-        thresholdVersion: input.assessment.thresholdVersion,
-        ruleVersion: 'R1-R7',
-      },
-    ];
+        return {
+          id,
+          learnerId: input.learnerId,
+          lessonSessionId: input.lessonSessionId,
+          skillNodeId,
+          learningItemId: null,
+          abilityCategory,
+          vocabularyDimension: null,
+          source: source as never,
+          taskType: activity.taskType as never,
+          prompted: input.assessment.prompted,
+          independent: input.assessment.independent,
+          scenario: activity.scenario as never,
+          occurredAt,
+          credibility: source === 'pronunciation_api' ? 1 : 0.9,
+          contributesToPromotion: true,
+          succeeded: input.assessment.passed,
+          score: input.assessment.score,
+          errorUnits: input.assessment.errorUnits,
+          note: null,
+          thresholdVersion: input.assessment.thresholdVersion,
+          ruleVersion: 'R1-R7',
+        };
+      }),
+    );
   }
 
   /** 重算能力状态（规则引擎）。 */
