@@ -41,7 +41,7 @@ function adapterOptions(extra: Partial<SignedTtsOptions> = {}): SignedTtsOptions
     action: 'TextToVoice',
     version: '2019-08-23',
     region: 'ap-guangzhou',
-    voice: '502001',
+    voice: '990001',
     codec: 'mp3',
     pricing: { checkedAt: '2026-11-07' },
     audioDir: mkdtempSync(join(tmpdir(), 'alg-tts-')),
@@ -190,7 +190,7 @@ describe('签名型 TTS 适配器', () => {
     assert.match(String(seen[0]!.body.SessionId), /^[0-9a-f-]{36}$/);
     assert.notEqual(seen[0]!.body.SessionId, seen[1]!.body.SessionId);
     assert.equal(seen[0]!.body.Codec, 'mp3');
-    assert.equal(seen[0]!.body.VoiceType, 502001);
+    assert.equal(seen[0]!.body.VoiceType, 990001);
     assert.equal(seen[0]!.body.Speed, mapTeacherSpeedToOffset(0.65));
     assert.notEqual(seen[0]!.auth, seen[1]!.auth);
   });
@@ -223,7 +223,7 @@ describe('签名型 TTS 适配器', () => {
     ).invoke(request());
 
     assert.equal(body.Text, 'Hello. Listen and say hello.');
-    assert.equal(body.VoiceType, 502001);
+    assert.equal(body.VoiceType, 990001);
     assert.equal(body.Codec, 'mp3');
     assert.equal(body.Reasoning, 'low');
   });
