@@ -28,7 +28,7 @@
 1. **不要把所有供应商 SDK 放入 APK。** 原生 SDK 会增加 APK 体积、权限、初始化和兼容维护成本。服务端模型设置也不能切换一个 APK 中不存在的 SDK。
 2. **发音评测统一走服务端适配器。** 腾讯 SOE Android AAR、阿里 SSECP SDK 和其他厂商 SDK 不固化进 APK。服务端保管凭据、执行会员/额度校验、按配置优先级和超时主备切换；供应商是否适合正式启用由真实账号和儿童样本验收决定。
 3. **厂商接入形态不同。** 用户提供的腾讯包是 Android AAR 与 iOS XCFramework；阿里 SSECP 是端侧 SDK；讯飞 ISE/SunTone、Azure Speech Assessment、Speechace 和腾讯 SOE 都可以通过服务端 API 接入。不能用一个统一客户端调用假设覆盖所有厂商。
-4. **已按最新架构改为服务端多供应商主备。** 音素评测不把供应商 SDK 嵌入 APK。`ai_provider_configs` 允许同一 `serviceKind=pronunciation` 保存多条配置，每条配置有优先级、单家超时、自定义 endpoint 和独立加密凭据；Gateway 只把启用且通过儿童专项 Benchmark 的配置加入候选，调用失败或超时自动尝试下一家。真实供应商全部失败时直接报告不可用，不伪造发音分数。
+4. **已按最新架构改为服务端多供应商主备。** 音素评测不把供应商 SDK 嵌入 APK。`ai_provider_configs` 允许同一 `serviceKind=pronunciation` 保存多条配置，每条配置有优先级、单家超时、自定义 endpoint 和独立加密凭据；Gateway 把启用配置按优先级加入候选，调用失败或超时自动尝试下一家。儿童专项 Benchmark 不再要求管理员手工填入，系统改为记录真实运行调用的次数、延迟和降级情况；儿童教学效果需要结合学习结果持续评估。真实供应商全部失败时直接报告不可用，不伪造发音分数。
 5. **讯飞 TTS/普通 ASR 已按服务端 API 预置。** 超拟人 TTS 使用 WebSocket `/v1/private/mcd9m97e6`，支持 AppID、API Key、API Secret 签名；IAT V2 使用 `iat.cn-huabei-1.xf-yun.com/v1` 的同类签名和首帧/中间帧/结束帧传输，当前适配器限制为 16 kHz、16-bit、单声道 PCM WAV、最长 60 秒，并检查会话错误与识别结果。两个 endpoint 均可在后台自定义。讯飞 SunTone/ISE 评测保留独立适配器与配置入口，不能把旧 ISE 协议当作所有账号的当前协议；实际生产启用前仍需用已开通账号和儿童样本完成接口验收。
 
 ## 后续顺序

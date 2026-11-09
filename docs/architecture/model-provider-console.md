@@ -39,6 +39,6 @@ SMTP 配置、备份目标和 WebDAV 凭据均在管理后台保存到数据库�
 - `pronunciation` 接收音频、目标文本、语言和评测粒度，输出总体分数及单词/音节/音素明细。
 - Azure 直接返回音素级 `AccuracyScore`；腾讯 SOE 返回其逐音素结果；讯飞 ISE 的明细结构包含 word/syllable/phone 层级。平台的音频格式、时长、语言和音素格式要求不同，超出平台能力时应由各自调用报错，不做 ASR 结果伪装。
 - Speechace 使用单独的订阅 API Key 和区域 endpoint，英文支持 `en-us` / `en-gb`；其 Score Text API 可返回单词、音节、音素及重音分数。驰声在百度 AI 市场的产品来自独立服务商，运行时使用驰声 API 而不是百度千帆鉴权。
-- 阿里云 SSECP、腾讯 SOE、讯飞 SunTone/ISE、Azure 和 Speechace 均按服务端 API 适配器管理。当前不把它们的 SDK 固化进 Android；管理员可以为同一 `pronunciation` 类型配置多条记录，按优先级、超时和 Benchmark 自动主备切换。讯飞 ISE 旧协议与 SunTone 当前协议可能因账号产品不同而不同，正式启用前必须按控制台开通能力完成真实验收。
+- 阿里云 SSECP、腾讯 SOE、讯飞 SunTone/ISE、Azure 和 Speechace 均按服务端 API 适配器管理。当前不把它们的 SDK 固化进 Android；管理员可以为同一 `pronunciation` 类型配置多条记录，按优先级和单家超时自动主备切换。儿童专项 Benchmark 不再作为手工启用门槛；模型开始运行后，后台自动展示近 30 天的调用次数、平均延迟和运行速度分。讯飞 ISE 旧协议与 SunTone 当前协议可能因账号产品不同而不同，正式启用前必须按控制台开通能力完成真实接口验收。
 
 腾讯与 Azure 适配器需 Node.js 20.10 或更高版本提供全局 WebSocket 能力。Azure REST 适配器面向平台短音频识别限制；长音频应在后续接入其连续评测协议。

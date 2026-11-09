@@ -239,6 +239,48 @@ export class ProviderConfigService {
     }));
   }
 
+  async listRuntimeScores(serviceKind: ServiceKind) {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const rows = await this.prisma.ai_usage_logs.findMany({
+      where: { serviceKind, createdAt: { gte: since } },
+      select: { providerAlias: true, modelAlias: true, latencyMs: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const grouped = new Map<string, {
+      providerAlias: string;
+      modelAlias: string;
+      calls: number;
+      latencyTotal: number;
+      lastUsedAt: Date;
+    }>();
+    for (const row of rows) {
+      const key = `${row.providerAlias}\u0000${row.modelAlias}`;
+      const item = grouped.get(key) ?? {
+        providerAlias: row.providerAlias,
+        modelAlias: row.modelAlias,
+        calls: 0,
+        latencyTotal: 0,
+        lastUsedAt: row.createdAt,
+      };
+      item.calls += 1;
+      item.latencyTotal += row.latencyMs;
+      grouped.set(key, item);
+    }
+    return [...grouped.values()].map((item) => {
+      const averageLatencyMs = Math.round(item.latencyTotal / item.calls);
+      const latencyScore = Math.max(0, Math.min(100, Math.round(100 * (1 - averageLatencyMs / 10000))));
+      return {
+        providerAlias: item.providerAlias,
+        modelAlias: item.modelAlias,
+        calls: item.calls,
+        averageLatencyMs,
+        lastUsedAt: item.lastUsedAt.toISOString(),
+        latencyScore,
+        scoreLabel: '运行速度分',
+      };
+    });
+  }
+
   async recordBenchmark(input: unknown) {
     const parsed = benchmarkInput.safeParse(input);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());

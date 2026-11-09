@@ -122,9 +122,7 @@ services:
       - alg-net
 
   curriculum-generator:
-    build:
-      context: ../..
-      dockerfile: services/curriculum-generator/Dockerfile
+    image: ghcr.io/25283531/curriculum-generator:latest
     container_name: alg-curriculum-generator
     restart: unless-stopped
     environment:

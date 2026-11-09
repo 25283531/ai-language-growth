@@ -29,11 +29,14 @@ type Config = {
   credentialConfigured?: boolean;
   options: Record<string, unknown>;
 };
-type ModelBenchmark = {
+type RuntimeScore = {
+  providerAlias: string;
   modelAlias: string;
-  level: string;
-  enabled: boolean;
-  benchmarks: Array<{ id: string; score: number; sampleCount: number; passed: boolean; notes: string | null; testedAt: string }>;
+  calls: number;
+  averageLatencyMs: number;
+  lastUsedAt: string;
+  latencyScore: number;
+  scoreLabel: string;
 };
 function apiRoot(): string {
   return '';
@@ -88,12 +91,8 @@ export default function AdminPage() {
   const [active, setActive] = useState<ServiceKind>('llm');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [benchmarks, setBenchmarks] = useState<ModelBenchmark[]>([]);
+  const [runtimeScores, setRuntimeScores] = useState<RuntimeScore[]>([]);
   const [pricing, setPricing] = useState<Partial<Record<PriceType, string>>>({});
-  const [benchmarkScore, setBenchmarkScore] = useState('');
-  const [benchmarkSamples, setBenchmarkSamples] = useState('');
-  const [benchmarkPassed, setBenchmarkPassed] = useState(false);
-  const [benchmarkNotes, setBenchmarkNotes] = useState('');
   const service = services.find((item) => item.id === active)!;
   const available = useMemo(() => catalog.filter((item) => item.services.includes(active)), [catalog, active]);
   const current = configs[active].find((item) => (item.id ?? item.draftKey) === activeConfigIds[active])
@@ -114,17 +113,17 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (active === 'embedding') {
-      setBenchmarks([]);
+      setRuntimeScores([]);
       return;
     }
-    void fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}${current.id ? `&configId=${current.id}` : ''}`)
+    void fetch(`${apiRoot()}/api/v1/admin/model-providers/runtime-scores?serviceKind=${active}`)
       .then(async (res) => {
-        if (!res.ok) throw new Error((await res.json()).message ?? `读取 Benchmark 失败 (${res.status})`);
+        if (!res.ok) throw new Error((await res.json()).message ?? `读取自动评分失败 (${res.status})`);
         return res.json();
       })
-      .then(setBenchmarks)
-      .catch((error) => setMessage(error instanceof Error ? error.message : '读取 Benchmark 失败'));
-  }, [active, current.id]);
+      .then(setRuntimeScores)
+      .catch((error) => setMessage(error instanceof Error ? error.message : '读取自动评分失败'));
+  }, [active]);
 
   useEffect(() => {
     void loadPrices().catch((error) => setMessage(error instanceof Error ? error.message : '读取单价失败'));
@@ -137,7 +136,6 @@ export default function AdminPage() {
     const grouped = Object.fromEntries(services.map(({ id }) => [id, rows.filter((row) => row.serviceKind === id)])) as Record<ServiceKind, Config[]>;
     setConfigs(grouped);
     setActiveConfigIds(Object.fromEntries(services.map(({ id }) => [id, grouped[id][0]?.id ?? grouped[id][0]?.draftKey]).filter(([, id]) => Boolean(id))) as Partial<Record<ServiceKind, string>>);
-    if (active !== 'embedding') await loadBenchmarks();
     setMessage('已读取现有配置。');
   }
 
@@ -172,27 +170,6 @@ export default function AdminPage() {
     }
   }
 
-  async function loadBenchmarks() {
-    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}${current.id ? `&configId=${current.id}` : ''}`);
-    if (!res.ok) throw new Error((await res.json()).message ?? `读取 Benchmark 失败 (${res.status})`);
-    setBenchmarks(await res.json());
-  }
-
-  async function saveBenchmark() {
-    setBusy(true); setMessage('正在保存儿童专项测试结果…');
-    try {
-      const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ serviceKind: active, configId: current.id, modelAlias: current.modelAlias, score: Number(benchmarkScore), sampleCount: Number(benchmarkSamples), passed: benchmarkPassed, notes: benchmarkNotes }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.message ?? `保存失败 (${res.status})`);
-      await loadBenchmarks();
-      setMessage(body.passed ? '测试记录已保存，模型通过 Benchmark 并已应用。' : '测试记录已保存，模型仍由本地 Mock 处理。');
-    } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
-    finally { setBusy(false); }
-  }
-
   function chooseProvider(id: string) {
     const preset = catalog.find((item) => item.id === id);
     const next = { ...current, providerPresetId: id, baseUrl: preset?.defaultBaseUrls[active] ?? '', modelAlias: id, options: id === 'azure-speech' ? { region: 'eastus' } : {} };
@@ -216,10 +193,9 @@ export default function AdminPage() {
       });
       setActiveConfigIds((old) => ({ ...old, [active]: body.id }));
       setCredentials((old) => ({ ...old, [active]: {} }));
-      if (active !== 'embedding') await loadBenchmarks();
       setMessage(active === 'embedding'
         ? 'Embedding 配置已加密保存。当前尚未接入语义检索调用链，不会发送向量请求。'
-        : '配置已加密保存；通过儿童专项 Benchmark 后才会启用真实模型。');
+        : '配置已加密保存并应用；后续调用会自动记录运行速度分。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
     finally { setBusy(false); }
   }
@@ -244,7 +220,7 @@ export default function AdminPage() {
 
   return <main className="shell"><AdminNav />
     <header className="topbar"><div><p className="eyebrow">AI LANGUAGE GROWTH</p><h1>模型接入</h1></div><button className="secondary" onClick={() => void loadConfigs().catch((error) => setMessage(error.message))}>读取配置</button></header>
-    <><section className="notice"><strong>{active === 'embedding' ? '语义检索模型配置' : '两类语音能力分开配置'}</strong><span>{active === 'embedding' ? 'Embedding 是 Mem0 语义记忆与课程 RAG 的基础能力。当前先保存服务商和模型配置，检索链路接入并验证前不会调用该模型。' : '普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。真实模型须先通过对应的儿童专项 Benchmark。'}</span></section>
+    <><section className="notice"><strong>{active === 'embedding' ? '语义检索模型配置' : '两类语音能力分开配置'}</strong><span>{active === 'embedding' ? 'Embedding 是 Mem0 语义记忆与课程 RAG 的基础能力。当前先保存服务商和模型配置，检索链路接入并验证前不会调用该模型。' : '普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。启用配置后按优先级自动调用并故障切换。'}</span></section>
     <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{configs[item.id].some((config) => config.enabled) ? item.id === 'embedding' ? '已配置' : '已启用' : '未启用'}</i></button>)}</nav>
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => {
         const next = { ...current, enabled: event.target.checked };
@@ -284,16 +260,10 @@ export default function AdminPage() {
           <p className="helper">{active === 'pronunciation' ? '发音评测会将音频与目标文本一起发送。讯飞 ISE 需 16kHz 单声道音频；腾讯 SOE 使用签名 WebSocket；Azure 通过区域 Speech endpoint 评测。需先在对应控制台开通服务。' : active === 'asr' ? '此项只配置普通转写服务。音素级能力请在左侧单独配置。' : active === 'embedding' ? 'Embedding 用于后续的 Mem0 交互记忆语义检索和课程知识库 RAG。当前页面只保存平台、模型、接入点和密钥，尚未把未验证的向量检索结果用于教学决策。' : '填写平台账号凭据即可；接入地址可以编辑，以适应区域域名或供应商 API 地址变更。凭据在服务端使用 AES-256-GCM 加密后入库，页面不会回显已保存的密钥。'}</p>
           {(catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl) && <a className="doclink" href={catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl ?? ''} target="_blank" rel="noreferrer">打开此服务的官方接入文档 ↗</a>}
           {active !== 'embedding' && <section className="benchmark">
-            <h3>儿童专项 Benchmark</h3>
-            <p className="helper">记录本服务的儿童英语样本评测结果。只有明确标记通过且样本数大于 0，真实模型才会接管调用；否则使用本地 Mock。</p>
-            <div className="fields">
-              <label>测试分数<input type="number" step="any" value={benchmarkScore} onChange={(event) => setBenchmarkScore(event.target.value)} placeholder="按测试集评分口径填写"/></label>
-              <label>样本数<input type="number" min="1" step="1" value={benchmarkSamples} onChange={(event) => setBenchmarkSamples(event.target.value)} placeholder="实际测试样本数"/></label>
-            </div>
-            <label>测试说明<input value={benchmarkNotes} onChange={(event) => setBenchmarkNotes(event.target.value)} placeholder="年龄段、口音、测试集版本与结果摘要"/></label>
-            <label className="switch"><input type="checkbox" checked={benchmarkPassed} onChange={(event) => setBenchmarkPassed(event.target.checked)}/><span>该模型通过本服务专项测试</span></label>
-            <button className="secondary" disabled={!current.modelAlias || !benchmarkScore || !benchmarkSamples || busy} onClick={() => void saveBenchmark()}>保存测试结果并刷新模型接入</button>
-            <div className="benchmark-list">{benchmarks.flatMap((model) => model.benchmarks.map((entry) => <div className="helper" key={entry.id}>{model.modelAlias} · {entry.passed ? '通过' : '未通过'} · 分数 {entry.score} · 样本 {entry.sampleCount} · {new Date(entry.testedAt).toLocaleDateString()}</div>))}</div>
+            <h3>自动运行评分</h3>
+            <p className="helper">模型投入使用后自动按已完成调用统计速度分和平均响应时间。该指标反映线上运行表现；儿童教学效果仍需结合真实学习结果评估。</p>
+            <div className="benchmark-list">{runtimeScores.map((item) => <div className="helper" key={`${item.providerAlias}-${item.modelAlias}`}>{item.providerAlias} · {item.modelAlias} · {item.scoreLabel} {item.latencyScore}/100 · 平均 {item.averageLatencyMs} ms · {item.calls} 次调用 · 最近 {new Date(item.lastUsedAt).toLocaleString()}</div>)}</div>
+            {!runtimeScores.length && <p className="helper">尚无近 30 天调用数据；模型开始接收请求后会自动显示。</p>}
           </section>}
           <section className="benchmark">
             <h3>模型计价</h3>

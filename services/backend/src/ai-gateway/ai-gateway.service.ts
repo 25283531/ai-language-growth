@@ -106,29 +106,29 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       this.providerTimeouts.delete(alias);
     }
     const configs = (await this.providerConfigs.listEnabledRuntimeConfigs()).filter((item) => item.serviceKind === serviceKind);
-    const passing: RuntimeProviderConfig[] = [];
+    const enabled: RuntimeProviderConfig[] = [];
     if (configs.length) {
       for (const config of configs) {
         await this.applyRuntimeProvider(config);
-        if (await this.providerConfigs.hasPassingBenchmark(serviceKind, config.modelAlias, config.id)) passing.push(config);
+        enabled.push(config);
       }
     }
-    const candidates = passing.map((config) => `configured_${serviceKind}_${config.id}`);
+    const candidates = enabled.map((config) => `configured_${serviceKind}_${config.id}`);
     if (serviceKind === 'pronunciation') this.pronunciationCandidates = candidates;
     else {
       this.runtimeCandidates[serviceKind] = candidates;
       if (serviceKind === 'llm') {
-        this.smallLlmCandidates = passing
+        this.smallLlmCandidates = enabled
           .filter((config) => config.options.role === 'small')
           .map((config) => `configured_llm_${config.id}`);
-        this.mainLlmCandidates = passing
+        this.mainLlmCandidates = enabled
           .filter((config) => config.options.role !== 'small')
           .map((config) => `configured_llm_${config.id}`);
       }
     }
     const primary = serviceKind === 'llm'
-      ? passing.find((config) => config.options.role !== 'small')
-      : passing[0];
+      ? enabled.find((config) => config.options.role !== 'small')
+      : enabled[0];
     this.modelRouter.setProviderAlias(
       serviceKind,
       primary ? `configured_${serviceKind}_${primary.id}` : MOCK_PROVIDER_ALIASES[serviceKind],

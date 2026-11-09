@@ -52,6 +52,16 @@ export class ProviderConfigController {
     return this.configs.listBenchmarks(serviceKind, configId);
   }
 
+  @Get('runtime-scores')
+  async runtimeScores(
+    @Headers('x-admin-token') token: string | undefined,
+    @Query('serviceKind') serviceKind: ServiceKind,
+  ) {
+    this.configs.assertAdminToken(token);
+    if (!SERVICE_KINDS.includes(serviceKind)) return [];
+    return this.configs.listRuntimeScores(serviceKind);
+  }
+
   @Post('benchmarks')
   async recordBenchmark(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
     this.configs.assertAdminToken(token);
