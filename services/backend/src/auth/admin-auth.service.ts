@@ -90,9 +90,9 @@ export class AdminAuthService {
     }
   }
 
-  cookie(token: string, expiresAt: string): string {
-    const secure = process.env.NODE_ENV === 'production' ? ' Secure;' : '';
-    return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${secure} Expires=${new Date(expiresAt).toUTCString()}`;
+  cookie(token: string, expiresAt: string, secure = false): string {
+    const secureFlag = secure ? ' Secure;' : '';
+    return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${secureFlag} Expires=${new Date(expiresAt).toUTCString()}`;
   }
 
   clearCookie(): string {

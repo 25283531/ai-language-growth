@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Headers, HttpException, Post, Put, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, Post, Put, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
+import type { Request } from 'express';
 import { z } from 'zod';
 import { AuthService, extractBearerToken } from './auth.service';
 import { EmailService } from './email.service';
@@ -26,6 +27,12 @@ function clearSessionCookie(response: Response) {
   response.setHeader('Set-Cookie', 'alg_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
 }
 
+function requestIsSecure(request: Request): boolean {
+  const forwarded = request.headers['x-forwarded-proto'];
+  const protocol = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0]?.trim();
+  return protocol === 'https' || request.protocol === 'https';
+}
+
 @Controller('api/v1/auth')
 export class AuthController {
   constructor(
@@ -34,20 +41,20 @@ export class AuthController {
   ) {}
 
   @Post('register')
-  async register(@Body() body: unknown, @Res({ passthrough: true }) response: Response) {
+  async register(@Body() body: unknown, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const parsed = registerSchema.safeParse(body);
     if (!parsed.success) throw new HttpException({ message: '注册信息不完整', detail: parsed.error.flatten() }, 400);
     const result = await this.auth.register(parsed.data);
-    setSessionCookie(response, result.accessToken, result.expiresAt, process.env.NODE_ENV === 'production');
+    setSessionCookie(response, result.accessToken, result.expiresAt, requestIsSecure(request));
     return result;
   }
 
   @Post('login')
-  async login(@Body() body: unknown, @Res({ passthrough: true }) response: Response) {
+  async login(@Body() body: unknown, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const parsed = loginSchema.safeParse(body);
     if (!parsed.success) throw new HttpException({ message: '登录信息不完整' }, 400);
     const result = await this.auth.login(parsed.data);
-    setSessionCookie(response, result.accessToken, result.expiresAt, process.env.NODE_ENV === 'production');
+    setSessionCookie(response, result.accessToken, result.expiresAt, requestIsSecure(request));
     return result;
   }
 
@@ -124,12 +131,12 @@ export class AdminAuthController {
   constructor(private readonly adminAuth: AdminAuthService) {}
 
   @Post('login')
-  login(@Body() body: unknown, @Res({ passthrough: true }) response: Response) {
+  login(@Body() body: unknown, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const parsed = adminLoginSchema.safeParse(body);
     if (!parsed.success) throw new HttpException({ message: '请输入管理员账号和密码' }, 400);
     const result = this.adminAuth.login(parsed.data.username, parsed.data.password);
     const session = this.adminAuth.createSession(result.username);
-    response.setHeader('Set-Cookie', this.adminAuth.cookie(session.token, session.expiresAt));
+    response.setHeader('Set-Cookie', this.adminAuth.cookie(session.token, session.expiresAt, requestIsSecure(request)));
     return { username: result.username, expiresAt: session.expiresAt };
   }
 
