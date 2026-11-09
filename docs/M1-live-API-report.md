@@ -427,3 +427,5 @@ bash tools/verify_m1_loop.sh
 - 本轮验证在 `git worktree` 干净 HEAD + 精确 9 文件上进行，用 `node_modules` 目录联接复用依赖；并只在 worktree 的**已编译 dist**（build 产物、绝不提交）里加了一个验证专用 shim：跳过管理端运行时供应商配置装载。
 - **未修改共享数据库 schema、未应用他方迁移、未改共享 `node_modules`**。
 - 隧道：原目标 `127.0.0.1:5433/6380` 已失效（远端容器不再发布主机端口）；新隧道 `15434→172.19.0.3:5432`（PG，SCRAM-SHA-256 握手通过）、`16381→172.19.0.2:6379`（Redis `+PONG`）。
+- **并发会话造成的本地提交分叉（事实登记）**：本轮代码 / 配置 6 文件在干净 `git worktree` 提交为 `0fe159b` 并已推送 `origin/main`（CI run `42593265380` `completed / success`）；主工作区另有并发本地提交 `01c97f4`（parent `188d369`、21 文件一次性提交、**未推送**），与 `0fe159b` 分叉。已核对本轮 6 个代码 / 配置文件在两提交中**逐字节相同**；未 force-push、未替对方改写历史。详见 `docs/M1-QA-report.md` §9.8。
+- **`ttsCache` 测试隔离风险**：同一 3100 进程内重复跑根 `npm test` 会从 64/64/0 变 64/63/1，失败于 `m1-api.integration.test.ts:75` 的 `firstSpeech.cached`；登记为 M2 / 残余风险，**不是本轮 9 文件的代码回归**。受控复现日志 `tools/_npmtest_20261109_run1_fresh.log` / `_npmtest_20261109_run2_same_process.log`。
