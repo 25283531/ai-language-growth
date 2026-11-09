@@ -71,6 +71,13 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   private readonly ttsCache = new Map<string, { audioRef: string; characters: number }>();
   private readonly providerTimeouts = new Map<string, number>();
   private pronunciationCandidates: string[] = [];
+  private readonly runtimeCandidates: Record<'llm' | 'tts' | 'asr', string[]> = {
+    llm: [],
+    tts: [],
+    asr: [],
+  };
+  private smallLlmCandidates: string[] = [];
+  private mainLlmCandidates: string[] = [];
 
   constructor(
     @Inject(ModelRouterImpl) private readonly modelRouter: ModelRouterImpl,
@@ -87,44 +94,50 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    const configs = await this.providerConfigs.listEnabledRuntimeConfigs();
-    for (const config of configs.filter((item) => item.serviceKind !== 'pronunciation')) {
-      await this.applyRuntimeProvider(config);
+    for (const kind of ['llm', 'tts', 'asr', 'pronunciation'] as const) {
+      await this.refreshRuntimeProvider(kind);
     }
-    await this.refreshRuntimeProvider('pronunciation');
   }
 
   /** Apply an operator-selected provider immediately after a configuration save. */
   async refreshRuntimeProvider(serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation'): Promise<void> {
-    for (const alias of this.registry.list(serviceKind).filter((item) => item.startsWith('configured_'))) {
+    for (const alias of this.registry.list(serviceKind).filter((item) => item.startsWith(`configured_${serviceKind}_`))) {
       this.registry.unregister(serviceKind, alias);
       this.providerTimeouts.delete(alias);
     }
     const configs = (await this.providerConfigs.listEnabledRuntimeConfigs()).filter((item) => item.serviceKind === serviceKind);
+    const passing: RuntimeProviderConfig[] = [];
     if (configs.length) {
-      for (const config of configs) await this.applyRuntimeProvider(config);
-      if (serviceKind === 'pronunciation') {
-        const passing: RuntimeProviderConfig[] = [];
-        for (const config of configs) {
-          if (await this.providerConfigs.hasPassingBenchmark(serviceKind, config.modelAlias, config.id)) passing.push(config);
-        }
-        this.pronunciationCandidates = passing.map((config) => `configured_pronunciation_${config.id}`);
-        if (passing[0]) {
-          this.modelRouter.setProviderAlias(serviceKind, this.pronunciationCandidates[0]!, passing[0].modelAlias);
-        } else {
-          this.modelRouter.setProviderAlias(serviceKind, MOCK_PROVIDER_ALIASES.pronunciation);
-        }
+      for (const config of configs) {
+        await this.applyRuntimeProvider(config);
+        if (await this.providerConfigs.hasPassingBenchmark(serviceKind, config.modelAlias, config.id)) passing.push(config);
       }
-      return;
     }
-    if (serviceKind === 'pronunciation') this.pronunciationCandidates = [];
-    this.modelRouter.setProviderAlias(serviceKind, resolveProviderAliases()[serviceKind]);
+    const candidates = passing.map((config) => `configured_${serviceKind}_${config.id}`);
+    if (serviceKind === 'pronunciation') this.pronunciationCandidates = candidates;
+    else {
+      this.runtimeCandidates[serviceKind] = candidates;
+      if (serviceKind === 'llm') {
+        this.smallLlmCandidates = passing
+          .filter((config) => config.options.role === 'small')
+          .map((config) => `configured_llm_${config.id}`);
+        this.mainLlmCandidates = passing
+          .filter((config) => config.options.role !== 'small')
+          .map((config) => `configured_llm_${config.id}`);
+      }
+    }
+    const primary = serviceKind === 'llm'
+      ? passing.find((config) => config.options.role !== 'small')
+      : passing[0];
+    this.modelRouter.setProviderAlias(
+      serviceKind,
+      primary ? `configured_${serviceKind}_${primary.id}` : MOCK_PROVIDER_ALIASES[serviceKind],
+      primary?.modelAlias,
+    );
   }
 
   private async applyRuntimeProvider(config: RuntimeProviderConfig): Promise<void> {
-    const alias = config.serviceKind === 'pronunciation'
-      ? `configured_pronunciation_${config.id}`
-      : `configured_${config.serviceKind}`;
+    const alias = `configured_${config.serviceKind}_${config.id}`;
     this.providerTimeouts.set(alias, config.timeoutMs);
     const options: HttpServiceOptions = {
       alias,
@@ -180,28 +193,38 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         }
         break;
     }
-    const benchmarkPassed = await this.providerConfigs.hasPassingBenchmark(
-      config.serviceKind,
-      config.modelAlias,
-      config.id,
-    );
-    if (benchmarkPassed && config.serviceKind !== 'pronunciation') {
-      this.modelRouter.setProviderAlias(config.serviceKind, alias, config.modelAlias);
-      this.logger.log(`运行时模型连接已更新：${config.serviceKind} → ${alias}（儿童专项 Benchmark 通过）`);
-    } else if (config.serviceKind !== 'pronunciation') {
-      this.modelRouter.setProviderAlias(config.serviceKind, MOCK_PROVIDER_ALIASES[config.serviceKind]);
-      this.logger.warn(`模型 ${config.serviceKind}/${config.modelAlias} 尚无通过的儿童专项 Benchmark，暂使用本地 Mock`);
-    }
+    this.logger.log(`运行时模型连接已加载：${config.serviceKind} → ${alias}`);
   }
 
   // ——————————————————— LLM ———————————————————
 
   async llm(request: LlmRequest, decision: RoutingDecision): Promise<LlmResponse> {
+    const primaryCandidates = this.mainLlmCandidates.length
+      ? this.mainLlmCandidates
+      : this.runtimeCandidates.llm.length
+        ? this.runtimeCandidates.llm.filter((alias) => !this.smallLlmCandidates.includes(alias))
+        : [decision.providerAlias];
     const outcome = await this.callWithFallback<LlmResponse>(
       'llm',
       decision,
       async (adapter) => (adapter as LlmAdapter).invoke(request),
       'mock_llm',
+      primaryCandidates,
+    );
+    return outcome.result;
+  }
+
+  /** Lightweight LLM role for memory extraction and content enrichment. */
+  async smallLlm(request: LlmRequest, decision: RoutingDecision): Promise<LlmResponse> {
+    const outcome = await this.callWithFallback<LlmResponse>(
+      'llm',
+      decision,
+      async (adapter, timeoutMs) => (adapter as LlmAdapter).invoke({
+        ...request,
+        ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
+      }),
+      'mock_llm',
+      [...this.smallLlmCandidates, ...this.mainLlmCandidates],
     );
     return outcome.result;
   }
@@ -362,13 +385,18 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     decision: RoutingDecision,
     invoke: (adapter: unknown, timeoutMs?: number) => Promise<T>,
     lastResortAlias?: string,
+    candidateOverride?: string[],
   ): Promise<GatewayCallResult<T>> {
     const started = Date.now();
     const reasons: string[] = [];
 
-    const candidates = serviceKind === 'pronunciation'
+    const candidates = candidateOverride !== undefined
+      ? candidateOverride
+      : serviceKind === 'pronunciation'
       ? this.pronunciationCandidates
-      : [decision.providerAlias];
+      : this.runtimeCandidates[serviceKind].length
+        ? this.runtimeCandidates[serviceKind]
+        : [decision.providerAlias];
 
     for (const candidateAlias of candidates) {
       const primary = this.registry.get(serviceKind, candidateAlias);
@@ -378,10 +406,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       }
       try {
         const result = await this.invokeWithTimeout(invoke, primary, this.providerTimeouts.get(candidateAlias));
+        const degraded = decision.fellBack || candidateAlias !== decision.providerAlias;
         return {
           result,
-          degraded: decision.fellBack || candidateAlias !== decision.providerAlias,
-          reasons: decision.fellBack || candidateAlias !== decision.providerAlias ? [`fallback_to_${candidateAlias}`] : [],
+          degraded,
+          reasons: degraded ? [...reasons, `fallback_to_${candidateAlias}`] : [],
           effectiveLevel: decision.level,
           providerAlias: candidateAlias,
           latencyMs: Date.now() - started,

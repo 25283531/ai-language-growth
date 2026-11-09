@@ -138,9 +138,7 @@ export class ProviderConfigService {
 
     const existing = value.id
       ? await this.prisma.ai_provider_configs.findFirst({ where: { id: value.id, serviceKind: value.serviceKind } })
-      : value.serviceKind === 'pronunciation'
-        ? undefined
-        : await this.prisma.ai_provider_configs.findFirst({ where: { serviceKind: value.serviceKind } });
+      : undefined;
     if (value.id && !existing) throw new BadRequestException('模型配置不存在或服务类型不匹配');
     const credentials = { ...value.credentials };
     if (value.apiKey?.trim()) credentials.apiKey = value.apiKey.trim();
@@ -390,9 +388,7 @@ export class ProviderConfigService {
   }
 
   private providerAlias(serviceKind: ServiceKind | ProviderServiceKind, configId?: string): string {
-    return serviceKind === 'pronunciation'
-      ? `configured_pronunciation_${configId ?? ''}`
-      : `configured_${serviceKind}`;
+    return `configured_${serviceKind}_${configId ?? ''}`;
   }
 
   private async syncModelCatalog(value: z.infer<typeof configInput>, configId: string): Promise<void> {

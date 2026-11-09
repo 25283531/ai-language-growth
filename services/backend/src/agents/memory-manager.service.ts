@@ -58,7 +58,7 @@ export class MemoryManagerService {
 
     const decision = await this.router.route({ serviceKind: 'llm', taskRoute: 'llm.memory_extraction' });
     try {
-      const result = await this.gateway.llm({
+      const result = await this.gateway.smallLlm({
         promptKey: 'memory_manager.lesson_extraction',
         promptVersion: 'v1',
         system: [

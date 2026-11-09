@@ -78,11 +78,10 @@ function emptyConfig(serviceKind: ServiceKind): Config {
 
 export default function AdminPage() {
   const [catalog, setCatalog] = useState<Preset[]>([]);
-  const [configs, setConfigs] = useState<Record<ServiceKind, Config>>({
-    llm: emptyConfig('llm'), tts: emptyConfig('tts'), asr: emptyConfig('asr'), pronunciation: emptyConfig('pronunciation'), embedding: emptyConfig('embedding'),
+  const [configs, setConfigs] = useState<Record<ServiceKind, Config[]>>({
+    llm: [], tts: [], asr: [], pronunciation: [], embedding: [],
   });
-  const [pronunciationConfigs, setPronunciationConfigs] = useState<Config[]>([]);
-  const [activePronunciationId, setActivePronunciationId] = useState<string | undefined>();
+  const [activeConfigIds, setActiveConfigIds] = useState<Partial<Record<ServiceKind, string>>>({});
   const [credentials, setCredentials] = useState<Record<ServiceKind, Record<string, string>>>({
     llm: {}, tts: {}, asr: {}, pronunciation: {}, embedding: {},
   });
@@ -97,20 +96,16 @@ export default function AdminPage() {
   const [benchmarkNotes, setBenchmarkNotes] = useState('');
   const service = services.find((item) => item.id === active)!;
   const available = useMemo(() => catalog.filter((item) => item.services.includes(active)), [catalog, active]);
-  const current = active === 'pronunciation'
-    ? (pronunciationConfigs.find((item) => (item.id ?? item.draftKey) === activePronunciationId) ?? pronunciationConfigs[0] ?? configs.pronunciation)
-    : configs[active];
+  const current = configs[active].find((item) => (item.id ?? item.draftKey) === activeConfigIds[active])
+    ?? configs[active][0]
+    ?? emptyConfig(active);
   const credentialFields = (credentialLabels[current.providerPresetId] ?? []).filter(([key]) => current.providerPresetId !== 'iflytek-spark' || active !== 'pronunciation' || key !== 'apiSecret');
   function updateCurrent(next: Config) {
-    if (active === 'pronunciation') {
-      const key = activePronunciationId;
-      setPronunciationConfigs((old) => {
-        const index = old.findIndex((item) => (item.id ?? item.draftKey) === key);
-        return index >= 0 ? old.map((item, i) => i === index ? next : item) : old.length ? old : [next];
-      });
-    } else {
-      setConfigs((old) => ({ ...old, [active]: next }));
-    }
+    const key = activeConfigIds[active] ?? current.id ?? current.draftKey;
+    setConfigs((old) => {
+      const index = old[active].findIndex((item) => (item.id ?? item.draftKey) === key);
+      return { ...old, [active]: index >= 0 ? old[active].map((item, i) => i === index ? next : item) : [...old[active], next] };
+    });
   }
 
   useEffect(() => {
@@ -139,10 +134,9 @@ export default function AdminPage() {
     const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs`);
     if (!res.ok) throw new Error((await res.json()).message ?? `读取失败 (${res.status})`);
     const rows: Config[] = await res.json();
-    const pronunciation = rows.filter((row) => row.serviceKind === 'pronunciation');
-    setPronunciationConfigs(pronunciation);
-    setActivePronunciationId(pronunciation[0]?.id ?? pronunciation[0]?.draftKey);
-    setConfigs((old) => ({ ...old, ...Object.fromEntries(rows.filter((row) => row.serviceKind !== 'pronunciation').map((row) => [row.serviceKind, row])) }));
+    const grouped = Object.fromEntries(services.map(({ id }) => [id, rows.filter((row) => row.serviceKind === id)])) as Record<ServiceKind, Config[]>;
+    setConfigs(grouped);
+    setActiveConfigIds(Object.fromEntries(services.map(({ id }) => [id, grouped[id][0]?.id ?? grouped[id][0]?.draftKey]).filter(([, id]) => Boolean(id))) as Partial<Record<ServiceKind, string>>);
     if (active !== 'embedding') await loadBenchmarks();
     setMessage('已读取现有配置。');
   }
@@ -215,14 +209,12 @@ export default function AdminPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.message ?? `保存失败 (${res.status})`);
-      if (active === 'pronunciation') {
-        setPronunciationConfigs((old) => {
-          const index = old.findIndex((item) => (item.id ?? item.draftKey) === activePronunciationId);
-          return index >= 0 ? old.map((item, i) => i === index ? body : item) : [...old, body];
-        });
-        setActivePronunciationId(body.id);
-      }
-      else setConfigs((old) => ({ ...old, [active]: body }));
+      const key = activeConfigIds[active] ?? current.id ?? current.draftKey;
+      setConfigs((old) => {
+        const index = old[active].findIndex((item) => (item.id ?? item.draftKey) === key);
+        return { ...old, [active]: index >= 0 ? old[active].map((item, i) => i === index ? body : item) : [...old[active], body] };
+      });
+      setActiveConfigIds((old) => ({ ...old, [active]: body.id }));
       setCredentials((old) => ({ ...old, [active]: {} }));
       if (active !== 'embedding') await loadBenchmarks();
       setMessage(active === 'embedding'
@@ -232,17 +224,17 @@ export default function AdminPage() {
     finally { setBusy(false); }
   }
 
-  async function removePronunciationConfig() {
+  async function removeCurrentConfig() {
     if (!current.id) return;
     setBusy(true);
     try {
       const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs/${current.id}`, { method: 'DELETE' });
       const body = await res.json();
       if (!res.ok) throw new Error(body.message ?? `删除失败 (${res.status})`);
-      const remaining = pronunciationConfigs.filter((item) => item.id !== current.id);
-      setPronunciationConfigs(remaining);
-      setActivePronunciationId(remaining[0]?.id ?? remaining[0]?.draftKey);
-      setMessage('评测供应商配置已删除。');
+      const remaining = configs[active].filter((item) => item.id !== current.id);
+      setConfigs((old) => ({ ...old, [active]: remaining }));
+      setActiveConfigIds((old) => ({ ...old, [active]: remaining[0]?.id ?? remaining[0]?.draftKey }));
+      setMessage('当前供应商配置已删除。');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '删除失败');
     } finally {
@@ -253,28 +245,22 @@ export default function AdminPage() {
   return <main className="shell"><AdminNav />
     <header className="topbar"><div><p className="eyebrow">AI LANGUAGE GROWTH</p><h1>模型接入</h1></div><button className="secondary" onClick={() => void loadConfigs().catch((error) => setMessage(error.message))}>读取配置</button></header>
     <><section className="notice"><strong>{active === 'embedding' ? '语义检索模型配置' : '两类语音能力分开配置'}</strong><span>{active === 'embedding' ? 'Embedding 是 Mem0 语义记忆与课程 RAG 的基础能力。当前先保存服务商和模型配置，检索链路接入并验证前不会调用该模型。' : '普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。真实模型须先通过对应的儿童专项 Benchmark。'}</span></section>
-    <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{(item.id === 'pronunciation' ? pronunciationConfigs.some((config) => config.enabled) : configs[item.id].enabled) ? item.id === 'embedding' ? '已配置' : '已启用' : '未启用'}</i></button>)}</nav>
+    <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{configs[item.id].some((config) => config.enabled) ? item.id === 'embedding' ? '已配置' : '已启用' : '未启用'}</i></button>)}</nav>
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => {
         const next = { ...current, enabled: event.target.checked };
         updateCurrent(next);
       }}/><span>{active === 'embedding' ? '设为默认配置' : '启用'}</span></label></div>
-        {active === 'pronunciation' && <div className="fields"><label>优先级（数字越小越优先）<input type="number" min="1" value={String(current.priority ?? 100)} onChange={(event) => updateCurrent({ ...current, priority: Number(event.target.value) })}/></label><label>单家超时（毫秒）<input type="number" min="100" value={String(current.timeoutMs ?? 20000)} onChange={(event) => updateCurrent({ ...current, timeoutMs: Number(event.target.value) })}/></label></div>}
-        {active === 'pronunciation' && <div className="fields"><label>当前评测供应商<select value={activePronunciationId ?? ''} onChange={(event) => {
-          const selected = pronunciationConfigs.find((item) => (item.id ?? item.draftKey) === event.target.value);
-          if (selected) {
-            setActivePronunciationId(selected.id ?? selected.draftKey);
-            setCredentials((old) => ({ ...old, pronunciation: {} }));
-          }
-        }}><option value="">新增或选择配置</option>{pronunciationConfigs.map((item) => <option key={item.id ?? item.draftKey} value={item.id ?? item.draftKey}>{item.providerPresetId || '未选择平台'} · 优先级 {item.priority}</option>)}</select></label><button className="secondary" onClick={() => {
-          const next = { ...emptyConfig('pronunciation'), draftKey: crypto.randomUUID() };
-          setPronunciationConfigs((old) => [...old, next]);
-          setActivePronunciationId(next.draftKey);
-          setCredentials((old) => ({ ...old, pronunciation: {} }));
-          setConfigs((old) => ({ ...old, pronunciation: next }));
-        }}>添加评测供应商</button>{current.id && <button className="secondary" disabled={busy} onClick={() => void removePronunciationConfig()}>删除当前配置</button>}</div>}
+        <div className="fields"><label>当前供应商配置<select value={activeConfigIds[active] ?? current.id ?? current.draftKey ?? ''} onChange={(event) => setActiveConfigIds((old) => ({ ...old, [active]: event.target.value }))}><option value="">新增供应商</option>{configs[active].map((item) => <option key={item.id ?? item.draftKey} value={item.id ?? item.draftKey}>{item.providerPresetId || '未选择平台'} · 优先级 {item.priority}</option>)}</select></label><button className="secondary" onClick={() => {
+          const next = { ...emptyConfig(active), draftKey: crypto.randomUUID() };
+          setConfigs((old) => ({ ...old, [active]: [...old[active], next] }));
+          setActiveConfigIds((old) => ({ ...old, [active]: next.draftKey }));
+          setCredentials((old) => ({ ...old, [active]: {} }));
+        }}>添加供应商</button>{current.id && <button className="secondary" disabled={busy} onClick={() => void removeCurrentConfig()}>删除当前配置</button>}</div>
+        <div className="fields"><label>优先级（数字越小越优先）<input type="number" min="1" value={String(current.priority ?? 100)} onChange={(event) => updateCurrent({ ...current, priority: Number(event.target.value) })}/></label><label>单家超时（毫秒）<input type="number" min="100" value={String(current.timeoutMs ?? 20000)} onChange={(event) => updateCurrent({ ...current, timeoutMs: Number(event.target.value) })}/></label></div>
         <label>预置平台<select value={current.providerPresetId} onChange={(event) => chooseProvider(event.target.value)}><option value="">请选择平台</option>{available.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {current.providerPresetId && <>
           <div className="fields"><label>接入地址<input value={current.baseUrl} onChange={(event) => updateCurrent({ ...current, baseUrl: event.target.value })}/><small>已填平台默认地址，区域或自建部署不同时可调整。</small></label><label>{active === 'pronunciation' ? '评测服务/模型' : active === 'asr' ? 'ASR 模型' : active === 'tts' ? 'TTS 模型' : active === 'embedding' ? 'Embedding 模型' : '模型名称'}<input value={current.modelAlias} onChange={(event) => updateCurrent({ ...current, modelAlias: event.target.value })} placeholder="填写控制台中已开通的模型标识"/></label></div>
+          {active === 'llm' && <label>模型用途<select value={String(current.options.role ?? 'main')} onChange={(event) => updateCurrent({ ...current, options: { ...current.options, role: event.target.value } })}><option value="main">主文本模型：教学对话与复杂生成</option><option value="small">小参数文本模型：记忆整理与课程素材预处理</option></select><small>小参数模型连接失败时会自动回退到主文本模型。</small></label>}
           {current.providerPresetId === 'azure-speech' && active === 'pronunciation' && <label>Azure Speech 区域<input value={String(current.options.region ?? 'eastus')} onChange={(event) => {
             const region = event.target.value.trim();
             const defaultEndpoint = /^https:\/\/[^/.]+\.stt\.speech\.microsoft\.com\/?$/i.test(current.baseUrl);
