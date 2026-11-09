@@ -275,13 +275,17 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const cacheKey = this.ttsCacheKey(normalizedRequest);
     let cached = this.ttsCache.get(cacheKey);
     if (cached) {
-      const audioFile = cached.audioRef.split('/').pop();
-      try {
-        if (!audioFile || audioFile.includes('..')) throw new Error('invalid audio reference');
-        await access(join(resolveAudioDir(), audioFile));
-      } catch {
-        this.ttsCache.delete(cacheKey);
-        cached = undefined;
+      // Only local media references must point to an existing file. Mock and
+      // provider-hosted references are valid cache entries without local files.
+      if (cached.audioRef.startsWith('/api/v1/media/audio/')) {
+        const audioFile = cached.audioRef.split('/').pop();
+        try {
+          if (!audioFile || audioFile.includes('..')) throw new Error('invalid audio reference');
+          await access(join(resolveAudioDir(), audioFile));
+        } catch {
+          this.ttsCache.delete(cacheKey);
+          cached = undefined;
+        }
       }
     }
     cached ??= await this.loadPersistentTtsCache(cacheKey, normalizedRequest);
