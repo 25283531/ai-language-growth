@@ -127,11 +127,11 @@ private fun GrowthApp(account: android.content.SharedPreferences, childTheme: Bo
                     if (register) OutlinedTextField(displayName, { displayName = it }, Modifier.fillMaxWidth(), label = { Text("显示名称（可选）") }, singleLine = true)
                     OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("密码") }, singleLine = true)
                     if (register) {
-                        if (captchaSvg.isBlank()) OutlinedButton({ loadCaptcha() }, Modifier.fillMaxWidth()) { Text("加载图片验证码") }
+                        if (captchaSvg.isBlank()) OutlinedButton(onClick = { loadCaptcha() }, modifier = Modifier.fillMaxWidth()) { Text("加载图片验证码") }
                         else {
-                            AndroidView(factory = { context -> WebView(context).apply { settings.javaScriptEnabled = false } }, update = { it.loadData(captchaSvg, "image/svg+xml", "base64") }, Modifier.fillMaxWidth().height(64.dp))
+                            AndroidView(factory = { context -> WebView(context).apply { settings.javaScriptEnabled = false } }, update = { it.loadData(captchaSvg, "image/svg+xml", "base64") }, modifier = Modifier.fillMaxWidth().height(64.dp))
                             OutlinedTextField(captchaCode, { captchaCode = it.filter(Char::isDigit).take(4) }, Modifier.fillMaxWidth(), label = { Text("4 位图片验证码") }, singleLine = true)
-                            OutlinedButton({ loadCaptcha() }, Modifier.fillMaxWidth()) { Text("换一张验证码") }
+                            OutlinedButton(onClick = { loadCaptcha() }, modifier = Modifier.fillMaxWidth()) { Text("换一张验证码") }
                             Text("密码至少 6 位，不能使用连续数字或重复数字。", color = Muted, fontSize = 13.sp)
                         }
                     }
@@ -152,10 +152,10 @@ private fun GrowthApp(account: android.content.SharedPreferences, childTheme: Bo
                             } catch (e: Exception) { status = e.message ?: "操作失败"; if (register) loadCaptcha() }
                             finally { busy = false }
                         }
-                    }, enabled = !busy && email.contains("@") && password.isNotBlank() && (official || custom.isNotBlank()), Modifier.fillMaxWidth().height(52.dp)) {
+                    }, enabled = !busy && email.contains("@") && password.isNotBlank() && (official || custom.isNotBlank()), modifier = Modifier.fillMaxWidth().height(52.dp)) {
                         if (busy) CircularProgressIndicator(Modifier.height(20.dp), color = Color.White, strokeWidth = 2.dp) else Text(if (register) "注册" else "登录")
                     }
-                    OutlinedButton(onClick = { register = !register; status = ""; if (register) loadCaptcha() }, Modifier.fillMaxWidth()) { Text(if (register) "已有账户？返回登录" else "创建新账户") }
+                    OutlinedButton(onClick = { register = !register; status = ""; if (register) loadCaptcha() }, modifier = Modifier.fillMaxWidth()) { Text(if (register) "已有账户？返回登录" else "创建新账户") }
                 }
                 "settings" -> {
                     Text("账户设置", color = Muted)
@@ -169,17 +169,17 @@ private fun GrowthApp(account: android.content.SharedPreferences, childTheme: Bo
                         OutlinedTextField(verificationCode, { verificationCode = it.filter(Char::isDigit).take(6) }, Modifier.fillMaxWidth(), label = { Text("6 位邮箱验证码") }, singleLine = true)
                         Button(onClick = {
                             scope.launch { try { val r = withContext(Dispatchers.IO) { http(base(), "/auth/verify-email", "POST", JSONObject().put("code", verificationCode), token()) }; status = r.optString("message"); emailVerified = true } catch (e: Exception) { status = e.message ?: "验证失败" } }
-                        }, enabled = verificationCode.length == 6, Modifier.fillMaxWidth()) { Text("确认验证") }
+                        }, enabled = verificationCode.length == 6, modifier = Modifier.fillMaxWidth()) { Text("确认验证") }
                     }
-                    OutlinedButton({ onTheme(!childTheme) }, Modifier.fillMaxWidth()) { Text(if (childTheme) "切换成人主题" else "切换儿童主题") }
-                    OutlinedButton({ page = "home" }, Modifier.fillMaxWidth()) { Text("返回课堂") }
-                    OutlinedButton({ account.edit().remove("token").apply(); page = "auth"; register = false }, Modifier.fillMaxWidth()) { Text("退出登录") }
+                    OutlinedButton(onClick = { onTheme(!childTheme) }, modifier = Modifier.fillMaxWidth()) { Text(if (childTheme) "切换成人主题" else "切换儿童主题") }
+                    OutlinedButton(onClick = { page = "home" }, modifier = Modifier.fillMaxWidth()) { Text("返回课堂") }
+                    OutlinedButton(onClick = { account.edit().remove("token").apply(); page = "auth"; register = false }, modifier = Modifier.fillMaxWidth()) { Text("退出登录") }
                 }
                 else -> {
                     Text(if (childTheme) "今天也可以慢慢来。" else "按自己的节奏，稳步积累。", color = Muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton({ page = "settings" }) { Text("账户设置") }
-                        OutlinedButton({ onTheme(!childTheme) }) { Text(if (childTheme) "成人主题" else "儿童主题") }
+                        OutlinedButton(onClick = { page = "settings" }) { Text("账户设置") }
+                        OutlinedButton(onClick = { onTheme(!childTheme) }) { Text(if (childTheme) "成人主题" else "儿童主题") }
                     }
                     Button(onClick = {
                         scope.launch {
@@ -193,7 +193,7 @@ private fun GrowthApp(account: android.content.SharedPreferences, childTheme: Bo
                             } catch (e: Exception) { status = e.message ?: "暂时无法连接" }
                             finally { busy = false }
                         }
-                    }, enabled = !busy, Modifier.fillMaxWidth().height(52.dp)) {
+                    }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                         if (busy) CircularProgressIndicator(Modifier.height(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("开始课堂")
                     }
                     if (lessonText.isNotBlank()) Text(lessonText, fontSize = if (childTheme) 22.sp else 19.sp, lineHeight = 30.sp)
