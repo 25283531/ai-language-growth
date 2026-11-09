@@ -27,9 +27,9 @@
 
 1. **不要把所有供应商 SDK 放入 APK。** 原生 SDK 会增加 APK 体积、权限、初始化和兼容维护成本。服务端模型设置也不能切换一个 APK 中不存在的 SDK。
 2. **采用一个经真机与儿童样本验证的 Android 主 SDK，其他候选保留服务端适配器。** 腾讯 SOE Android AAR 已由用户提供，可作为端侧试点；Tencent 长期 SecretKey 不进入 APK。服务端验证账户/会员和额度后，只能签发最小权限、短时、尽可能绑定一次请求的凭证。若凭证可重放，额度仍是软上限，需保守预留或转服务端调用。
-3. **厂商接入形态不同。** 用户提供的腾讯包是 Android AAR 与 iOS XCFramework；阿里 SSECP 是端侧 SDK，`warrantId` 有效期约 15 分钟，官方建议每次评测前换新；讯飞当前推荐 ISE 流式 WebSocket，并提供 Android/iOS SDK；Azure 可通过 Speech SDK 返回词、音节、音素结果；Speechace 是上传音频与目标文本的 REST API。不能用一个统一客户端调用假设覆盖所有厂商。
+3. **厂商接入形态不同。** 用户提供的腾讯包是 Android AAR 与 iOS XCFramework；阿里 SSECP 是端侧 SDK，`warrantId` 在有效期内可以重复使用，因此必须向供应商核实有效期、签发频率和额度边界；讯飞 ISE 需要按当前账号开通能力核实 HTTP/流式接口和 SDK 版本；Azure 可通过 Speech SDK 返回词、音节、音素结果；Speechace 是上传音频与目标文本的 REST API。不能用一个统一客户端调用假设覆盖所有厂商。
 4. **当前代码尚不能实现“后台选择供应商后 APP 自动切换 SDK”。** `ai_provider_configs` 对每个 `serviceKind` 只有一条配置；Gateway 每个服务也只注册当前单个配置。Android 正式客户端尚无发音 SDK 和服务端供应商授权获取链路。要做服务端控制的主备，后续需支持多供应商模型注册/路由、主备健康策略、客户端能力协商、供应商授权签发与额度结算，并验证 SDK 凭证的重放边界。
-5. **讯飞当前有一项发布阻塞。** 当前预置和 `IflytekIseAdapter` 使用旧 HTTP 普通版 URL `api.xfyun.cn/v1/service/v1/ise`；讯飞官方已说明普通版下线，当前推荐 `wss://ise-api.xfyun.cn/v2/open-ise` 流式接口。完成迁移和返回格式适配前，不应把现有讯飞配置作为生产可用发音评测。
+5. **讯飞当前有一项发布阻塞。** 当前预置和 `IflytekIseAdapter` 使用 `api.xfyun.cn/v1/service/v1/ise` HTTP 地址；在没有按实际账号核对当前可用接口、签名方式、SDK 版本和返回格式前，不应把现有讯飞配置作为生产可用发音评测。若账号要求迁移到流式接口，需要单独补充 WebSocket 适配器和真机验证。
 
 ## 后续顺序
 
