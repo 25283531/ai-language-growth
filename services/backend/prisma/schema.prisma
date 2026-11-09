@@ -570,13 +570,17 @@ model media_assets {
   teacherSpeed   Float?
   durationMs     Int?
   checksum       String?
+  cacheExtension String?
   sourceUrl      String?
   attribution    String?
   license        String?
   sourceProvider String?
+  cacheStatus    String   @default("pending") // pending | cached | failed
+  cacheError     String?
   createdAt      DateTime @default(now())
 
   @@index([checksum])
+  @@index([kind, cacheStatus, createdAt])
   @@map("media_assets")
 }
 

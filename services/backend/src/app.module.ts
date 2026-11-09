@@ -20,6 +20,7 @@ import {
   UsageController,
 } from './speech/speech.controller';
 import { MediaController } from './media/media.controller';
+import { ImageCacheService } from './media/image-cache.service';
 import { ProviderConfigController } from './providers/provider-config.controller';
 import { ProviderConfigService } from './providers/provider-config.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
@@ -65,6 +66,7 @@ import { PersonalityEngineService } from './agents/personality-engine.service';
   providers: [
     PrismaService,
     ProviderConfigService,
+    ImageCacheService,
     AiGatewayService,
     LearnerModelService,
     PlannerService,

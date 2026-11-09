@@ -10,6 +10,8 @@ Import uses `POST /api/v1/admin/curriculum/package/import` as multipart form dat
 
 The locally prepared package `G:\workbuddy\课程\儿童英语_CEFR七级成长课程_v1.zip` is intentionally not stored in this repository. It is an original, child-context adaptation guided by the Council of Europe's CEFR Companion Volume (2020) descriptors and the project brief's page 3, not a copy of descriptor text. Level outcomes are references rather than deadlines or a mandatory course order. Image assets are omitted; any later image additions require a verified source and license.
 
+The current local package contains 20 vocabulary entries per unit (160 per CEFR level). Importing it creates review drafts only; it does not bypass human approval.
+
 ## Textbook catalog
 
 Create textbook editions with publisher, publication year, grade, title, and edition. Units can be added through `POST /api/v1/admin/curriculum/textbooks/{textbookId}/units`. These fields are catalog metadata, not a required teaching sequence.
@@ -22,6 +24,8 @@ Create textbook editions with publisher, publication year, grade, title, and edi
 4. An administrator approves or rejects the draft. Only approved drafts can be published.
 
 Publication requires supported activity types, existing skill-node references, at least one activity, and a task-level assessment rule. Point-selection tasks need `acceptedImageIds`; fixed text or speech tasks need `acceptedTexts` or `requiredPhrases`; genuinely open responses must set `openResponse=true`; pronunciation tasks must declare the pronunciation assessment route. Passive listening/reading may be completed without an answer, but it never creates mastery evidence. Image resources must include a public source URL and a license string; attribution is stored when provided. The admin must verify source availability and permission before approval.
+
+After publication, image suggestions are recorded as media assets and downloaded by the backend during idle time. Downloaded files live under `AI_MEDIA_CACHE_DIR` and are served through the media endpoint after the asset is marked cached. TTS audio and image binaries are runtime cache files; database backups contain only media metadata, never these binary cache directories. Persist the backend `/app/.cache` volume if the cache should survive container replacement.
 
 ## Adaptive sequencing
 

@@ -35,6 +35,8 @@ export default function CurriculumPage() {
   const [contentText, setContentText] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState('');
+  const [draftErrors, setDraftErrors] = useState<Record<string, string>>({});
   const [packageFile, setPackageFile] = useState<File | null>(null);
   const [generationDescription, setGenerationDescription] = useState('');
   const [generatedPackage, setGeneratedPackage] = useState('');
@@ -122,13 +124,18 @@ export default function CurriculumPage() {
     finally { setBusy(false); }
   }
   async function draftAction(id: string, action: 'generate' | 'submit' | 'approve' | 'reject' | 'publish') {
-    setBusy(true);
+    setPendingAction(`${id}:${action}`);
+    setDraftErrors((old) => ({ ...old, [id]: '' }));
     try {
       if (action === 'generate') await request(`/api/v1/admin/curriculum/drafts/${id}/generate`, { method: 'POST' });
       else if (action === 'publish') await request(`/api/v1/admin/curriculum/drafts/${id}/publish`, { method: 'POST' });
       else await request(`/api/v1/admin/curriculum/drafts/${id}/review`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, reviewer: 'admin-web', note: '' }) });
-      await load(); setMessage('课程状态已更新。');
-    } catch (error) { setMessage(error instanceof Error ? error.message : '操作失败'); } finally { setBusy(false); }
+      await load(); setMessage(action === 'publish' ? '课程已发布，可在课程目录中查看。' : '课程状态已更新。');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '操作失败';
+      setDraftErrors((old) => ({ ...old, [id]: detail }));
+      setMessage(action === 'publish' ? `发布未完成：${detail}` : detail);
+    } finally { setPendingAction(''); }
   }
   async function saveContent(item: Draft) {
     setBusy(true);
@@ -189,9 +196,10 @@ export default function CurriculumPage() {
           {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>生成草稿</button>}
           {item.generatedContent && ['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setContentText(JSON.stringify(item.generatedContent, null, 2)); }}>编辑课程</button>}
           {['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'submit')}>提交审核</button>}
-          {item.status === 'under_review' && <><button disabled={busy} onClick={() => void draftAction(item.id, 'approve')}>审核通过</button><button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'reject')}>退回修改</button></>}
-          {item.status === 'approved' && <button disabled={busy} onClick={() => void draftAction(item.id, 'publish')}>发布课程</button>}
+          {item.status === 'under_review' && <><button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'approve')}>{pendingAction === `${item.id}:approve` ? '处理中…' : '审核通过'}</button><button className="secondary" disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'reject')}>{pendingAction === `${item.id}:reject` ? '处理中…' : '退回修改'}</button></>}
+          {item.status === 'approved' && <button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'publish')}>{pendingAction === `${item.id}:publish` ? '正在发布…' : '发布课程'}</button>}
         </div>
+        {draftErrors[item.id] && <p className="status" role="alert">操作失败：{draftErrors[item.id]}</p>}
         {editingId === item.id && <div style={{ marginTop: 12 }}>
           <textarea className="routing-editor" style={{ minHeight: 280 }} value={contentText} onChange={(event) => setContentText(event.target.value)} aria-label="课程结构化内容" />
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>

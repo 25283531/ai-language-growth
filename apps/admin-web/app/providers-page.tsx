@@ -96,7 +96,6 @@ export default function AdminPage() {
   const service = services.find((item) => item.id === active)!;
   const available = useMemo(() => catalog.filter((item) => item.services.includes(active)), [catalog, active]);
   const current = configs[active].find((item) => (item.id ?? item.draftKey) === activeConfigIds[active])
-    ?? configs[active][0]
     ?? emptyConfig(active);
   const credentialFields = (credentialLabels[current.providerPresetId] ?? []).filter(([key]) => current.providerPresetId !== 'iflytek-spark' || active !== 'pronunciation' || key !== 'apiSecret');
   function updateCurrent(next: Config) {
@@ -108,7 +107,14 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    void fetch(`${apiRoot()}/api/v1/admin/model-providers/catalog`).then((res) => res.json()).then(setCatalog).catch(() => setMessage('无法连接后端，请检查管理后台与 API 的访问地址。'));
+    void Promise.all([
+      fetch(`${apiRoot()}/api/v1/admin/model-providers/catalog`).then(async (res) => {
+        if (!res.ok) throw new Error(`读取供应商目录失败 (${res.status})`);
+        return res.json() as Promise<Preset[]>;
+      }),
+      loadConfigs(),
+    ]).then(([presets]) => setCatalog(presets))
+      .catch((error) => setMessage(error instanceof Error ? error.message : '无法连接后端，请检查管理后台与 API 的访问地址。'));
   }, []);
 
   useEffect(() => {
@@ -222,16 +228,27 @@ export default function AdminPage() {
     <header className="topbar"><div><p className="eyebrow">AI LANGUAGE GROWTH</p><h1>模型接入</h1></div><button className="secondary" onClick={() => void loadConfigs().catch((error) => setMessage(error.message))}>读取配置</button></header>
     <><section className="notice"><strong>{active === 'embedding' ? '语义检索模型配置' : '两类语音能力分开配置'}</strong><span>{active === 'embedding' ? 'Embedding 是 Mem0 语义记忆与课程 RAG 的基础能力。当前先保存服务商和模型配置，检索链路接入并验证前不会调用该模型。' : '普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。启用配置后按优先级自动调用并故障切换。'}</span></section>
     <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{configs[item.id].some((config) => config.enabled) ? item.id === 'embedding' ? '已配置' : '已启用' : '未启用'}</i></button>)}</nav>
-      <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => {
+      <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div></div>
+        <div className="benchmark-list" aria-label={`${service.title}供应商列表`}>
+          {configs[active].map((item) => <button type="button" key={item.id ?? item.draftKey} className="secondary" aria-pressed={(item.id ?? item.draftKey) === activeConfigIds[active]} onClick={() => setActiveConfigIds((old) => ({ ...old, [active]: item.id ?? item.draftKey }))} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, width: '100%', marginTop: 8 }}>
+            <span><strong>{item.providerPresetId ? catalog.find((preset) => preset.id === item.providerPresetId)?.name ?? item.providerPresetId : '未选择供应商'}</strong> · {item.modelAlias || '尚未填写模型名称'}</span>
+            <span>{item.enabled ? '已启用' : '已停用'} · 优先级 {item.priority ?? 100}</span>
+          </button>)}
+          {!configs[active].length && <p className="helper">此服务目前还没有供应商配置。</p>}
+        </div>
+        <div className="fields" style={{ marginTop: 16 }}>
+          <button className="secondary" type="button" onClick={() => {
+            const next = { ...emptyConfig(active), draftKey: crypto.randomUUID() };
+            setConfigs((old) => ({ ...old, [active]: [...old[active], next] }));
+            setActiveConfigIds((old) => ({ ...old, [active]: next.draftKey }));
+            setCredentials((old) => ({ ...old, [active]: {} }));
+          }}>添加独立模型配置</button>
+          {current.id && <button className="secondary" type="button" disabled={busy} onClick={() => void removeCurrentConfig()}>删除当前配置</button>}
+        </div>
+        <div className="panel-head" style={{ marginTop: 22 }}><div><p className="eyebrow">SELECTED CONFIGURATION</p><h3>编辑当前配置</h3></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => {
         const next = { ...current, enabled: event.target.checked };
         updateCurrent(next);
       }}/><span>{active === 'embedding' ? '设为默认配置' : '启用'}</span></label></div>
-        <div className="fields"><label>当前供应商配置<select value={activeConfigIds[active] ?? current.id ?? current.draftKey ?? ''} onChange={(event) => setActiveConfigIds((old) => ({ ...old, [active]: event.target.value }))}><option value="">新增供应商</option>{configs[active].map((item) => <option key={item.id ?? item.draftKey} value={item.id ?? item.draftKey}>{item.providerPresetId || '未选择平台'} · 优先级 {item.priority}</option>)}</select></label><button className="secondary" onClick={() => {
-          const next = { ...emptyConfig(active), draftKey: crypto.randomUUID() };
-          setConfigs((old) => ({ ...old, [active]: [...old[active], next] }));
-          setActiveConfigIds((old) => ({ ...old, [active]: next.draftKey }));
-          setCredentials((old) => ({ ...old, [active]: {} }));
-        }}>添加供应商</button>{current.id && <button className="secondary" disabled={busy} onClick={() => void removeCurrentConfig()}>删除当前配置</button>}</div>
         <div className="fields"><label>优先级（数字越小越优先）<input type="number" min="1" value={String(current.priority ?? 100)} onChange={(event) => updateCurrent({ ...current, priority: Number(event.target.value) })}/></label><label>单家超时（毫秒）<input type="number" min="100" value={String(current.timeoutMs ?? 20000)} onChange={(event) => updateCurrent({ ...current, timeoutMs: Number(event.target.value) })}/></label></div>
         <label>预置平台<select value={current.providerPresetId} onChange={(event) => chooseProvider(event.target.value)}><option value="">请选择平台</option>{available.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {current.providerPresetId && <>

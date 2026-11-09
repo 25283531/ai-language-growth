@@ -13,17 +13,21 @@ import { AUDIO_EXTENSIONS, audioMimeType, resolveAudioDir } from '@alg/ai-provid
 import type { Request } from 'express';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
 import { AuthService, extractBearerToken } from '../auth/auth.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 const FILE_PATTERN = new RegExp(
   `^[a-f0-9]{24}\\.(${AUDIO_EXTENSIONS.join('|')})$`,
   'i',
 );
+const IMAGE_PATTERN = /^[a-f0-9-]{36}$/i;
+const IMAGE_DIR = process.env.AI_MEDIA_CACHE_DIR || join(process.cwd(), '.cache', 'media');
 
 @Controller('api/v1/media/audio')
 export class MediaController {
   constructor(
     private readonly quota: SpeechQuotaService,
     private readonly auth: AuthService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -113,5 +117,20 @@ export class MediaController {
     return new StreamableFile(createReadStream(fullPath), {
       type: audioMimeType(match[1]!.toLowerCase()),
     });
+  }
+
+  @Get('images/:file')
+  async image(@Param('file') file: string): Promise<StreamableFile> {
+    if (!IMAGE_PATTERN.test(file)) throw new HttpException('图片不存在', 404);
+    const asset = await this.prisma.media_assets.findUnique({ where: { id: file } });
+    if (!asset || asset.kind !== 'image' || asset.cacheStatus !== 'cached' || !asset.checksum || !asset.cacheExtension) {
+      throw new HttpException('图片尚未缓存', 404);
+    }
+    const fullPath = join(IMAGE_DIR, `${asset.checksum}.${asset.cacheExtension}`);
+    if (!existsSync(fullPath)) throw new HttpException('图片尚未缓存', 404);
+    const mime = asset.cacheExtension === 'jpg' || asset.cacheExtension === 'jpeg'
+      ? 'image/jpeg'
+      : `image/${asset.cacheExtension}`;
+    return new StreamableFile(createReadStream(fullPath), { type: mime });
   }
 }

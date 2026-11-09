@@ -5,6 +5,7 @@ import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProviderConfigService } from '../providers/provider-config.service';
+import { AdminAuthService } from '../auth/admin-auth.service';
 import { z } from 'zod';
 import { teachingActivitySchema } from '@alg/shared-contracts';
 import type { Prisma } from '@prisma/client';
@@ -60,6 +61,11 @@ const curriculumPackageSchema = z.object({
         word: z.string().trim().min(1).max(100),
         phonetic: z.string().max(100).default(''),
         meaningZh: z.string().max(200).default(''),
+        image: z.object({
+          url: z.string().url().max(2048),
+          license: z.string().trim().min(1).max(300),
+          attribution: z.string().trim().max(500).optional(),
+        }).optional(),
       })).min(1).max(100),
       patterns: z.array(z.object({
         en: z.string().trim().min(1).max(300),
@@ -129,10 +135,11 @@ export class CurriculumAdminController {
     private readonly configs: ProviderConfigService,
     private readonly gateway: AiGatewayService,
     private readonly router: ModelRouterImpl,
+    private readonly adminAuth: AdminAuthService,
   ) {}
 
-  private authorize(token?: string) {
-    this.configs.assertAdminToken(token);
+  private authorize(cookie?: string) {
+    this.adminAuth.resolveRequest({ headers: { cookie } });
   }
 
   @Post('internal/model')
@@ -158,8 +165,8 @@ export class CurriculumAdminController {
   }
 
   @Post('generator/generate')
-  async generatePackage(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
-    this.authorize(token);
+  async generatePackage(@Headers('cookie') cookie: string | undefined, @Body() body: unknown) {
+    this.authorize(cookie);
     const generatorUrl = process.env.CURRICULUM_GENERATOR_URL;
     const generatorToken = process.env.CURRICULUM_GENERATOR_TOKEN;
     if (!generatorUrl || !generatorToken) throw new BadRequestException('独立课程生成服务尚未配置');
@@ -184,11 +191,11 @@ export class CurriculumAdminController {
 
   @Get('generator/packages/:packageId/download')
   async downloadGeneratedPackage(
-    @Headers('x-admin-token') token: string | undefined,
+    @Headers('cookie') cookie: string | undefined,
     @Param('packageId') packageId: string,
     @Res() response: Response,
   ) {
-    this.authorize(token);
+    this.authorize(cookie);
     if (!/^[0-9a-f-]{36}$/i.test(packageId)) throw new BadRequestException('课程包编号无效');
     const generatorUrl = process.env.CURRICULUM_GENERATOR_URL;
     const generatorToken = process.env.CURRICULUM_GENERATOR_TOKEN;
@@ -205,10 +212,10 @@ export class CurriculumAdminController {
   @Post('package/import')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024, files: 1 } }))
   async importCurriculumPackage(
-    @Headers('x-admin-token') token: string | undefined,
+    @Headers('cookie') cookie: string | undefined,
     @UploadedFile() file?: { originalname: string; buffer: Buffer },
   ) {
-    this.authorize(token);
+    this.authorize(cookie);
     if (!file || !file.originalname.toLowerCase().endsWith('.zip')) {
       throw new BadRequestException('请选择 ZIP 格式的课程包');
     }
@@ -291,6 +298,7 @@ export class CurriculumAdminController {
             difficultPhonemes: Array.isArray(entry.difficultPhonemes) ? entry.difficultPhonemes.map(String) : [],
             phrases: Array.isArray(entry.phrases) ? entry.phrases.map(String) : [],
             exampleSentences: Array.isArray(entry.exampleSentences) ? entry.exampleSentences.map(String) : [],
+            ...(entry.image && typeof entry.image === 'object' ? { image: entry.image as GeneratedLesson['vocabulary'][number]['image'] } : {}),
           };
         }),
         activities: normalizedActivities as GeneratedLesson['activities'],
@@ -359,7 +367,7 @@ export class CurriculumAdminController {
             assessment: lesson.assessment,
             difficulty: Math.min(5, Math.max(1, Math.ceil((index + 1) / 2))),
           })),
-          images: [],
+          images: vocabulary.flatMap((item) => item.image ? [item.image] : []),
         };
         const draft = await this.prisma.curriculum_drafts.create({
           data: {
@@ -396,8 +404,8 @@ export class CurriculumAdminController {
   }
 
   @Get('textbooks')
-  async listTextbooks(@Headers('x-admin-token') token?: string) {
-    this.authorize(token);
+  async listTextbooks(@Headers('cookie') cookie?: string) {
+    this.authorize(cookie);
     return this.prisma.textbook_catalogs.findMany({
       include: { units: { orderBy: { order: 'asc' } } },
       orderBy: [{ publisher: 'asc' }, { publicationYear: 'desc' }, { grade: 'asc' }],
@@ -405,8 +413,8 @@ export class CurriculumAdminController {
   }
 
   @Post('textbooks')
-  async createTextbook(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
-    this.authorize(token);
+  async createTextbook(@Headers('cookie') cookie: string | undefined, @Body() body: unknown) {
+    this.authorize(cookie);
     const parsed = textbookSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.prisma.textbook_catalogs.create({
@@ -420,11 +428,11 @@ export class CurriculumAdminController {
 
   @Post('textbooks/:textbookId/units')
   async createTextbookUnit(
-    @Headers('x-admin-token') token: string | undefined,
+    @Headers('cookie') cookie: string | undefined,
     @Param('textbookId') textbookId: string,
     @Body() body: unknown,
   ) {
-    this.authorize(token);
+    this.authorize(cookie);
     const parsed = unitSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const textbook = await this.prisma.textbook_catalogs.findUnique({ where: { id: textbookId }, select: { id: true } });
@@ -442,11 +450,11 @@ export class CurriculumAdminController {
 
   @Get('drafts')
   async listDrafts(
-    @Headers('x-admin-token') token: string | undefined,
+    @Headers('cookie') cookie: string | undefined,
     @Query('status') status?: string,
     @Query('level') level?: string,
   ) {
-    this.authorize(token);
+    this.authorize(cookie);
     return this.prisma.curriculum_drafts.findMany({
       where: {
         ...(status ? { status } : {}),
@@ -459,8 +467,8 @@ export class CurriculumAdminController {
   }
 
   @Post('drafts')
-  async createDraft(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
-    this.authorize(token);
+  async createDraft(@Headers('cookie') cookie: string | undefined, @Body() body: unknown) {
+    this.authorize(cookie);
     const parsed = draftSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const words = normalizeWords(parsed.data.words);
@@ -491,8 +499,8 @@ export class CurriculumAdminController {
   }
 
   @Post('drafts/:draftId/generate')
-  async generateDraft(@Headers('x-admin-token') token: string | undefined, @Param('draftId') draftId: string) {
-    this.authorize(token);
+  async generateDraft(@Headers('cookie') cookie: string | undefined, @Param('draftId') draftId: string) {
+    this.authorize(cookie);
     const draft = await this.prisma.curriculum_drafts.findUnique({ where: { id: draftId } });
     if (!draft) throw new BadRequestException('课程草稿不存在');
     const words = Array.isArray(draft.wordList) ? draft.wordList.filter((word): word is string => typeof word === 'string') : [];
@@ -572,8 +580,8 @@ export class CurriculumAdminController {
   }
 
   @Put('drafts/:draftId/review')
-  async reviewDraft(@Headers('x-admin-token') token: string | undefined, @Param('draftId') draftId: string, @Body() body: unknown) {
-    this.authorize(token);
+  async reviewDraft(@Headers('cookie') cookie: string | undefined, @Param('draftId') draftId: string, @Body() body: unknown) {
+    this.authorize(cookie);
     const parsed = reviewSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const draft = await this.prisma.curriculum_drafts.findUnique({ where: { id: draftId } });
@@ -601,11 +609,11 @@ export class CurriculumAdminController {
 
   @Put('drafts/:draftId/content')
   async updateDraftContent(
-    @Headers('x-admin-token') token: string | undefined,
+    @Headers('cookie') cookie: string | undefined,
     @Param('draftId') draftId: string,
     @Body() body: unknown,
   ) {
-    this.authorize(token);
+    this.authorize(cookie);
     const draft = await this.prisma.curriculum_drafts.findUnique({ where: { id: draftId } });
     if (!draft || !['generated', 'rejected'].includes(draft.status)) {
       throw new BadRequestException('当前课程状态不允许编辑');
@@ -635,8 +643,8 @@ export class CurriculumAdminController {
   }
 
   @Post('drafts/:draftId/publish')
-  async publishDraft(@Headers('x-admin-token') token: string | undefined, @Param('draftId') draftId: string) {
-    this.authorize(token);
+  async publishDraft(@Headers('cookie') cookie: string | undefined, @Param('draftId') draftId: string) {
+    this.authorize(cookie);
     const draft = await this.prisma.curriculum_drafts.findUnique({ where: { id: draftId } });
     if (!draft || draft.status !== 'approved') throw new BadRequestException('只有人工审核通过的课程才能发布');
     const content = draft.generatedContent as unknown as GeneratedLesson | null;
@@ -668,7 +676,36 @@ export class CurriculumAdminController {
           publishedAt: new Date(),
         },
       });
+      const imageByWord = new Map<string, string>();
+      const imageSources = [
+        ...(content.images ?? []),
+        ...content.vocabulary.flatMap((item) => item.image ? [item.image] : []),
+      ];
+      for (const image of imageSources) {
+        if (!image?.url || !image.license) continue;
+        const existing = await tx.media_assets.findFirst({
+          where: { kind: 'image', sourceUrl: image.url },
+          select: { id: true },
+        });
+        const asset = existing ?? await tx.media_assets.create({
+          data: {
+            kind: 'image',
+            ref: image.url,
+            sourceUrl: image.url,
+            license: image.license,
+            attribution: image.attribution || null,
+            sourceProvider: 'admin_curriculum',
+          },
+          select: { id: true },
+        });
+        for (const item of content.vocabulary) {
+          if (item.image?.url === image.url) imageByWord.set(item.word.toLowerCase(), asset.id);
+        }
+      }
       for (const [index, activity] of content.activities.entries()) {
+        const imageAssetIds = activity.targetWords
+          .map((word) => imageByWord.get(word.toLowerCase()))
+          .filter((id): id is string => Boolean(id));
         await tx.learning_items.create({
           data: {
             skillNodeId: activity.skillNodeIds[0]!,
@@ -676,14 +713,9 @@ export class CurriculumAdminController {
             refId: `${unit.id}:${index}`,
             topicId,
             reviewStatus: 'published',
-            content: { ...activity, id: `${unit.id}:${index}`, topicId, order: index, m1Scope: false },
+            content: { ...activity, imageAssetIds, id: `${unit.id}:${index}`, topicId, order: index, m1Scope: false },
           },
         });
-      }
-      for (const image of content.images ?? []) {
-        if (image.url && image.license) {
-          await tx.media_assets.create({ data: { kind: 'image', ref: image.url, sourceUrl: image.url, license: image.license, attribution: image.attribution || null, sourceProvider: 'admin_curriculum' } });
-        }
       }
       const updated = await tx.curriculum_drafts.update({ where: { id: draftId }, data: { status: 'published', publishedAt: new Date(), version: { increment: 1 } } });
       await tx.curriculum_review_records.create({ data: { draftId, action: 'published', reviewer: draft.reviewedBy, snapshot: content as object } });
@@ -691,6 +723,7 @@ export class CurriculumAdminController {
     });
     return published;
   }
+
 }
 
 function normalizeWords(input: string): string[] {

@@ -11,6 +11,9 @@
  *  3. 所有降级都必须如实上报，不得静默掩盖。
  */
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   AdapterRegistry,
   HttpAsrAdapter,
@@ -33,6 +36,7 @@ import {
   IflytekAsrAdapter,
   TencentCloudAsrAdapter,
   TencentCloudTtsAdapter,
+  resolveAudioDir,
 } from '@alg/ai-provider-sdk';
 import type {
   AiGateway,
@@ -248,7 +252,18 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   ): Promise<GatewayCallResult<TtsResponse>> {
     // —— 缓存命中：反复播放不重新消耗 TTS ——
     const cacheKey = this.ttsCacheKey(request);
-    const cached = this.ttsCache.get(cacheKey);
+    let cached = this.ttsCache.get(cacheKey);
+    if (cached) {
+      const audioFile = cached.audioRef.split('/').pop();
+      try {
+        if (!audioFile || audioFile.includes('..')) throw new Error('invalid audio reference');
+        await access(join(resolveAudioDir(), audioFile));
+      } catch {
+        this.ttsCache.delete(cacheKey);
+        cached = undefined;
+      }
+    }
+    cached ??= await this.loadPersistentTtsCache(cacheKey);
     if (cached) {
       return {
         result: {
@@ -284,6 +299,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         audioRef: outcome.result.audioRef,
         characters: outcome.result.characters,
       });
+      await this.storePersistentTtsCache(cacheKey, outcome.result).catch((error) =>
+        this.logger.warn(`TTS 持久化缓存索引写入失败：${(error as Error).message}`),
+      );
     }
     return outcome;
   }
@@ -302,6 +320,39 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       request.voice.pauseAfterSentenceMs,
       request.voiceIdentity,
     ].join('|');
+  }
+
+  private async loadPersistentTtsCache(cacheKey: string): Promise<{ audioRef: string; characters: number } | undefined> {
+    const file = this.ttsCacheIndexPath(cacheKey);
+    try {
+      const entry = JSON.parse(await readFile(file, 'utf8')) as { audioRef?: unknown; characters?: unknown };
+      if (typeof entry.audioRef !== 'string' || !entry.audioRef.startsWith('/api/v1/media/audio/')) return undefined;
+      const audioFile = entry.audioRef.split('/').pop();
+      if (!audioFile || audioFile.includes('..')) return undefined;
+      await access(join(resolveAudioDir(), audioFile));
+      const cached = {
+        audioRef: entry.audioRef,
+        characters: typeof entry.characters === 'number' ? entry.characters : 0,
+      };
+      this.ttsCache.set(cacheKey, cached);
+      return cached;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async storePersistentTtsCache(cacheKey: string, result: TtsResponse): Promise<void> {
+    const directory = resolveAudioDir();
+    await mkdir(directory, { recursive: true });
+    await writeFile(this.ttsCacheIndexPath(cacheKey), JSON.stringify({
+      audioRef: result.audioRef,
+      characters: result.characters,
+    }), 'utf8');
+  }
+
+  private ttsCacheIndexPath(cacheKey: string): string {
+    const key = createHash('sha256').update(cacheKey).digest('hex');
+    return join(resolveAudioDir(), `.tts-${key}.json`);
   }
 
   // ——————————————————— ASR ———————————————————
