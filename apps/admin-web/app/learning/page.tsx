@@ -28,7 +28,6 @@ function apiRoot() {
 }
 
 export default function LearningPage() {
-  const [token, setToken] = useState('');
   const [teacher, setTeacher] = useState<TeacherProfile | null>(null);
   const [teacherReason, setTeacherReason] = useState('');
   const [personaHistory, setPersonaHistory] = useState<Array<{
@@ -44,14 +43,10 @@ export default function LearningPage() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
-  function headers() {
-    return { 'x-admin-token': token };
-  }
-
   async function loadLearningSettings() {
     const [profileRes, historyRes] = await Promise.all([
-      fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile`, { headers: headers() }),
-      fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile/history`, { headers: headers() }),
+      fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile`),
+      fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile/history`),
     ]);
     if (!profileRes.ok || !historyRes.ok) throw new Error('读取教师人格配置失败');
     setTeacher(await profileRes.json());
@@ -64,7 +59,7 @@ export default function LearningPage() {
     try {
       const response = await fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile`, {
         method: 'PUT',
-        headers: { 'content-type': 'application/json', ...headers() },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           adjustable: teacher.adjustable,
           style: teacher.style,
@@ -87,7 +82,7 @@ export default function LearningPage() {
   async function rollbackPersona(historyId: string) {
     const response = await fetch(
       `${apiRoot()}/api/v1/admin/learning/teacher-profile/rollback/${encodeURIComponent(historyId)}`,
-      { method: 'PUT', headers: headers() },
+      { method: 'PUT' },
     );
     const body = await response.json();
     if (!response.ok) throw new Error(body.message ?? `回滚失败 (${response.status})`);
@@ -98,7 +93,7 @@ export default function LearningPage() {
   async function loadMemories() {
     const response = await fetch(
       `${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories`,
-      { headers: headers() },
+      {},
     );
     const body = await response.json();
     if (!response.ok) throw new Error(body.message ?? `读取记忆失败 (${response.status})`);
@@ -108,7 +103,7 @@ export default function LearningPage() {
   async function deleteMemory(memoryId: string) {
     const response = await fetch(
       `${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories/${encodeURIComponent(memoryId)}`,
-      { method: 'DELETE', headers: headers() },
+      { method: 'DELETE' },
     );
     const body = await response.json();
     if (!response.ok) throw new Error(body.message ?? `删除失败 (${response.status})`);
@@ -122,7 +117,7 @@ export default function LearningPage() {
       `${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories/${encodeURIComponent(editingMemory.id)}`,
       {
         method: 'PUT',
-        headers: { 'content-type': 'application/json', ...headers() },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           memoryType: editingMemory.memoryType,
           content: editingMemory.content,
@@ -147,16 +142,6 @@ export default function LearningPage() {
           <h1>学习与记忆</h1>
           <p className="muted">教师风格、版本历史和学习者长期记忆分开管理。</p>
         </div>
-        <div className="token">
-          <label htmlFor="learning-token">后台管理令牌</label>
-          <input
-            id="learning-token"
-            type="password"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            placeholder="ADMIN_CONFIG_TOKEN"
-          />
-        </div>
       </header>
 
       <section className="panel">
@@ -169,7 +154,6 @@ export default function LearningPage() {
           {!teacher && (
             <button
               className="secondary"
-              disabled={!token}
               onClick={() => void loadLearningSettings().catch((error) => setMessage(error.message))}
             >
               读取人格配置
@@ -270,7 +254,7 @@ export default function LearningPage() {
               />
             </label>
             <button
-              disabled={!token || !teacherReason.trim() || busy}
+              disabled={!teacherReason.trim() || busy}
               onClick={() => void saveTeacher()}
             >
               保存新版本
@@ -314,7 +298,7 @@ export default function LearningPage() {
           </label>
           <button
             className="secondary"
-            disabled={!token || !learnerId}
+            disabled={!learnerId}
             onClick={() => void loadMemories().catch((error) => setMessage(error.message))}
           >
             读取学习记忆

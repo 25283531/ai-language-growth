@@ -29,8 +29,9 @@ import { RoutingConfigController } from './routing/routing-config.controller';
 import { RoutingConfigService } from './routing/routing-config.service';
 import { MembershipAdminController } from './membership/membership-admin.controller';
 import { CurriculumAdminController } from './curriculum/curriculum-admin.controller';
-import { AuthController, EmailAdminController } from './auth/auth.controller';
+import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
+import { AdminAuthService } from './auth/admin-auth.service';
 import { EmailService } from './auth/email.service';
 import { MembershipController, MembershipUsersAdminController } from './membership/membership.controller';
 import { BackupController } from './backup/backup.controller';
@@ -55,6 +56,7 @@ import { PersonalityEngineService } from './agents/personality-engine.service';
     MembershipAdminController,
     CurriculumAdminController,
     AuthController,
+    AdminAuthController,
     EmailAdminController,
     MembershipController,
     MembershipUsersAdminController,
@@ -70,6 +72,7 @@ import { PersonalityEngineService } from './agents/personality-engine.service';
     SpeechQuotaService,
     RoutingConfigService,
     AuthService,
+    AdminAuthService,
     EmailService,
     BackupService,
     GrowthMentorService,

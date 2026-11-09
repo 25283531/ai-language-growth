@@ -29,7 +29,6 @@ function apiRoot() {
 }
 
 export default function CurriculumPage() {
-  const [token, setToken] = useState('');
   const [textbooks, setTextbooks] = useState<Textbook[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [editingId, setEditingId] = useState('');
@@ -40,7 +39,7 @@ export default function CurriculumPage() {
   const [textbook, setTextbook] = useState({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
   const [draft, setDraft] = useState({ title: '', level: 'pre-A', words: '', textbookId: '', textbookUnitId: '' });
 
-  function headers() { return { 'x-admin-token': token }; }
+  function headers() { return {}; }
   async function request(path: string, init?: RequestInit) {
     const response = await fetch(`${apiRoot()}${path}`, { ...init, headers: { ...headers(), ...(init?.headers || {}) } });
     const body = await response.json().catch(() => ({}));
@@ -55,7 +54,7 @@ export default function CurriculumPage() {
     setTextbooks(books);
     setDrafts(items);
   }
-  useEffect(() => { if (token) void load().catch((error) => setMessage(error.message)); }, [token]);
+  useEffect(() => { void load().catch((error) => setMessage(error.message)); }, []);
 
   async function createTextbook() {
     setBusy(true);
@@ -81,7 +80,6 @@ export default function CurriculumPage() {
       form.append('file', packageFile);
       const response = await fetch(`${apiRoot()}/api/v1/admin/curriculum/package/import`, {
         method: 'POST',
-        headers: headers(),
         body: form,
       });
       const body = await response.json().catch(() => ({}));
@@ -120,9 +118,8 @@ export default function CurriculumPage() {
     <AdminNav />
     <header className="topbar">
       <div><p className="eyebrow">CURRICULUM STUDIO</p><h1>课程管理</h1><p className="muted">教材目录、AI 草稿、人工审核和发布分开管理。</p></div>
-      <div className="token"><label htmlFor="curriculum-token">后台管理令牌</label><input id="curriculum-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="ADMIN_CONFIG_TOKEN" /></div>
+      <button className="secondary" onClick={() => void load().catch((error) => setMessage(error.message))}>刷新课程数据</button>
     </header>
-    {!token && <div className="notice"><strong>先输入后台令牌</strong><span>课程生成和发布接口只接受服务端环境中的管理令牌。</span></div>}
     <section className="panel">
       <div className="panel-head"><div><p className="eyebrow">TEXTBOOK CATALOG</p><h2>教材版本</h2><p className="muted">按出版社、出版年份、年级归类，可继续扩展版本和单元。</p></div></div>
       <div className="fields">
@@ -132,7 +129,7 @@ export default function CurriculumPage() {
         <label>教材名称<input value={textbook.title} onChange={(e) => setTextbook({ ...textbook, title: e.target.value })} /></label>
         <label>版本<input value={textbook.edition} onChange={(e) => setTextbook({ ...textbook, edition: e.target.value })} placeholder="上册/修订版" /></label>
       </div>
-      <button disabled={!token || busy || !textbook.publisher || !textbook.grade} onClick={() => void createTextbook()}>保存教材版本</button>
+      <button disabled={busy || !textbook.publisher || !textbook.grade} onClick={() => void createTextbook()}>保存教材版本</button>
       <div className="benchmark-list">{textbooks.map((book) => <div className="helper" key={book.id}><strong>{book.publisher}</strong> · {book.publicationYear} · {book.grade} · {book.title || '未命名'} {book.edition || ''} · 单元 {book.units.length}</div>)}</div>
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
@@ -141,7 +138,7 @@ export default function CurriculumPage() {
         <label>课程包 ZIP 文件<input id="curriculum-package-file" type="file" accept=".zip,application/zip" onChange={(event) => setPackageFile(event.target.files?.[0] || null)} /></label>
         <div className="helper">课程包必须包含根目录文件 <strong>curriculum-package.json</strong>，等级顺序和结构由服务端校验。重复导入同一 packageId 与单元编码会自动跳过。</div>
       </div>
-      <button disabled={!token || busy || !packageFile} onClick={() => void importPackage()}>导入课程包</button>
+      <button disabled={busy || !packageFile} onClick={() => void importPackage()}>导入课程包</button>
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
       <div className="panel-head"><div><p className="eyebrow">AI DRAFT</p><h2>按词表生成课程</h2><p className="muted">每行一个单词。AI 只生成待审核内容，不会直接修改孩子掌握状态。</p></div></div>
@@ -152,7 +149,7 @@ export default function CurriculumPage() {
         <label>教材单元<select value={draft.textbookUnitId} onChange={(e) => setDraft({ ...draft, textbookUnitId: e.target.value })}><option value="">不绑定单元</option>{selectedBook?.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.unitCode} · {unit.title}</option>)}</select></label>
       </div>
       <label>词表<textarea className="routing-editor" style={{ minHeight: 150 }} value={draft.words} onChange={(e) => setDraft({ ...draft, words: e.target.value })} placeholder={'hello\napple\nbook'} /></label>
-      <button disabled={!token || busy || !draft.title || !draft.words.trim()} onClick={() => void createDraft()}>创建课程草稿</button>
+      <button disabled={busy || !draft.title || !draft.words.trim()} onClick={() => void createDraft()}>创建课程草稿</button>
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
       <div className="panel-head"><div><p className="eyebrow">REVIEW QUEUE</p><h2>审核队列</h2></div></div>

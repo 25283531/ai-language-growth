@@ -78,7 +78,6 @@ export default function AdminPage() {
   const [credentials, setCredentials] = useState<Record<ServiceKind, Record<string, string>>>({
     llm: {}, tts: {}, asr: {}, pronunciation: {},
   });
-  const [token, setToken] = useState('');
   const [active, setActive] = useState<ServiceKind>('llm');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -98,23 +97,21 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (!token) return;
-    void fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}`, { headers: { 'x-admin-token': token } })
+    void fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}`)
       .then(async (res) => {
         if (!res.ok) throw new Error((await res.json()).message ?? `读取 Benchmark 失败 (${res.status})`);
         return res.json();
       })
       .then(setBenchmarks)
       .catch((error) => setMessage(error instanceof Error ? error.message : '读取 Benchmark 失败'));
-  }, [active, token]);
+  }, [active]);
 
   useEffect(() => {
-    if (!token) return;
     void loadPrices().catch((error) => setMessage(error instanceof Error ? error.message : '读取单价失败'));
-  }, [active, token]);
+  }, [active]);
 
   async function loadConfigs() {
-    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs`, { headers: { 'x-admin-token': token } });
+    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs`);
     if (!res.ok) throw new Error((await res.json()).message ?? `读取失败 (${res.status})`);
     const rows: Config[] = await res.json();
     setConfigs((old) => ({ ...old, ...Object.fromEntries(rows.map((row) => [row.serviceKind, row])) }));
@@ -123,7 +120,7 @@ export default function AdminPage() {
   }
 
   async function loadPrices() {
-    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/prices?serviceKind=${active}`, { headers: { 'x-admin-token': token } });
+    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/prices?serviceKind=${active}`);
     if (!res.ok) throw new Error((await res.json()).message ?? `读取模型单价失败 (${res.status})`);
     const rows: ModelPrice[] = await res.json();
     setPricing(Object.fromEntries(rows.map((row) => [row.priceType, String(row.unitPrice)])));
@@ -137,7 +134,7 @@ export default function AdminPage() {
         .map(({ type }) => ({ priceType: type, unitPrice: Number(pricing[type]) }));
       const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/prices`, {
         method: 'PUT',
-        headers: { 'content-type': 'application/json', 'x-admin-token': token },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ serviceKind: active, modelAlias: current.modelAlias, prices }),
       });
       const body = await res.json();
@@ -152,7 +149,7 @@ export default function AdminPage() {
   }
 
   async function loadBenchmarks() {
-    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}`, { headers: { 'x-admin-token': token } });
+    const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks?serviceKind=${active}`);
     if (!res.ok) throw new Error((await res.json()).message ?? `读取 Benchmark 失败 (${res.status})`);
     setBenchmarks(await res.json());
   }
@@ -161,7 +158,7 @@ export default function AdminPage() {
     setBusy(true); setMessage('正在保存儿童专项测试结果…');
     try {
       const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/benchmarks`, {
-        method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': token },
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ serviceKind: active, modelAlias: current.modelAlias, score: Number(benchmarkScore), sampleCount: Number(benchmarkSamples), passed: benchmarkPassed, notes: benchmarkNotes }),
       });
       const body = await res.json();
@@ -182,7 +179,7 @@ export default function AdminPage() {
     setBusy(true); setMessage('正在保存并切换运行时模型…');
     try {
       const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs`, {
-        method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-token': token },
+        method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...current, credentials: credentials[active] }),
       });
       const body = await res.json();
@@ -196,7 +193,7 @@ export default function AdminPage() {
   }
 
   return <main className="shell"><AdminNav />
-    <header className="topbar"><div><p className="eyebrow">AI LANGUAGE GROWTH</p><h1>模型接入</h1></div><div className="token"><label htmlFor="token">后台管理令牌</label><input id="token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="ADMIN_CONFIG_TOKEN"/><button className="secondary" onClick={() => void loadConfigs().catch((error) => setMessage(error.message))}>读取配置</button></div></header>
+    <header className="topbar"><div><p className="eyebrow">AI LANGUAGE GROWTH</p><h1>模型接入</h1></div><button className="secondary" onClick={() => void loadConfigs().catch((error) => setMessage(error.message))}>读取配置</button></header>
     <><section className="notice"><strong>两类语音能力分开配置</strong><span>普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。真实模型须先通过对应的儿童专项 Benchmark。</span></section>
     <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{configs[item.id].enabled ? '已启用' : '未启用'}</i></button>)}</nav>
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => setConfigs((old) => ({ ...old, [active]: { ...current, enabled: event.target.checked } }))}/><span>启用</span></label></div>
@@ -233,17 +230,17 @@ export default function AdminPage() {
             </div>
             <label>测试说明<input value={benchmarkNotes} onChange={(event) => setBenchmarkNotes(event.target.value)} placeholder="年龄段、口音、测试集版本与结果摘要"/></label>
             <label className="switch"><input type="checkbox" checked={benchmarkPassed} onChange={(event) => setBenchmarkPassed(event.target.checked)}/><span>该模型通过本服务专项测试</span></label>
-            <button className="secondary" disabled={!token || !current.modelAlias || !benchmarkScore || !benchmarkSamples || busy} onClick={() => void saveBenchmark()}>保存测试结果并刷新模型接入</button>
+            <button className="secondary" disabled={!current.modelAlias || !benchmarkScore || !benchmarkSamples || busy} onClick={() => void saveBenchmark()}>保存测试结果并刷新模型接入</button>
             <div className="benchmark-list">{benchmarks.flatMap((model) => model.benchmarks.map((entry) => <div className="helper" key={entry.id}>{model.modelAlias} · {entry.passed ? '通过' : '未通过'} · 分数 {entry.score} · 样本 {entry.sampleCount} · {new Date(entry.testedAt).toLocaleDateString()}</div>))}</div>
           </section>
           <section className="benchmark">
             <h3>模型计价</h3>
             <p className="helper">按供应商账单填写人民币单价。空白表示尚未配置；明确免费的项目填 0。Token 单价按每个 Token 填写，成本会写入用量账本。</p>
             <div className="fields">{priceFields[active].map(({ type, label }) => <label key={type}>{label}<input type="number" min="0" step="any" value={pricing[type] ?? ''} onChange={(event) => setPricing((old) => ({ ...old, [type]: event.target.value }))}/></label>)}</div>
-            <button className="secondary" disabled={!token || !current.modelAlias || busy} onClick={() => void savePrices()}>{busy ? '保存中…' : '保存模型单价'}</button>
+            <button className="secondary" disabled={!current.modelAlias || busy} onClick={() => void savePrices()}>{busy ? '保存中…' : '保存模型单价'}</button>
           </section>
         </>}
-        <footer><span className="status">{message}</span><button disabled={!token || !current.providerPresetId || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存并应用'}</button></footer>
+        <footer><span className="status">{message}</span><button disabled={!current.providerPresetId || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存并应用'}</button></footer>
       </section></div></>
   </main>;
 }

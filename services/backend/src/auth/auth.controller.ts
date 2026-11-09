@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { AuthService, extractBearerToken } from './auth.service';
 import { EmailService } from './email.service';
 import { ProviderConfigService } from '../providers/provider-config.service';
+import { AdminAuthService } from './admin-auth.service';
 
 const registerSchema = z.object({
   email: z.string(),
@@ -113,5 +114,34 @@ export class EmailAdminController {
   async test(@Headers('x-admin-token') token: string | undefined) {
     this.adminConfig.assertAdminToken(token);
     return this.email.testSettings();
+  }
+}
+
+const adminLoginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) });
+
+@Controller('api/v1/admin/auth')
+export class AdminAuthController {
+  constructor(private readonly adminAuth: AdminAuthService) {}
+
+  @Post('login')
+  login(@Body() body: unknown, @Res({ passthrough: true }) response: Response) {
+    const parsed = adminLoginSchema.safeParse(body);
+    if (!parsed.success) throw new HttpException({ message: '请输入管理员账号和密码' }, 400);
+    const result = this.adminAuth.login(parsed.data.username, parsed.data.password);
+    const session = this.adminAuth.createSession(result.username);
+    response.setHeader('Set-Cookie', this.adminAuth.cookie(session.token, session.expiresAt));
+    return { username: result.username, expiresAt: session.expiresAt };
+  }
+
+  @Get('me')
+  me(@Headers('cookie') cookie: string | undefined, @Headers('authorization') authorization?: string) {
+    const username = this.adminAuth.resolveRequest({ headers: { cookie, authorization } });
+    return { username };
+  }
+
+  @Post('logout')
+  logout(@Res({ passthrough: true }) response: Response) {
+    response.setHeader('Set-Cookie', this.adminAuth.clearCookie());
+    return { ok: true };
   }
 }

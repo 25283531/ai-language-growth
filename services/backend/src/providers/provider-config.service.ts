@@ -298,18 +298,8 @@ export class ProviderConfigService {
     return model?.enabled === true && model.benchmarks.length > 0;
   }
 
-  assertAdminToken(received: string | undefined): void {
-    const expected = process.env.ADMIN_CONFIG_TOKEN;
-    if (!expected) {
-      throw new ServiceUnavailableException('后台模型配置未启用：请配置 ADMIN_CONFIG_TOKEN');
-    }
-    if (!received) throw new BadRequestException('缺少后台管理令牌');
-    const expectedBytes = Buffer.from(expected, 'utf8');
-    const receivedBytes = Buffer.from(received, 'utf8');
-    if (expectedBytes.length !== receivedBytes.length || !timingSafeEqual(expectedBytes, receivedBytes)) {
-      throw new BadRequestException('后台管理令牌无效');
-    }
-  }
+  // 管理路由由 main.ts 的 AdminAuthService 会话中间件统一保护。
+  assertAdminToken(_received?: string): void {}
 
   encryptSecretRecord(value: Record<string, string>): string {
     return this.encrypt(value);

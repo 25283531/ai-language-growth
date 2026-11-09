@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './styles.css';
+import { AdminAuthGate } from './admin-auth';
 
 export const metadata: Metadata = {
   title: 'AI Language Growth · 模型接入设置',
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body><AdminAuthGate>{children}</AdminAuthGate></body>
     </html>
   );
 }

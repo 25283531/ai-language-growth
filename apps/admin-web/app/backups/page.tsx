@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AdminNav } from '../admin-nav';
 
 type BackupSettings = {
@@ -20,7 +20,6 @@ function apiRoot() {
 }
 
 export default function BackupsPage() {
-  const [token, setToken] = useState('');
   const [settings, setSettings] = useState<BackupSettings>({
     enabled: false, intervalHours: 24, retention: 7, target: 'local',
     webdavUrl: '', webdavUser: '', webdavPath: '/ai-language-growth', passwordConfigured: false,
@@ -34,7 +33,8 @@ export default function BackupsPage() {
   async function request(path: string, init?: RequestInit) {
     const response = await fetch(`${apiRoot()}/api/v1/admin/backups/${path}`, {
       ...init,
-      headers: { 'x-admin-token': token, ...(init?.headers ?? {}) },
+      credentials: 'include',
+      headers: { ...(init?.headers ?? {}) },
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -50,6 +50,8 @@ export default function BackupsPage() {
     setSettings(await configResponse.json());
     setFiles(await filesResponse.json());
   }
+
+  useEffect(() => { void load().catch((error) => setMessage(error.message)); }, []);
 
   async function save() {
     const response = await request('settings', {
@@ -100,8 +102,7 @@ export default function BackupsPage() {
     <AdminNav />
     <header className="topbar"><div><p className="eyebrow">BACKUP & RESTORE</p><h1>备份与还原</h1><p className="muted">备份包含数据库中的账户、配置、课程及学习记录，不包含音频缓存。</p></div></header>
     <section className="panel">
-      <label>后台管理令牌<input type="password" value={token} onChange={(event) => setToken(event.target.value)} /></label>
-      <button className="secondary" disabled={!token} onClick={() => void load().catch((error) => setMessage(error.message))}>读取备份设置</button>
+      <button className="secondary" onClick={() => void load().catch((error) => setMessage(error.message))}>读取备份设置</button>
       <div className="fields">
         <label>备份目标<select value={settings.target} onChange={(event) => setSettings({ ...settings, target: event.target.value as BackupSettings['target'] })}><option value="local">服务器本地</option><option value="webdav">WebDAV / OpenList</option></select></label>
         <label>保留最近份数<input type="number" min="1" max="100" value={settings.retention} onChange={(event) => setSettings({ ...settings, retention: Number(event.target.value) })} /></label>
@@ -115,10 +116,10 @@ export default function BackupsPage() {
         <label>WebDAV 密码<input type="password" autoComplete="new-password" placeholder={settings.passwordConfigured ? '已保存，留空则保持不变' : '输入密码'} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
       </div>}
       <p className="helper">百度网盘和阿里云盘可通过 OpenList 挂载后，填写 OpenList 提供的 WebDAV 地址。</p>
-      <div className="row-actions"><button disabled={!token || busy} onClick={() => void save().catch((error) => setMessage(error.message))}>保存设置</button><button className="secondary" disabled={!token || busy} onClick={() => void create().catch((error) => setMessage(error.message))}>立即备份</button><button className="secondary" disabled={!token} onClick={() => void load().catch((error) => setMessage(error.message))}>刷新列表</button></div>
+      <div className="row-actions"><button disabled={busy} onClick={() => void save().catch((error) => setMessage(error.message))}>保存设置</button><button className="secondary" disabled={busy} onClick={() => void create().catch((error) => setMessage(error.message))}>立即备份</button><button className="secondary" onClick={() => void load().catch((error) => setMessage(error.message))}>刷新列表</button></div>
       <p className="status">{message}</p>
     </section>
     <section className="panel"><h2>服务器备份</h2>{files.length ? files.map((item) => <div className="helper" key={item.name}>{item.name} · {(item.bytes / 1024 / 1024).toFixed(1)} MB · {new Date(item.createdAt).toLocaleString()} <button className="secondary" onClick={() => void download(item.name).catch((error) => setMessage(error.message))}>下载</button></div>) : <p className="status">暂无本地备份。</p>}</section>
-    <section className="panel"><h2>从备份文件还原</h2><label>项目备份压缩包<input type="file" accept=".zip,application/zip,application/octet-stream" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label><button disabled={!token || !file || busy} onClick={() => void restore().catch((error) => setMessage(error.message))}>导入并还原</button></section>
+    <section className="panel"><h2>从备份文件还原</h2><label>项目备份压缩包<input type="file" accept=".zip,application/zip,application/octet-stream" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label><button disabled={!file || busy} onClick={() => void restore().catch((error) => setMessage(error.message))}>导入并还原</button></section>
   </main>;
 }

@@ -4,7 +4,7 @@
 
 ## 启动配置
 
-部署时设置 `ADMIN_CONFIG_TOKEN` 和 `MODEL_CONFIG_ENCRYPTION_KEY`。第二项必须为 32 字节的十六进制值；例如使用 `openssl rand -hex 32` 生成。模型密钥以 AES-256-GCM 加密后写入 `ai_provider_configs`。更换加密密钥会导致已有凭据无法解密。
+部署时在服务器 `.env` 设置 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 与 `MODEL_CONFIG_ENCRYPTION_KEY`。加密密钥必须为 32 字节的十六进制值；例如使用 `openssl rand -hex 32` 生成。管理员登录后通过 HttpOnly 会话 Cookie 使用管理接口。模型密钥以 AES-256-GCM 加密后写入 `ai_provider_configs`。更换加密密钥会导致已有凭据无法解密。
 
 Docker Compose 默认开放管理页面 `3001` 和用户 Web `3002`。数据库、Redis、后端 API 均只在 Compose 内网可见；两个 Next.js 页面通过同源 `/api/v1` rewrite 访问 `backend:3000`，浏览器不需要直接访问后端端口。真机和外部浏览器应使用 Web 的 HTTPS 入口，或临时访问 Web 的 `3002` 端口。
 

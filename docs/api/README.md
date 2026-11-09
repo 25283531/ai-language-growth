@@ -10,7 +10,7 @@
 - Base URL：`/api/v1`；JSON 请求使用 `Content-Type: application/json`。
 - 输入验证由 Zod schema 执行；不合法输入通常返回 HTTP 400，结构为 Nest `message`（可能是字符串或对象）、`error`、`statusCode`。不同 controller 的异常包装尚未完全统一。
 - 教学领域 ID 使用 JSON 字符串；日期时间使用 ISO-8601。
-- **当前除管理 API 外均无身份认证和监护人归属检查。** `x-admin-token` 仅保护 `/admin/*`，不得将该实现视为儿童数据权限系统。未完成 guardian auth 前仅可在隔离开发/CI 环境使用。
+- **当前除管理 API 外均无身份认证和监护人归属检查。** 管理 API 由部署管理员会话保护；不得将管理员登录视为儿童数据权限系统。未完成 guardian auth 前仅可在隔离开发/CI 环境使用。
 - 语音 `audioRef` 是协议引用。Android 原型通过 `POST /media/audio/uploads` 上传
   `.m4a` 字节后使用服务端引用；该端点仅为原型缓存，尚未接入对象存储和自动过期。
 - 能力阈值状态为未校准的内部教学信号，不是掌握承诺。
@@ -92,7 +92,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 
 ### 会员管理
 
-管理端使用 `ADMIN_CONFIG_TOKEN` 调用以下接口，等级由服务端读取和保存，客户端不能自行传入等级：
+管理端登录后通过 HttpOnly 会话 Cookie 调用以下接口，等级由服务端读取和保存，客户端不能自行传入等级：
 
 | `GET /admin/learners/{id}/membership` | 读取学习者当前等级 |
 | `PUT /admin/learners/{id}/membership` | `{ tier: "guest" | "free" | "member" | "advanced" }` |
@@ -112,7 +112,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 
 ## 管理 API
 
-以下端点以 `x-admin-token` 校验 `ADMIN_API_TOKEN`。该 token 是原型运维凭据，不授权家长读取儿童资料。
+以下管理端点要求有效管理员会话。该会话是运维管理凭据，不授权家长读取儿童资料。
 
 | Method / path | 请求 | 行为 |
 | --- | --- | --- |

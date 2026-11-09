@@ -29,4 +29,4 @@ Textbook metadata links material to school curricula while the learner's skill s
 
 ## API authorization
 
-All `/api/v1/admin/curriculum/*` endpoints require `x-admin-token` matching the server-side `ADMIN_CONFIG_TOKEN`. Never store that token in this repository.
+All `/api/v1/admin/curriculum/*` endpoints require a valid administrator session. The session is created after login with the deployment-configured administrator account and stored in an HttpOnly cookie.

@@ -15,6 +15,7 @@ import { assertLiveProviderConfig } from '@alg/ai-provider-sdk';
 import { loadConfig } from './config/config.module';
 import { SpeechQuotaService } from './usage/speech-quota.service';
 import { AuthService, extractBearerToken } from './auth/auth.service';
+import { AdminAuthService } from './auth/admin-auth.service';
 
 async function bootstrap(): Promise<void> {
   // live 模式下配置漏填必须立刻失败，不能等到运行期静默回落 Mock
@@ -32,7 +33,6 @@ async function bootstrap(): Promise<void> {
       'Content-Type',
       'Authorization',
       'X-Idempotency-Key',
-      'X-Admin-Token',
       'X-Learner-Id',
       'X-Speech-Quota-Reservation',
     ],
@@ -43,6 +43,20 @@ async function bootstrap(): Promise<void> {
   app.use('/api/v1/admin/backups/restore', raw({ type: 'application/octet-stream', limit: '512mb' }));
   const speechQuota = app.get(SpeechQuotaService);
   const auth = app.get(AuthService);
+  const adminAuth = app.get(AdminAuthService);
+  app.use('/api/v1/admin', (request: Request, response: Response, next: NextFunction) => {
+    if (adminAuth.isAuthPath(request.path)) {
+      next();
+      return;
+    }
+    try {
+      adminAuth.resolveRequest(request);
+      next();
+    } catch (error) {
+      const status = error instanceof UnauthorizedException ? 401 : 503;
+      response.status(status).json({ message: error instanceof Error ? error.message : '管理后台未授权' });
+    }
+  });
   app.use('/api/v1/media/audio/uploads', async (request: Request, response: Response, next: NextFunction) => {
     const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
