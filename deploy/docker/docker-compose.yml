@@ -44,9 +44,7 @@ services:
       - alg-net
 
   backend:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/backend.Dockerfile
+    image: ghcr.io/25283531/ai-language-growth-backend:latest
     container_name: alg-backend
     restart: unless-stopped
     depends_on:
@@ -140,9 +138,7 @@ services:
         condition: service_healthy
 
   admin-web:
-    build:
-      context: ../..
-      dockerfile: apps/admin-web/Dockerfile
+    image: ghcr.io/25283531/ai-language-growth-admin-web:latest
     container_name: alg-admin-web
     restart: unless-stopped
     depends_on:
@@ -156,11 +152,7 @@ services:
       - alg-net
 
   web:
-    build:
-      context: ../..
-      dockerfile: apps/web/Dockerfile
-      args:
-        NEXT_PUBLIC_API_BASE: /api/v1
+    image: ghcr.io/25283531/ai-language-growth-web:latest
     container_name: alg-web
     restart: unless-stopped
     depends_on:

@@ -1,6 +1,6 @@
 # deploy/docker
 
-Docker Compose starts the NestJS backend, PostgreSQL, Redis, the operator console, and the user web application. Copy `.env.example`, set a private `ADMIN_USERNAME` and strong `ADMIN_PASSWORD`, and generate a 32-byte `MODEL_CONFIG_ENCRYPTION_KEY` before saving any provider credentials. Never commit the populated `.env` file.
+Docker Compose starts the NestJS backend, PostgreSQL, Redis, the operator console, and the user web application. The application containers are pulled from private GHCR images; log in to `ghcr.io` on the deployment server with a read-only package token before running Compose. Copy `.env.example`, set a private `ADMIN_USERNAME` and strong `ADMIN_PASSWORD`, and generate a 32-byte `MODEL_CONFIG_ENCRYPTION_KEY` before saving any provider credentials. Never commit the populated `.env` file.
 
 - Management console: `http://localhost:3001`
 - User account and learning workbench: `http://localhost:3002`
