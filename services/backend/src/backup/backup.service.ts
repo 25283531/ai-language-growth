@@ -8,17 +8,19 @@ import {
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createReadStream, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
+import { createReadStream, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import AdmZip from 'adm-zip';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProviderConfigService } from '../providers/provider-config.service';
+import { resolveAudioDir } from '@alg/ai-provider-sdk';
 
 const execFileAsync = promisify(execFile);
 const BACKUP_DIR = process.env.BACKUP_DIR || join(process.cwd(), '.cache', 'backups');
 const backupSettingsKey = 'backup';
+const IMAGE_CACHE_DIR = process.env.AI_MEDIA_CACHE_DIR || join(process.cwd(), '.cache', 'media');
 
 export interface BackupSettings {
   enabled: boolean;
@@ -136,6 +138,28 @@ export class BackupService implements OnModuleInit, OnModuleDestroy {
       });
       const archive = new AdmZip();
       archive.addLocalFile(dump, '', 'database.dump');
+      // 仅备份数据库登记的 TTS 音频资产，不打包同目录中的临时 ASR 上传录音。
+      const audioAssets = await this.prisma.media_assets.findMany({
+        where: { kind: 'audio', cacheStatus: 'cached' },
+        select: { ref: true },
+      });
+      const audioRefs = new Set(audioAssets.map(({ ref }) => ref));
+      const audioDir = resolveAudioDir();
+      if (existsSync(audioDir)) {
+        for (const ref of audioRefs) {
+          const file = ref.split('/').pop();
+          if (file && /^[a-f0-9]{24}\.(mp3|m4a|wav|ogg|opus|aac)$/i.test(file) && existsSync(join(audioDir, file))) {
+            archive.addLocalFile(join(audioDir, file), 'audio');
+          }
+        }
+        for (const index of readdirSync(audioDir).filter((name) => /^\.tts-[a-f0-9]{64}\.json$/.test(name))) {
+          try {
+            const entry = JSON.parse(readFileSync(join(audioDir, index), 'utf8')) as { audioRef?: unknown };
+            if (typeof entry.audioRef === 'string' && audioRefs.has(entry.audioRef)) archive.addLocalFile(join(audioDir, index), 'audio');
+          } catch { /* Skip malformed cache indexes. */ }
+        }
+      }
+      if (existsSync(IMAGE_CACHE_DIR)) archive.addLocalFolder(IMAGE_CACHE_DIR, 'media');
       archive.writeZip(output);
     } catch (error) {
       this.logger.error(`数据库备份失败: ${(error as Error).message}`);
@@ -164,13 +188,21 @@ export class BackupService implements OnModuleInit, OnModuleDestroy {
       if (
         !database
         || database.isDirectory
-        || entries.length !== 1
+        || entries.some((entry) => entry.entryName !== 'database.dump' && !/^(audio|media)\/[^/]+$/.test(entry.entryName))
         || entries.some((entry) => entry.header.size > 512 * 1024 * 1024)
       ) {
         throw new Error('backup format invalid');
       }
       dump = join(BACKUP_DIR, `restore-db-${randomUUID()}.dump`);
       writeFileSync(dump, database.getData(), { flag: 'wx' });
+      for (const entry of entries) {
+        if (entry.isDirectory || !/^(audio|media)\/[^/]+$/.test(entry.entryName)) continue;
+        const [root, ...parts] = entry.entryName.split('/');
+        const targetDir = root === 'audio' ? resolveAudioDir() : IMAGE_CACHE_DIR;
+        const target = join(targetDir, ...parts);
+        mkdirSync(targetDir, { recursive: true });
+        writeFileSync(target, entry.getData(), { flag: 'w' });
+      }
       const databaseUrl = process.env.DATABASE_URL;
       if (!databaseUrl) throw new Error('DATABASE_URL missing');
       await this.createBackup();

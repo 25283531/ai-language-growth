@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -40,26 +41,49 @@ import java.net.URL
 private val Forest = Color(0xFF176B5B)
 private val Ink = Color(0xFF202B28)
 private val Muted = Color(0xFF64716C)
+private val ChildCoral = Color(0xFFE66A55)
+private val ChildBlue = Color(0xFF3478B8)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val preferences = getSharedPreferences("appearance", MODE_PRIVATE)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(
-                primary = Forest,
-                onPrimary = Color.White,
-                background = Color(0xFFF5F7F4),
-                surface = Color.White,
-                onSurface = Ink,
-            )) {
-                LessonHome()
+            var childTheme by remember { mutableStateOf(preferences.getBoolean("childTheme", true)) }
+            val colors = if (childTheme) {
+                lightColorScheme(
+                    primary = ChildCoral,
+                    secondary = ChildBlue,
+                    onPrimary = Color.White,
+                    background = Color(0xFFFFF7EF),
+                    surface = Color.White,
+                    onSurface = Color(0xFF29323B),
+                )
+            } else {
+                lightColorScheme(
+                    primary = Forest,
+                    secondary = Color(0xFF557A73),
+                    onPrimary = Color.White,
+                    background = Color(0xFFF5F7F4),
+                    surface = Color.White,
+                    onSurface = Ink,
+                )
+            }
+            MaterialTheme(colorScheme = colors) {
+                LessonHome(
+                    childTheme = childTheme,
+                    onThemeChange = { enabled ->
+                        childTheme = enabled
+                        preferences.edit().putBoolean("childTheme", enabled).apply()
+                    },
+                )
             }
         }
     }
 }
 
 @androidx.compose.runtime.Composable
-private fun LessonHome() {
+private fun LessonHome(childTheme: Boolean, onThemeChange: (Boolean) -> Unit) {
     val scope = rememberCoroutineScope()
     var backend by remember { mutableStateOf("") }
     var learnerId by remember { mutableStateOf("child-m1-demo") }
@@ -76,8 +100,24 @@ private fun LessonHome() {
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Text("英语成长课堂", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Ink)
-            Text("今天也可以慢慢来。", color = Muted, fontSize = 16.sp)
+            Text("英语成长课堂", fontSize = if (childTheme) 29.sp else 27.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(if (childTheme) "今天也可以慢慢来。" else "按自己的节奏，稳步积累。", color = Muted, fontSize = 16.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onThemeChange(true) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (childTheme) MaterialTheme.colorScheme.primary else Color(0xFFE9ECEF),
+                        contentColor = if (childTheme) Color.White else Ink,
+                    ),
+                ) { Text("儿童") }
+                Button(
+                    onClick = { onThemeChange(false) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (!childTheme) MaterialTheme.colorScheme.primary else Color(0xFFE9ECEF),
+                        contentColor = if (!childTheme) Color.White else Ink,
+                    ),
+                ) { Text("成人") }
+            }
             OutlinedTextField(
                 value = learnerId,
                 onValueChange = { learnerId = it },
@@ -126,11 +166,11 @@ private fun LessonHome() {
             Text(status, color = Muted)
             if (lessonId != null) {
                 Spacer(Modifier.height(4.dp))
-                Text(topicName, color = Forest, fontWeight = FontWeight.SemiBold)
-                Text(teacherText, fontSize = 22.sp, lineHeight = 31.sp, fontWeight = FontWeight.Medium)
+                Text(topicName, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                Text(teacherText, fontSize = if (childTheme) 24.sp else 21.sp, lineHeight = 31.sp, fontWeight = FontWeight.Medium)
                 if (demoText.isNotBlank()) {
                     Text("跟老师读", color = Muted, fontSize = 14.sp)
-                    Text(demoText, fontSize = 32.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold, color = Forest)
+                    Text(demoText, fontSize = if (childTheme) 34.sp else 30.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
                 if (targetWords.isNotBlank()) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

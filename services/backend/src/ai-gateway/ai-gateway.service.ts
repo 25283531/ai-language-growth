@@ -52,6 +52,7 @@ import type {
 } from '@alg/shared-contracts';
 import { MOCK_PROVIDER_ALIASES, ModelRouterImpl } from '@alg/model-router';
 import { ProviderConfigService, type RuntimeProviderConfig } from '../providers/provider-config.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 /** 一次调用的结果与降级信息。 */
 export interface GatewayCallResult<T> {
@@ -72,7 +73,13 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   private readonly logger = new Logger(AiGatewayService.name);
   private readonly registry: AdapterRegistry;
   /** TTS 音频缓存：语音内容 + 参数 → 音频引用。 */
-  private readonly ttsCache = new Map<string, { audioRef: string; characters: number }>();
+  private readonly ttsCache = new Map<string, {
+    audioRef: string;
+    characters: number;
+    text: string;
+    teacherSpeed: number;
+    voiceIdentity: string;
+  }>();
   private readonly providerTimeouts = new Map<string, number>();
   private pronunciationCandidates: string[] = [];
   private readonly runtimeCandidates: Record<'llm' | 'tts' | 'asr', string[]> = {
@@ -86,6 +93,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   constructor(
     @Inject(ModelRouterImpl) private readonly modelRouter: ModelRouterImpl,
     @Inject(ProviderConfigService) private readonly providerConfigs: ProviderConfigService,
+    private readonly prisma: PrismaService,
   ) {
     this.registry = registerAdapters(new AdapterRegistry(), loadProviderConfig());
     this.logger.log(
@@ -155,6 +163,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       modelAlias: config.modelAlias,
       pricing: { checkedAt: new Date().toISOString().slice(0, 10) },
       ...(typeof config.options.voice === 'string' ? { voice: config.options.voice } : {}),
+      capabilities: config.providerPresetId === 'ollama'
+        ? {}
+        : { teacherSpeedRange: { min: 0.25, max: 1.2 } },
       ...(config.options.extraBody && typeof config.options.extraBody === 'object'
         ? { extraBody: config.options.extraBody as Record<string, unknown> }
         : {}),
@@ -250,8 +261,18 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     request: TtsRequest,
     decision: RoutingDecision,
   ): Promise<GatewayCallResult<TtsResponse>> {
+    const normalizedRequest = {
+      ...request,
+      voice: {
+        teacherSpeed: request.voice.teacherSpeed ?? 0.65,
+        voiceStyle: request.voice.voiceStyle ?? 'gentle',
+        pauseAfterSentenceMs: request.voice.pauseAfterSentenceMs ?? 1000,
+        pronunciationMode: request.voice.pronunciationMode ?? 'slow_clear',
+      },
+      voiceIdentity: request.voiceIdentity ?? 'teacher_default',
+    } as TtsRequest & { voice: { teacherSpeed: number; voiceStyle: string; pauseAfterSentenceMs: number; pronunciationMode: string }; voiceIdentity: string };
     // —— 缓存命中：反复播放不重新消耗 TTS ——
-    const cacheKey = this.ttsCacheKey(request);
+    const cacheKey = this.ttsCacheKey(normalizedRequest);
     let cached = this.ttsCache.get(cacheKey);
     if (cached) {
       const audioFile = cached.audioRef.split('/').pop();
@@ -263,8 +284,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         cached = undefined;
       }
     }
-    cached ??= await this.loadPersistentTtsCache(cacheKey);
+    cached ??= await this.loadPersistentTtsCache(cacheKey, normalizedRequest);
     if (cached) {
+      const speed = this.ttsSpeedMetadata(normalizedRequest, decision.providerAlias);
       return {
         result: {
           audioRef: cached.audioRef,
@@ -273,6 +295,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
           providerAlias: decision.providerAlias,
           modelAlias: decision.modelAlias,
           cached: true,
+          ...speed,
         },
         degraded: false,
         reasons: [],
@@ -286,11 +309,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       'tts',
       decision,
       async (adapter, timeoutMs) => (adapter as TtsAdapter).invoke({
-        ...request,
-        ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
+        ...normalizedRequest,
+        ...(timeoutMs ? { timeoutMs: Math.min(normalizedRequest.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
       }),
       'mock_tts',
     );
+    Object.assign(outcome.result, this.ttsSpeedMetadata(normalizedRequest, outcome.providerAlias));
 
     // 只要拿到可用音频就缓存：降级到兜底适配器同样是有效音频，
     // 若因 degraded 而不缓存，Mock 模式下重复播放会永远重新计费。
@@ -298,12 +322,30 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       this.ttsCache.set(cacheKey, {
         audioRef: outcome.result.audioRef,
         characters: outcome.result.characters,
+        text: normalizedRequest.text,
+        teacherSpeed: normalizedRequest.voice.teacherSpeed,
+        voiceIdentity: normalizedRequest.voiceIdentity,
       });
-      await this.storePersistentTtsCache(cacheKey, outcome.result).catch((error) =>
+      await this.storePersistentTtsCache(cacheKey, normalizedRequest, outcome.result).catch((error) =>
         this.logger.warn(`TTS 持久化缓存索引写入失败：${(error as Error).message}`),
       );
     }
     return outcome;
+  }
+
+  private ttsSpeedMetadata(request: TtsRequest, providerAlias: string): {
+    requestedTeacherSpeed: number;
+    speedMode: 'native' | 'playback';
+    playbackRate: number;
+  } {
+    const requestedTeacherSpeed = Math.min(4, Math.max(0.25, request.voice.teacherSpeed ?? 0.65));
+    const adapter = this.registry.get<TtsRequest, TtsResponse>('tts', providerAlias);
+    const supportsNative = Boolean(adapter?.capabilities.teacherSpeedRange);
+    return {
+      requestedTeacherSpeed,
+      speedMode: supportsNative ? 'native' : 'playback',
+      playbackRate: supportsNative ? 1 : requestedTeacherSpeed,
+    };
   }
 
   /**
@@ -322,17 +364,38 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     ].join('|');
   }
 
-  private async loadPersistentTtsCache(cacheKey: string): Promise<{ audioRef: string; characters: number } | undefined> {
+  private async loadPersistentTtsCache(
+    cacheKey: string,
+    request: TtsRequest,
+  ): Promise<{
+    audioRef: string;
+    characters: number;
+    text: string;
+    teacherSpeed: number;
+    voiceIdentity: string;
+  } | undefined> {
     const file = this.ttsCacheIndexPath(cacheKey);
     try {
-      const entry = JSON.parse(await readFile(file, 'utf8')) as { audioRef?: unknown; characters?: unknown };
+      const teacherSpeed = request.voice.teacherSpeed ?? 0.65;
+      const voiceIdentity = request.voiceIdentity ?? 'teacher_default';
+      const entry = JSON.parse(await readFile(file, 'utf8')) as {
+        audioRef?: unknown;
+        characters?: unknown;
+        text?: unknown;
+        teacherSpeed?: unknown;
+        voiceIdentity?: unknown;
+      };
       if (typeof entry.audioRef !== 'string' || !entry.audioRef.startsWith('/api/v1/media/audio/')) return undefined;
+      if (entry.text !== request.text || Number(entry.teacherSpeed) !== teacherSpeed || entry.voiceIdentity !== voiceIdentity) return undefined;
       const audioFile = entry.audioRef.split('/').pop();
       if (!audioFile || audioFile.includes('..')) return undefined;
       await access(join(resolveAudioDir(), audioFile));
       const cached = {
         audioRef: entry.audioRef,
         characters: typeof entry.characters === 'number' ? entry.characters : 0,
+        text: request.text,
+        teacherSpeed,
+        voiceIdentity,
       };
       this.ttsCache.set(cacheKey, cached);
       return cached;
@@ -341,13 +404,47 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     }
   }
 
-  private async storePersistentTtsCache(cacheKey: string, result: TtsResponse): Promise<void> {
+  private async storePersistentTtsCache(cacheKey: string, request: TtsRequest, result: TtsResponse): Promise<void> {
     const directory = resolveAudioDir();
     await mkdir(directory, { recursive: true });
     await writeFile(this.ttsCacheIndexPath(cacheKey), JSON.stringify({
       audioRef: result.audioRef,
       characters: result.characters,
+      text: request.text,
+      voice: request.voice,
+      teacherSpeed: request.voice.teacherSpeed,
+      voiceIdentity: request.voiceIdentity,
+      providerAlias: result.providerAlias,
+      modelAlias: result.modelAlias,
     }), 'utf8');
+    const audioFile = result.audioRef.split('/').pop();
+    if (audioFile && !audioFile.includes('..')) {
+      const extension = audioFile.split('.').pop() || null;
+      const checksum = audioFile.split('.')[0] || null;
+      await this.prisma.media_assets.upsert({
+        where: { id: `tts-${checksum}` },
+        create: {
+          id: `tts-${checksum}`,
+          kind: 'audio',
+          ref: result.audioRef,
+          voiceIdentity: request.voiceIdentity,
+          teacherSpeed: request.voice.teacherSpeed,
+          checksum,
+          cacheExtension: extension,
+          cacheStatus: 'cached',
+          sourceProvider: result.providerAlias,
+        },
+        update: {
+          ref: result.audioRef,
+          voiceIdentity: request.voiceIdentity,
+          teacherSpeed: request.voice.teacherSpeed,
+          checksum,
+          cacheExtension: extension,
+          cacheStatus: 'cached',
+          sourceProvider: result.providerAlias,
+        },
+      }).catch(() => undefined);
+    }
   }
 
   private ttsCacheIndexPath(cacheKey: string): string {

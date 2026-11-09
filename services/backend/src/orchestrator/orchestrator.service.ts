@@ -1884,6 +1884,8 @@ export class OrchestratorService {
         audioRef: outcome.result.audioRef,
         cached: outcome.result.cached,
         teacherSpeed: directive.voice.teacherSpeed,
+        speedMode: outcome.result.speedMode,
+        playbackRate: outcome.result.playbackRate,
         voiceStyle: directive.voice.voiceStyle,
         pauseAfterSentenceMs: directive.voice.pauseAfterSentenceMs,
         pronunciationMode: directive.voice.pronunciationMode,

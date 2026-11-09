@@ -100,7 +100,7 @@ export default function BackupsPage() {
 
   return <main className="shell">
     <AdminNav />
-    <header className="topbar"><div><p className="eyebrow">BACKUP & RESTORE</p><h1>备份与还原</h1><p className="muted">备份包含数据库中的账户、配置、课程及学习记录，不包含音频缓存。</p></div></header>
+    <header className="topbar"><div><p className="eyebrow">BACKUP & RESTORE</p><h1>备份与还原</h1><p className="muted">备份包含账户、配置、课程、学习记录、课程图片和 TTS 语音资产；临时 ASR 上传录音不纳入备份。</p></div></header>
     <section className="panel">
       <button className="secondary" onClick={() => void load().catch((error) => setMessage(error.message))}>读取备份设置</button>
       <div className="fields">

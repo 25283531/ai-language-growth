@@ -23,6 +23,36 @@ type Draft = {
   textbookUnit?: { unitCode: string; title: string } | null;
   reviewNote?: string | null;
 };
+type EditableContent = {
+  title: string;
+  level: string;
+  objectives: string[];
+  vocabulary: Array<{
+    word: string;
+    phonetic?: string;
+    meaningZh?: string;
+    phrases?: string[];
+    exampleSentences?: string[];
+    image?: { url: string; license: string; attribution?: string };
+  }>;
+  activities: Array<Record<string, unknown>>;
+  images: Array<{ url: string; license: string; attribution?: string }>;
+};
+
+function toEditableContent(value: Draft['generatedContent']): EditableContent {
+  const content = (value ?? {}) as Partial<EditableContent>;
+  return {
+    title: content.title ?? '',
+    level: content.level ?? '',
+    objectives: Array.isArray(content.objectives) ? content.objectives : [],
+    vocabulary: Array.isArray(content.vocabulary) ? content.vocabulary.map((word) => ({
+      ...word,
+      image: word.image ? { ...word.image } : undefined,
+    })) : [],
+    activities: Array.isArray(content.activities) ? content.activities as Array<Record<string, unknown>> : [],
+    images: Array.isArray(content.images) ? content.images : [],
+  };
+}
 
 function apiRoot() {
   return '';
@@ -32,7 +62,8 @@ export default function CurriculumPage() {
   const [textbooks, setTextbooks] = useState<Textbook[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [editingId, setEditingId] = useState('');
-  const [contentText, setContentText] = useState('');
+  const [editingContent, setEditingContent] = useState<EditableContent | null>(null);
+  const [selectedDrafts, setSelectedDrafts] = useState<string[]>([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState('');
@@ -137,15 +168,36 @@ export default function CurriculumPage() {
       setMessage(action === 'publish' ? `发布未完成：${detail}` : detail);
     } finally { setPendingAction(''); }
   }
+  async function batchAction(action: 'approve' | 'reject' | 'publish') {
+    if (!selectedDrafts.length) return;
+    setBusy(true);
+    try {
+      await request('/api/v1/admin/curriculum/drafts/batch-action', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ draftIds: selectedDrafts, action, reviewer: 'admin-web' }),
+      });
+      setSelectedDrafts([]);
+      await load();
+      setMessage(`已批量${action === 'approve' ? '通过' : action === 'reject' ? '退回' : '发布'} ${selectedDrafts.length} 节课程。`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : '批量操作失败'); }
+    finally { setBusy(false); }
+  }
   async function saveContent(item: Draft) {
     setBusy(true);
     try {
-      const content = JSON.parse(contentText);
-      await request(`/api/v1/admin/curriculum/drafts/${item.id}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(content) });
+      if (!editingContent) throw new Error('没有可保存的课程内容');
+      await request(`/api/v1/admin/curriculum/drafts/${item.id}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(editingContent) });
       await load(); setEditingId(''); setMessage('课程内容已保存为待审核草稿。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存课程内容失败'); } finally { setBusy(false); }
   }
+  function updateVocabulary(index: number, patch: Partial<EditableContent['vocabulary'][number]>) {
+    setEditingContent((old) => old ? { ...old, vocabulary: old.vocabulary.map((item, i) => i === index ? { ...item, ...patch } : item) } : old);
+  }
   const selectedBook = textbooks.find((book) => book.id === draft.textbookId);
+  const selectedStatus = drafts.filter((item) => selectedDrafts.includes(item.id));
+  const canBatchReview = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'under_review');
+  const canBatchPublish = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'approved');
 
   return <main className="shell">
     <AdminNav />
@@ -189,19 +241,56 @@ export default function CurriculumPage() {
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
       <div className="panel-head"><div><p className="eyebrow">REVIEW QUEUE</p><h2>审核队列</h2></div></div>
+      <div className="row-actions" style={{ marginBottom: 14 }}>
+        <button className="secondary" disabled={!canBatchReview || busy} onClick={() => void batchAction('approve')}>批量审核通过</button>
+        <button className="secondary" disabled={!canBatchReview || busy} onClick={() => void batchAction('reject')}>批量退回</button>
+        <button disabled={!canBatchPublish || busy} onClick={() => void batchAction('publish')}>批量发布</button>
+        <span className="status">已选择 {selectedDrafts.length} 节</span>
+      </div>
       {drafts.map((item) => <div className="helper" key={item.id}>
+        <label className="switch" style={{ display: 'inline-flex', marginRight: 8 }}><input type="checkbox" checked={selectedDrafts.includes(item.id)} onChange={(event) => setSelectedDrafts((old) => event.target.checked ? [...old, item.id] : old.filter((id) => id !== item.id))} /><span /></label>
         <strong>{item.title}</strong> · {item.level} · {item.status} · {item.wordList.length} 个词
         {item.generatedContent?.vocabulary && ` · 已生成 ${item.generatedContent.vocabulary.length} 个词条`}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
           {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>生成草稿</button>}
-          {item.generatedContent && ['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setContentText(JSON.stringify(item.generatedContent, null, 2)); }}>编辑课程</button>}
+          {item.generatedContent && ['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setEditingContent(toEditableContent(item.generatedContent)); }}>编辑课程</button>}
           {['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'submit')}>提交审核</button>}
           {item.status === 'under_review' && <><button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'approve')}>{pendingAction === `${item.id}:approve` ? '处理中…' : '审核通过'}</button><button className="secondary" disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'reject')}>{pendingAction === `${item.id}:reject` ? '处理中…' : '退回修改'}</button></>}
           {item.status === 'approved' && <button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'publish')}>{pendingAction === `${item.id}:publish` ? '正在发布…' : '发布课程'}</button>}
         </div>
         {draftErrors[item.id] && <p className="status" role="alert">操作失败：{draftErrors[item.id]}</p>}
-        {editingId === item.id && <div style={{ marginTop: 12 }}>
-          <textarea className="routing-editor" style={{ minHeight: 280 }} value={contentText} onChange={(event) => setContentText(event.target.value)} aria-label="课程结构化内容" />
+        {editingId === item.id && editingContent && <div style={{ marginTop: 12 }}>
+          <div className="fields">
+            <label>课程标题<input value={editingContent.title} onChange={(event) => setEditingContent({ ...editingContent, title: event.target.value })} /></label>
+            <label>学习等级<input value={editingContent.level} readOnly /></label>
+          </div>
+          <label>教学目标（每行一条）<textarea className="routing-editor" style={{ minHeight: 90 }} value={editingContent.objectives.join('\n')} onChange={(event) => setEditingContent({ ...editingContent, objectives: event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) })} /></label>
+          <h3>词汇与图片</h3>
+          {editingContent.vocabulary.map((word, index) => <div className="helper" key={`${word.word}-${index}`}>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 10 }}>
+              {word.image?.url && <img src={word.image.url} alt={word.word || '课程配图预览'} style={{ width: 96, height: 72, objectFit: 'cover', borderRadius: 6 }} />}
+              <div><strong>{word.word || '新词汇'}</strong><div className="muted">{word.phonetic || '尚无音标'} · {word.meaningZh || '尚无释义'}</div></div>
+            </div>
+            <div className="fields">
+              <label>单词<input value={word.word} onChange={(event) => updateVocabulary(index, { word: event.target.value })} /></label>
+              <label>音标<input value={word.phonetic ?? ''} onChange={(event) => updateVocabulary(index, { phonetic: event.target.value })} placeholder="/.../" /></label>
+              <label>中文释义<input value={word.meaningZh ?? ''} onChange={(event) => updateVocabulary(index, { meaningZh: event.target.value })} /></label>
+              <label>配图网址<input value={word.image?.url ?? ''} onChange={(event) => updateVocabulary(index, { image: event.target.value ? { ...(word.image ?? { license: 'unknown' }), url: event.target.value } : undefined })} placeholder="https://..." /></label>
+              <label>图片许可<input value={word.image?.license ?? ''} onChange={(event) => updateVocabulary(index, { image: word.image ? { ...word.image, license: event.target.value } : { url: '', license: event.target.value } })} /></label>
+            </div>
+            <button className="secondary" onClick={() => setEditingContent((old) => old ? { ...old, vocabulary: old.vocabulary.filter((_, i) => i !== index) } : old)}>删除词汇</button>
+          </div>)}
+          <button className="secondary" onClick={() => setEditingContent({ ...editingContent, vocabulary: [...editingContent.vocabulary, { word: '', phonetic: '', meaningZh: '' }] })}>新增词汇</button>
+          <h3>教学活动预览与编辑</h3>
+          {editingContent.activities.map((activity, index) => <div className="helper" key={`activity-${index}`}>
+            <strong>第 {index + 1} 个活动 · {String(activity.taskType ?? '未命名活动')}</strong>
+            <div className="fields">
+              <label>教学情境<input value={String(activity.scenario ?? '')} onChange={(event) => setEditingContent({ ...editingContent, activities: editingContent.activities.map((item, i) => i === index ? { ...item, scenario: event.target.value } : item) })} /></label>
+              <label>教师提示<input value={String(activity.teacherUtteranceZh ?? '')} onChange={(event) => setEditingContent({ ...editingContent, activities: editingContent.activities.map((item, i) => i === index ? { ...item, teacherUtteranceZh: event.target.value } : item) })} /></label>
+              <label>示范文本<input value={String(activity.demonstrationText ?? '')} onChange={(event) => setEditingContent({ ...editingContent, activities: editingContent.activities.map((item, i) => i === index ? { ...item, demonstrationText: event.target.value } : item) })} /></label>
+            </div>
+          </div>)}
+          <label style={{ marginTop: 14 }}>课程图片资源（每行 URL，默认许可可在下方补充）<textarea className="routing-editor" style={{ minHeight: 80 }} value={editingContent.images.map((image) => image.url).join('\n')} onChange={(event) => setEditingContent({ ...editingContent, images: event.target.value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ url, license: 'admin-reviewed' })) })} /></label>
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button disabled={busy} onClick={() => void saveContent(item)}>保存修改</button>
             <button className="secondary" onClick={() => setEditingId('')}>取消</button>

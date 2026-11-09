@@ -630,10 +630,15 @@ export default function WorkbenchPage() {
                       controls
                       preload="none"
                       src={playableAudioUrl(speech?.audioRef) ?? undefined}
+                      onLoadedMetadata={(event) => {
+                        event.currentTarget.playbackRate = speech?.playbackRate ?? 1;
+                      }}
                       style={{ width: '100%', marginTop: 8 }}
                     />
                     <div className="hint" style={{ marginTop: 6 }}>
-                      音频由后端 TTS 适配器合成并落盘，Web 只负责播放；Mock 模式的占位引用不显示播放器。
+                      {speech?.speedMode === 'playback'
+                        ? `此模型不支持合成语速，播放器按 ${speech.playbackRate ?? 1} 倍速播放。`
+                        : '音频由后端 TTS 适配器合成并落盘；当前模型在合成时应用语速。'}
                     </div>
                   </div>
                 )}

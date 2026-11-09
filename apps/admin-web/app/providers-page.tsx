@@ -107,6 +107,12 @@ export default function AdminPage() {
     });
   }
 
+  function selectConfig(value: string) {
+    setActiveConfigIds((old) => ({ ...old, [active]: value }));
+    // 凭据不会从服务端回显，切换配置时清空输入，避免把 A 配置的密钥误保存到 B。
+    setCredentials((old) => ({ ...old, [active]: {} }));
+  }
+
   useEffect(() => {
     void Promise.all([
       fetch(`${apiRoot()}/api/v1/admin/model-providers/catalog`).then(async (res) => {
@@ -133,8 +139,9 @@ export default function AdminPage() {
   }, [active]);
 
   useEffect(() => {
+    setPricing({});
     void loadPrices().catch((error) => setMessage(error instanceof Error ? error.message : '读取单价失败'));
-  }, [active, current.id]);
+  }, [active, activeConfigIds[active], current.id, current.modelAlias]);
 
   async function loadConfigs() {
     const res = await fetch(`${apiRoot()}/api/v1/admin/model-providers/configs`);
@@ -232,7 +239,7 @@ export default function AdminPage() {
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div></div>
         <div className="fields" style={{ marginTop: 16 }}>
           <label>当前供应商配置
-            <select value={activeConfigIds[active] ?? ''} onChange={(event) => setActiveConfigIds((old) => ({ ...old, [active]: event.target.value }))}>
+            <select value={activeConfigIds[active] ?? ''} onChange={(event) => selectConfig(event.target.value)}>
               {!configs[active].length && <option value="">尚无配置</option>}
               {configs[active].map((item) => <option key={item.id ?? item.draftKey} value={item.id ?? item.draftKey}>
                 {item.providerPresetId ? catalog.find((preset) => preset.id === item.providerPresetId)?.name ?? item.providerPresetId : '未选择供应商'}
@@ -249,7 +256,7 @@ export default function AdminPage() {
           }}>添加独立模型配置</button>
           {current.id && <button className="secondary" type="button" disabled={busy} onClick={() => void removeCurrentConfig()}>删除当前配置</button>}
         </div>
-        <div className="panel-head" style={{ marginTop: 22 }}><div><p className="eyebrow">SELECTED CONFIGURATION</p><h3>编辑当前配置</h3></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => {
+        <div className="panel-head" style={{ marginTop: 22 }} key={`config-editor-${active}-${activeConfigIds[active] ?? 'new'}`}><div><p className="eyebrow">SELECTED CONFIGURATION</p><h3>编辑当前配置</h3></div><label className="switch"><input type="checkbox" checked={current.enabled} onChange={(event) => {
         const next = { ...current, enabled: event.target.checked };
         updateCurrent(next);
       }}/><span>{active === 'embedding' ? '设为默认配置' : '启用'}</span></label></div>

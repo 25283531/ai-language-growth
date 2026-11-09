@@ -143,6 +143,10 @@ export const ttsResponseSchema = z.object({
   modelAlias: z.string(),
   /** 是否命中缓存（重复播放不重新消耗 TTS） */
   cached: z.boolean().default(false),
+  /** 客户端请求的抽象语速及服务端采用的调速方式。 */
+  requestedTeacherSpeed: z.number().min(0.25).max(4).optional(),
+  speedMode: z.enum(['native', 'playback']).optional(),
+  playbackRate: z.number().min(0.25).max(4).optional(),
 });
 
 export type TtsResponse = z.infer<typeof ttsResponseSchema>;

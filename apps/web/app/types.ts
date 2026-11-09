@@ -50,6 +50,8 @@ export interface SpeechPayload {
   audioRef: string | null;
   cached: boolean;
   teacherSpeed: number;
+  speedMode?: 'native' | 'playback';
+  playbackRate?: number;
   voiceStyle: string;
   pauseAfterSentenceMs: number;
   pronunciationMode: string;

@@ -48,6 +48,7 @@ button.secondary { background:#e9efea; color:#365344; padding:12px 14px; }
 .benchmark .fields { margin:10px 0; }
 .benchmark-list { margin-top:12px; max-height:160px; overflow:auto; }
 .panel footer { display:flex; justify-content:space-between; align-items:center; gap:12px; border-top:1px solid #edf0ed; margin-top:16px; padding-top:18px; }
+.row-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .status { color:#78867d; font-size:11px; line-height:1.5; }
 .routing-editor { width:100%; min-height:420px; resize:vertical; border:1px solid var(--line); border-radius:9px; padding:14px; color:#26362d; background:#fbfcfb; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
 @media(max-width:780px) { .shell{padding:28px 16px}.topbar{align-items:stretch;flex-direction:column}.token{min-width:0;flex-wrap:wrap}.token input{flex:1}.workspace{grid-template-columns:1fr}.services{grid-template-columns:1fr 1fr}.panel{padding:20px}.fields{grid-template-columns:1fr}.notice{flex-direction:column;gap:4px} }

@@ -39,6 +39,12 @@ const reviewSchema = z.object({
   reviewer: z.string().trim().min(1).max(120),
   note: z.string().trim().max(2000).optional(),
 });
+const batchReviewSchema = z.object({
+  draftIds: z.array(z.string().uuid()).min(1).max(100),
+  action: z.enum(['approve', 'reject', 'publish']),
+  reviewer: z.string().trim().min(1).max(120),
+  note: z.string().trim().max(2000).optional(),
+});
 const internalModelSchema = z.object({
   role: z.enum(['small', 'main']),
   system: z.string().min(1).max(20000),
@@ -642,6 +648,44 @@ export class CurriculumAdminController {
     return updated;
   }
 
+  @Post('drafts/batch-action')
+  async batchDraftAction(@Headers('cookie') cookie: string | undefined, @Body() body: unknown) {
+    this.authorize(cookie);
+    const parsed = batchReviewSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    const drafts = await this.prisma.curriculum_drafts.findMany({
+      where: { id: { in: parsed.data.draftIds } },
+      select: { id: true, status: true, generatedContent: true },
+    });
+    if (drafts.length !== parsed.data.draftIds.length) throw new BadRequestException('所选课程中包含不存在的草稿');
+    const expectedStatus = parsed.data.action === 'publish' ? 'approved'
+      : parsed.data.action === 'approve' || parsed.data.action === 'reject' ? 'under_review' : '';
+    const invalid = drafts.find((draft) => draft.status !== expectedStatus);
+    if (invalid) throw new BadRequestException(`课程 ${invalid.id} 当前状态为 ${invalid.status}，不能执行此批量操作`);
+    if (parsed.data.action === 'publish') {
+      const incomplete = drafts.find((draft) => {
+        const content = draft.generatedContent as unknown as GeneratedLesson | null;
+        return !content?.activities?.length || content.activities.some((activity) => !hasPublishableAssessment(activity));
+      });
+      if (incomplete) throw new BadRequestException(`课程 ${incomplete.id} 尚未满足发布条件，请先单独检查`);
+    }
+    const results: Array<{ id: string; status: string }> = [];
+    for (const draftId of parsed.data.draftIds) {
+      if (parsed.data.action === 'publish') {
+        const published = await this.publishDraft(cookie, draftId);
+        results.push({ id: draftId, status: published.draft.status });
+        continue;
+      }
+      const updated = await this.reviewDraft(cookie, draftId, {
+        action: parsed.data.action,
+        reviewer: parsed.data.reviewer,
+        note: parsed.data.note,
+      });
+      results.push({ id: draftId, status: updated.status });
+    }
+    return { action: parsed.data.action, count: results.length, results };
+  }
+
   @Put('drafts/:draftId/content')
   async updateDraftContent(
     @Headers('cookie') cookie: string | undefined,
@@ -674,6 +718,7 @@ export class CurriculumAdminController {
     await this.prisma.curriculum_review_records.create({
       data: { draftId, action: 'generated', reviewer: 'admin-edit', note: '人工编辑课程草稿', snapshot: content as Prisma.InputJsonValue },
     });
+    await this.queueDraftImages(content as GeneratedLesson);
     return updated;
   }
 

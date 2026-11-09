@@ -257,6 +257,8 @@ export const turnResponseSchema = z.object({
     /** 是否命中缓存（重复播放不重新消耗 TTS） */
     cached: z.boolean().default(false),
     teacherSpeed: z.number(),
+    speedMode: z.enum(['native', 'playback']).optional(),
+    playbackRate: z.number().min(0.25).max(4).optional(),
     voiceStyle: z.string(),
     pauseAfterSentenceMs: z.number().int(),
     pronunciationMode: z.string(),
