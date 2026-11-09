@@ -296,6 +296,7 @@ export class HealthController {
           credentialConfigured: Boolean(env.LLM_API_KEY),
           minMaxTokens: env.LLM_MIN_MAX_TOKENS ?? null,
           extraBodyKeys: extraKeys(env.LLM_EXTRA_BODY_KV ?? env.LLM_EXTRA_BODY_JSON),
+          extraPolicy: env.LLM_EXTRA_POLICY ?? null,
         },
         tts: {
           host: hostOnly(env.TTS_BASE_URL),

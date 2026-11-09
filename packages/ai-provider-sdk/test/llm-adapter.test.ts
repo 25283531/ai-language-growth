@@ -77,6 +77,25 @@ describe('LLM 额外请求字段', () => {
     assert.equal(result.outputTokens, 29);
   });
 
+  it('未注入额外字段时请求体不含推理参数（回滚态）', async () => {
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return okResponse('我们继续练习吧');
+    }) as typeof fetch;
+
+    await adapter(undefined).invoke(llmRequest());
+
+    assert.equal(body.reasoning_effort, undefined, '回滚态不得残留推理强度字段');
+    assert.equal(body.thinking, undefined, '回滚态不得残留禁用思考字段');
+    assert.equal(body.model, 'test-model', '业务字段仍由适配器组装');
+    assert.deepEqual(
+      (body.messages as Array<{ role: string; content: string }>)[0],
+      { role: 'system', content: '你是温柔的英语老师' },
+      'messages 仍由业务侧组装，反向断言不误伤正常字段',
+    );
+  });
+
   it('配置注入的字段不能覆盖 model / messages / max_tokens', async () => {
     let body: Record<string, unknown> = {};
     globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
@@ -161,6 +180,9 @@ describe('启动期 fail-fast', () => {
     LLM_API_KEY: 'k',
     LLM_MODEL: 'test-model',
     LLM_EXTRA_BODY_KV: 'reasoning_effort:low',
+    LLM_EXTRA_POLICY: 'required',
+    LLM_REQUIRED_EXTRA_KV: 'reasoning_effort:low',
+    LLM_FORBIDDEN_EXTRA_KEYS: 'thinking',
     LLM_MIN_MAX_TOKENS: '256',
     TTS_BASE_URL: 'https://tts.example.com',
     TTS_PROTOCOL: 'signed_json_audio',
@@ -169,13 +191,20 @@ describe('启动期 fail-fast', () => {
     TTS_SERVICE: 'tts',
     TTS_ACTION: 'TextToVoice',
     TTS_VERSION: '2019-08-23',
-    TTS_VOICE: '502001',
+    TTS_VOICE: '990001',
     TTS_MODEL_TYPE: '1',
     TTS_CODEC: 'mp3',
     ASR_BASE_URL: 'https://asr.example.com/v1',
     ASR_API_KEY: 'k',
     ASR_MODEL: 'asr-model',
   } as NodeJS.ProcessEnv;
+
+  /** 从 base 真正删除若干键，模拟「配置漏填」而非置空串。 */
+  const omit = (keys: string[]): NodeJS.ProcessEnv => {
+    const env: NodeJS.ProcessEnv = { ...base };
+    for (const key of keys) delete env[key];
+    return env;
+  };
 
   it('mock 模式与完整 live 配置均放行', () => {
     assert.doesNotThrow(() => assertLiveProviderConfig({ AI_GATEWAY_MODE: 'mock' } as NodeJS.ProcessEnv));
@@ -219,5 +248,80 @@ describe('启动期 fail-fast', () => {
       () => assertLiveProviderConfig({ ...base, LLM_EXTRA_BODY_KV: 'this-is-not-valid' }),
       /额外请求字段格式非法/,
     );
+  });
+
+  it('LLM 额外字段缺失/非法与 token 下限漏填均启动期拒绝（N27）', () => {
+    const cases: Array<[string, NodeJS.ProcessEnv, RegExp]> = [
+      ['两键删除（policy=required）', omit(['LLM_EXTRA_BODY_KV', 'LLM_EXTRA_BODY_JSON']), /缺少必需配置.*LLM_EXTRA_BODY/],
+      ['KV 为空串且 JSON 缺失', { ...base, LLM_EXTRA_BODY_KV: '' }, /缺少必需配置.*LLM_EXTRA_BODY/],
+      ['值不被允许（与期望 KV 不符）', { ...base, LLM_EXTRA_BODY_KV: 'reasoning_effort:max' }, /reasoning_effort/],
+      ['缺必需键（期望 KV 的键）', { ...base, LLM_EXTRA_BODY_KV: 'top_p:0.9' }, /reasoning_effort/],
+      ['命中 .env 追加的禁止键', { ...base, LLM_EXTRA_BODY_KV: 'reasoning_effort:low;thinking:disabled' }, /thinking/],
+      ['token 下限键删除', omit(['LLM_MIN_MAX_TOKENS']), /LLM_MIN_MAX_TOKENS/],
+      ['token 下限为空串', { ...base, LLM_MIN_MAX_TOKENS: '' }, /LLM_MIN_MAX_TOKENS/],
+    ];
+    for (const [label, env, pattern] of cases) {
+      assert.throws(() => assertLiveProviderConfig(env), pattern, label);
+    }
+  });
+
+  it('策略本身漏配 / 非法值 / 期望 KV 缺失或不符均拒绝启动', () => {
+    const cases: Array<[string, NodeJS.ProcessEnv, RegExp]> = [
+      ['LLM_EXTRA_POLICY 删除', omit(['LLM_EXTRA_POLICY']), /LLM_EXTRA_POLICY/],
+      ['LLM_EXTRA_POLICY 为空串', { ...base, LLM_EXTRA_POLICY: '' }, /LLM_EXTRA_POLICY/],
+      ['LLM_EXTRA_POLICY 非法值 auto', { ...base, LLM_EXTRA_POLICY: 'auto' }, /LLM_EXTRA_POLICY/],
+      ['policy=required 但期望 KV 删除', omit(['LLM_REQUIRED_EXTRA_KV']), /LLM_REQUIRED_EXTRA_KV/],
+      ['期望 KV 与实际注入值不符', {
+        ...base,
+        LLM_REQUIRED_EXTRA_KV: 'reasoning_effort:high',
+        LLM_EXTRA_BODY_KV: 'reasoning_effort:low',
+      }, /reasoning_effort/],
+    ];
+    for (const [label, env, pattern] of cases) {
+      assert.throws(() => assertLiveProviderConfig(env), pattern, label);
+    }
+  });
+
+  it('配置层一键回滚到非思考模型：policy=none 时无需额外字段与期望 KV', () => {
+    // 回滚只改 .env：策略置 none、删掉推理相关键、token 下限填任意正整数，代码零改动
+    const rollback = omit(['LLM_EXTRA_BODY_KV', 'LLM_EXTRA_BODY_JSON', 'LLM_REQUIRED_EXTRA_KV']);
+    rollback.LLM_EXTRA_POLICY = 'none';
+    rollback.LLM_MIN_MAX_TOKENS = '120';
+    assert.doesNotThrow(() => assertLiveProviderConfig(rollback));
+  });
+
+  it('policy=none 下仍禁止覆盖通用业务字段 model', () => {
+    assert.throws(
+      () => assertLiveProviderConfig({
+        ...base,
+        LLM_EXTRA_POLICY: 'none',
+        LLM_EXTRA_BODY_KV: 'model:hijacked',
+        LLM_MIN_MAX_TOKENS: '120',
+      }),
+      /model/,
+    );
+  });
+
+  it('期望 KV 支持 JSON 形式，完整配置与 JSON 单键形式均放行', () => {
+    assert.doesNotThrow(() => assertLiveProviderConfig({
+      ...base,
+      LLM_REQUIRED_EXTRA_KV: '{"reasoning_effort":"low"}',
+    }));
+    assert.doesNotThrow(() => assertLiveProviderConfig(base));
+    const jsonOnly = omit(['LLM_EXTRA_BODY_KV']);
+    jsonOnly.LLM_EXTRA_BODY_JSON = '{"reasoning_effort":"low"}';
+    assert.doesNotThrow(() => assertLiveProviderConfig(jsonOnly));
+  });
+
+  it('mock 模式与 live 白名单不含 llm 时不强制 LLM 键', () => {
+    assert.doesNotThrow(() =>
+      assertLiveProviderConfig({ AI_GATEWAY_MODE: 'mock' } as NodeJS.ProcessEnv));
+    const noLlm: NodeJS.ProcessEnv = {
+      ...base,
+      AI_GATEWAY_LIVE_SERVICES: 'tts,asr',
+      LLM_EXTRA_BODY_KV: '',
+      LLM_MIN_MAX_TOKENS: '',
+    };
+    assert.doesNotThrow(() => assertLiveProviderConfig(noLlm));
   });
 });

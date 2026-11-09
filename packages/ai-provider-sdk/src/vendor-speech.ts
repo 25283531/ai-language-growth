@@ -53,24 +53,63 @@ function signedUrl(baseUrl: string, apiKey: string, apiSecret: string): string {
   return url.toString();
 }
 
-function connectAndSend(url: string, payload: string, timeoutMs: number, decode: (message: Record<string, unknown>) => { done?: boolean; bytes?: Uint8Array; error?: string }): Promise<Uint8Array> {
+function connectAndSend(url: string, payload: string | string[], timeoutMs: number, decode: (message: Record<string, unknown>) => { done?: boolean; bytes?: Uint8Array; seq?: number; error?: string }): Promise<Uint8Array> {
   if (typeof WebSocket === 'undefined') return Promise.reject(new Error('当前 Node.js 运行时未提供 WebSocket；请使用 Node 20.10+ 或更新版本'));
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
-    const chunks: Uint8Array[] = [];
-    const timer = setTimeout(() => { socket.close(); reject(new Error('讯飞语音服务请求超时')); }, timeoutMs);
-    socket.addEventListener('open', () => socket.send(payload));
+    const chunks: Array<{ seq?: number; bytes: Uint8Array }> = [];
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.close();
+      if (error) reject(error);
+      else resolve(Buffer.concat(chunks
+        .slice()
+        .sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER))
+        .map((item) => item.bytes)));
+    };
+    const timer = setTimeout(() => finish(new Error('讯飞语音服务请求超时')), timeoutMs);
+    socket.addEventListener('open', () => {
+      try {
+        for (const frame of Array.isArray(payload) ? payload : [payload]) socket.send(frame);
+      } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+    });
     socket.addEventListener('message', (event) => {
       if (typeof event.data !== 'string') return;
       let message: Record<string, unknown>;
       try { message = JSON.parse(event.data) as Record<string, unknown>; } catch { return; }
       const outcome = decode(message);
-      if (outcome.error) { clearTimeout(timer); socket.close(); reject(new Error(outcome.error)); return; }
-      if (outcome.bytes) chunks.push(outcome.bytes);
-      if (outcome.done) { clearTimeout(timer); socket.close(); resolve(Buffer.concat(chunks)); }
+      if (outcome.error) { finish(new Error(outcome.error)); return; }
+      if (outcome.bytes) chunks.push({ seq: outcome.seq, bytes: outcome.bytes });
+      if (outcome.done) finish();
     });
-    socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('讯飞 WebSocket 连接失败')); });
+    socket.addEventListener('error', () => finish(new Error('讯飞 WebSocket 连接失败')));
+    socket.addEventListener('close', () => {
+      if (!settled) finish(new Error('讯飞 WebSocket 在收到完整结果前关闭'));
+    });
   });
+}
+
+function decodeIatResult(value: string): string {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(Buffer.from(value, 'base64').toString('utf8')) as Record<string, unknown>;
+  } catch {
+    throw new Error('讯飞 ASR 返回无法解析的识别结果');
+  }
+  const ret = payload.ret;
+  if (typeof ret === 'number' && ret !== 0) {
+    throw new Error(`讯飞 ASR 识别失败 ${ret}: ${String(payload.message ?? payload.err ?? '')}`);
+  }
+  const words: string[] = [];
+  const sentences = Array.isArray(payload.ws) ? payload.ws as Array<{ cw?: Array<{ w?: string }> }> : [];
+  for (const sentence of sentences) {
+    const text = sentence.cw?.[0]?.w;
+    if (typeof text === 'string') words.push(text);
+  }
+  return words.join('');
 }
 
 export class IflytekTtsAdapter implements TtsAdapter {
@@ -89,11 +128,55 @@ export class IflytekTtsAdapter implements TtsAdapter {
     const { apiKey = '', apiSecret = '', appId = '' } = this.config.credentials;
     if (!apiKey || !apiSecret || !appId) throw new Error('讯飞 TTS 需要 AppID、API Key 和 API Secret');
     const speed = Math.max(0, Math.min(100, Math.round(((request.voice.teacherSpeed ?? 0.65) - 0.25) / 1.75 * 100)));
-    const payload = JSON.stringify({ common: { app_id: appId }, business: { aue: 'lame', sfl: 1, tte: 'UTF8', vcn: String(this.config.options?.voice ?? request.voiceIdentity), speed, volume: 50, pitch: 50 }, data: { status: 2, text: Buffer.from(request.text).toString('base64') } });
+    const voice = String(this.config.options?.voice ?? request.voiceIdentity);
+    const isSuperSmart = /\/v1\/private\//i.test(this.config.baseUrl);
+    const payload = JSON.stringify(isSuperSmart
+      ? {
+        header: { app_id: appId, status: 2 },
+        parameter: {
+          oral: {
+              oral_level: String(this.config.options?.oralLevel ?? 'mid'),
+            spark_assist: Number(this.config.options?.sparkAssist ?? 1),
+              remain: Number(this.config.options?.remain ?? 0),
+              stop_split: Number(this.config.options?.stopSplit ?? 0),
+          },
+          tts: {
+            vcn: voice,
+            speed,
+            volume: 50,
+            pitch: 50,
+            bgs: 0,
+            reg: 0,
+            rdn: 0,
+            rhy: 0,
+            audio: { encoding: 'lame', sample_rate: 24000, channels: 1, bit_depth: 16, frame_size: 0 },
+          },
+        },
+        payload: {
+          text: {
+            encoding: 'utf8',
+            compress: 'raw',
+            format: 'plain',
+            status: 2,
+            seq: 0,
+            text: Buffer.from(request.text).toString('base64'),
+          },
+        },
+      }
+      : { common: { app_id: appId }, business: { aue: 'lame', sfl: 1, tte: 'UTF8', vcn: voice, speed, volume: 50, pitch: 50 }, data: { status: 2, text: Buffer.from(request.text).toString('base64') } });
     const bytes = Buffer.from(await connectAndSend(signedUrl(this.config.baseUrl, apiKey, apiSecret), payload, request.timeoutMs ?? 20000, (message) => {
       if (Number(message.code ?? 0) !== 0) return { error: `讯飞 TTS 错误 ${message.code}: ${String(message.message ?? '')}` };
-      const data = message.data as { audio?: string; status?: number } | undefined;
-      return { ...(data?.audio ? { bytes: Buffer.from(data.audio, 'base64') } : {}), ...(data?.status === 2 ? { done: true } : {}) };
+      const data = isSuperSmart
+        ? (message.payload as { audio?: { audio?: string; status?: number } } | undefined)?.audio
+        : message.data as { audio?: string; status?: number } | undefined;
+      const encodedAudio = typeof data?.audio === 'string' ? data.audio : undefined;
+      const done = isSuperSmart
+        ? data?.status === 2 || Number((message.header as { status?: number } | undefined)?.status) === 2
+        : data?.status === 2;
+      const seq = typeof (data as { seq?: number } | undefined)?.seq === 'number'
+        ? (data as { seq: number }).seq
+        : undefined;
+      return { ...(encodedAudio ? { bytes: Buffer.from(encodedAudio, 'base64'), seq } : {}), ...(done ? { done: true } : {}) };
     }));
     if (bytes.length < 128) throw new Error('讯飞 TTS 返回的音频数据为空或过短');
     const fingerprint = createHash('sha256').update([request.text, speed, this.config.modelAlias ?? '', this.config.options?.voice ?? request.voiceIdentity].join('|')).digest('hex').slice(0, 24);
@@ -123,14 +206,61 @@ export class IflytekAsrAdapter implements AsrAdapter {
     const { apiKey = '', apiSecret = '', appId = '' } = this.config.credentials;
     if (!apiKey || !apiSecret || !appId) throw new Error('讯飞 ASR 需要 AppID、API Key 和 API Secret');
     const pcm = pcm16FromWav(audio.bytes);
-    const payload = JSON.stringify({ common: { app_id: appId }, business: { language: String(this.config.options?.language ?? 'en_us'), domain: 'iat', accent: 'mandarin', vad_eos: 2000 }, data: { status: 2, format: 'audio/L16;rate=16000', encoding: 'raw', audio: pcm.toString('base64') } });
+    if (!pcm.length || pcm.length / 32000 > 60) throw new Error('讯飞语音听写大模型单次音频须大于 0 且不超过 60 秒');
+    const frames: string[] = [];
+    const frameSize = 64 * 1024;
+    let sequence = 1;
+    for (let offset = 0; offset < pcm.length; offset += frameSize) {
+      const chunk = pcm.subarray(offset, Math.min(offset + frameSize, pcm.length));
+      const status = offset === 0 ? 0 : 1;
+      frames.push(JSON.stringify({
+        header: { app_id: appId, status },
+        ...(status === 0 ? {
+          parameter: {
+            iat: {
+              domain: 'spark_asr_v2',
+              language: String(this.config.options?.language ?? 'zh_cn'),
+              accent: String(this.config.options?.accent ?? 'mandarin'),
+              result: { encoding: 'utf8', compress: 'raw', format: 'json' },
+            },
+          },
+        } : {}),
+        payload: {
+          audio: {
+            encoding: 'raw',
+            sample_rate: 16000,
+            channels: 1,
+            bit_depth: 16,
+            seq: sequence++,
+            status,
+            audio: chunk.toString('base64'),
+          },
+        },
+      }));
+    }
+    frames.push(JSON.stringify({
+      header: { app_id: appId, status: 2 },
+      payload: {
+        audio: {
+          encoding: 'raw',
+          sample_rate: 16000,
+          channels: 1,
+          bit_depth: 16,
+          seq: sequence,
+          status: 2,
+          audio: '',
+        },
+      },
+    }));
     let transcript = '';
-    await connectAndSend(signedUrl(this.config.baseUrl, apiKey, apiSecret), payload, request.timeoutMs ?? 20000, (message) => {
-      if (Number(message.code ?? 0) !== 0) return { error: `讯飞 ASR 错误 ${message.code}: ${String(message.message ?? '')}` };
-      const data = message.data as { result?: { ws?: Array<{ cw?: Array<{ w?: string }> }> }; status?: number } | undefined;
-      for (const word of data?.result?.ws ?? []) transcript += word.cw?.[0]?.w ?? '';
-      return { ...(data?.status === 2 ? { done: true } : {}) };
+    await connectAndSend(signedUrl(this.config.baseUrl, apiKey, apiSecret), frames, request.timeoutMs ?? 20000, (message) => {
+      const header = message.header as { code?: number; message?: string; status?: number } | undefined;
+      if (Number(header?.code ?? 0) !== 0) return { error: `讯飞 ASR 错误 ${header?.code}: ${String(header?.message ?? '')}` };
+      const result = (message.payload as { result?: { text?: string; status?: number } } | undefined)?.result;
+      if (result?.text) transcript += decodeIatResult(result.text);
+      return { ...(header?.status === 2 || result?.status === 2 ? { done: true } : {}) };
     });
-    return { transcript: transcript.trim(), confidence: transcript.trim() ? 0.75 : 0, seconds: 0, latencyMs: Date.now() - started, providerAlias: this.alias, modelAlias: this.config.modelAlias ?? 'iflytek-iat', suspect: !transcript.trim() };
+    const text = transcript.trim();
+    return { transcript: text, confidence: text ? 0.75 : 0, seconds: pcm.length / 32000, latencyMs: Date.now() - started, providerAlias: this.alias, modelAlias: this.config.modelAlias ?? 'iflytek-iat-v2', suspect: !text };
   }
 }

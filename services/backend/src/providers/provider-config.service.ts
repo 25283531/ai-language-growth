@@ -20,10 +20,13 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 
 const configInput = z.object({
+  id: z.string().uuid().optional(),
   serviceKind: z.enum(PROVIDER_SERVICE_KINDS),
   providerPresetId: z.string().min(1).max(80),
   baseUrl: z.string().url().max(2048),
   modelAlias: z.string().trim().min(1).max(160),
+  priority: z.number().int().min(1).max(10000).default(100),
+  timeoutMs: z.number().int().min(100).max(120000).default(20000),
   apiKey: z.string().max(4096).optional(),
   credentials: z.record(z.string().max(4096)).default({}),
   enabled: z.boolean(),
@@ -31,6 +34,7 @@ const configInput = z.object({
 });
 const benchmarkInput = z.object({
   serviceKind: z.enum(SERVICE_KINDS),
+  configId: z.string().uuid().optional(),
   modelAlias: z.string().trim().min(1).max(160),
   score: z.number().finite(),
   sampleCount: z.number().int().min(1).max(100000),
@@ -46,6 +50,7 @@ const priceTypeSchema = z.enum([
 ]);
 const pricesInput = z.object({
   serviceKind: z.enum(PROVIDER_SERVICE_KINDS),
+  configId: z.string().uuid().optional(),
   modelAlias: z.string().trim().min(1).max(160),
   prices: z.array(z.object({
     priceType: priceTypeSchema,
@@ -56,6 +61,7 @@ const pricesInput = z.object({
 export type ProviderConfigInput = z.input<typeof configInput>;
 
 export interface PublicProviderConfig {
+  id: string;
   serviceKind: ProviderServiceKind;
   providerPresetId: string;
   providerName: string;
@@ -63,6 +69,8 @@ export interface PublicProviderConfig {
   baseUrl: string;
   modelAlias: string;
   enabled: boolean;
+  priority: number;
+  timeoutMs: number;
   credentialConfigured: boolean;
   options: Record<string, unknown>;
   updatedAt: string | null;
@@ -83,13 +91,16 @@ export class ProviderConfigService {
   }
 
   async listPublicConfigs(): Promise<PublicProviderConfig[]> {
-    const rows = await this.prisma.ai_provider_configs.findMany();
+    const rows = await this.prisma.ai_provider_configs.findMany({
+      orderBy: [{ serviceKind: 'asc' }, { priority: 'asc' }, { createdAt: 'asc' }],
+    });
     return rows.map((row) => this.toPublic(row));
   }
 
   async listEnabledRuntimeConfigs(): Promise<RuntimeProviderConfig[]> {
     const rows = await this.prisma.ai_provider_configs.findMany({
       where: { enabled: true, serviceKind: { in: [...SERVICE_KINDS] } },
+      orderBy: [{ serviceKind: 'asc' }, { priority: 'asc' }, { createdAt: 'asc' }],
     });
     return rows.map((row) => {
       const config = this.toPublic(row);
@@ -102,7 +113,10 @@ export class ProviderConfigService {
   }
 
   async getEnabledRuntimeConfig(serviceKind: ServiceKind): Promise<RuntimeProviderConfig | undefined> {
-    const row = await this.prisma.ai_provider_configs.findUnique({ where: { serviceKind } });
+    const row = await this.prisma.ai_provider_configs.findFirst({
+      where: { serviceKind, enabled: true },
+      orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+    });
     if (!row?.enabled) return undefined;
     const config = this.toPublic(row);
     return {
@@ -122,9 +136,12 @@ export class ProviderConfigService {
       throw new BadRequestException(`${preset.name} 当前未配置 ${value.serviceKind.toUpperCase()} 协议`);
     }
 
-    const existing = await this.prisma.ai_provider_configs.findUnique({
-      where: { serviceKind: value.serviceKind },
-    });
+    const existing = value.id
+      ? await this.prisma.ai_provider_configs.findFirst({ where: { id: value.id, serviceKind: value.serviceKind } })
+      : value.serviceKind === 'pronunciation'
+        ? undefined
+        : await this.prisma.ai_provider_configs.findFirst({ where: { serviceKind: value.serviceKind } });
+    if (value.id && !existing) throw new BadRequestException('模型配置不存在或服务类型不匹配');
     const credentials = { ...value.credentials };
     if (value.apiKey?.trim()) credentials.apiKey = value.apiKey.trim();
     const requiredCredentialFields: Record<string, string[]> = {
@@ -159,9 +176,23 @@ export class ProviderConfigService {
     const credentialsCiphertext = Object.keys(mergedCredentials).length
       ? this.encrypt(mergedCredentials)
       : sameProvider ? existing?.credentialsCiphertext ?? null : null;
-    const row = await this.prisma.ai_provider_configs.upsert({
-      where: { serviceKind: value.serviceKind },
-      create: {
+    const row = existing
+      ? await this.prisma.ai_provider_configs.update({
+        where: { id: existing.id },
+        data: {
+          providerPresetId: preset.id,
+          protocol: preset.protocol,
+          baseUrl: value.baseUrl,
+          modelAlias: value.modelAlias,
+          credentialsCiphertext,
+          enabled: value.enabled,
+          priority: value.priority,
+          timeoutMs: value.timeoutMs,
+          options: value.options as Prisma.InputJsonValue,
+        },
+      })
+      : await this.prisma.ai_provider_configs.create({
+        data: {
         serviceKind: value.serviceKind,
         providerPresetId: preset.id,
         protocol: preset.protocol,
@@ -169,25 +200,31 @@ export class ProviderConfigService {
         modelAlias: value.modelAlias,
         credentialsCiphertext,
         enabled: value.enabled,
-        options: value.options as Prisma.InputJsonValue,
-      },
-      update: {
-        providerPresetId: preset.id,
-        protocol: preset.protocol,
-        baseUrl: value.baseUrl,
-        modelAlias: value.modelAlias,
-        credentialsCiphertext,
-        enabled: value.enabled,
+        priority: value.priority,
+        timeoutMs: value.timeoutMs,
         options: value.options as Prisma.InputJsonValue,
       },
     });
-    await this.syncModelCatalog(value);
+    await this.syncModelCatalog(value, row.id);
     return this.toPublic(row);
   }
 
-  async listBenchmarks(serviceKind: ServiceKind) {
+  async deleteConfig(id: string) {
+    const config = await this.prisma.ai_provider_configs.findUnique({ where: { id } });
+    if (!config) throw new BadRequestException('模型配置不存在');
+    await this.prisma.ai_provider_configs.delete({ where: { id } });
+    if (config.serviceKind === 'pronunciation') {
+      await this.prisma.ai_providers.updateMany({
+        where: { alias: `configured_pronunciation_${id}` },
+        data: { enabled: false },
+      });
+    }
+    return { id, serviceKind: config.serviceKind as ProviderServiceKind };
+  }
+
+  async listBenchmarks(serviceKind: ServiceKind, configId?: string) {
     const provider = await this.prisma.ai_providers.findUnique({
-      where: { alias: `configured_${serviceKind}` },
+      where: { alias: this.providerAlias(serviceKind, configId) },
       select: { id: true },
     });
     if (!provider) return [];
@@ -209,7 +246,7 @@ export class ProviderConfigService {
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const value = parsed.data;
     const provider = await this.prisma.ai_providers.findUnique({
-      where: { alias: `configured_${value.serviceKind}` },
+      where: { alias: this.providerAlias(value.serviceKind, value.configId) },
       select: { id: true },
     });
     if (!provider) throw new BadRequestException('请先保存该服务的模型接入配置');
@@ -228,12 +265,12 @@ export class ProviderConfigService {
         notes: value.notes?.trim() || null,
       },
     });
-    return { ...benchmark, serviceKind: value.serviceKind };
+    return { ...benchmark, serviceKind: value.serviceKind, configId: value.configId };
   }
 
-  async listPrices(serviceKind: ProviderServiceKind) {
+  async listPrices(serviceKind: ProviderServiceKind, configId?: string) {
     const provider = await this.prisma.ai_providers.findUnique({
-      where: { alias: `configured_${serviceKind}` },
+      where: { alias: this.providerAlias(serviceKind, configId) },
       select: { id: true },
     });
     if (!provider) return [];
@@ -260,7 +297,7 @@ export class ProviderConfigService {
       throw new BadRequestException('同一计价单位不能重复填写');
     }
     const provider = await this.prisma.ai_providers.findUnique({
-      where: { alias: `configured_${value.serviceKind}` },
+      where: { alias: this.providerAlias(value.serviceKind, value.configId) },
       select: { id: true },
     });
     if (!provider) throw new BadRequestException('请先保存该服务的模型接入配置');
@@ -282,12 +319,12 @@ export class ProviderConfigService {
         });
       }
     });
-    return this.listPrices(value.serviceKind);
+    return this.listPrices(value.serviceKind, value.configId);
   }
 
-  async hasPassingBenchmark(serviceKind: ServiceKind, modelAlias: string): Promise<boolean> {
+  async hasPassingBenchmark(serviceKind: ServiceKind, modelAlias: string, configId?: string): Promise<boolean> {
     const provider = await this.prisma.ai_providers.findUnique({
-      where: { alias: `configured_${serviceKind}` },
+      where: { alias: this.providerAlias(serviceKind, configId) },
       select: { id: true },
     });
     if (!provider) return false;
@@ -319,6 +356,7 @@ export class ProviderConfigService {
   }
 
   private toPublic(row: {
+    id: string;
     serviceKind: string;
     providerPresetId: string;
     protocol: string;
@@ -326,11 +364,14 @@ export class ProviderConfigService {
     modelAlias: string;
     credentialsCiphertext: string | null;
     enabled: boolean;
+    priority: number;
+    timeoutMs: number;
     options: unknown;
     updatedAt: Date;
   }): PublicProviderConfig {
     const preset = getProviderPreset(row.providerPresetId);
     return {
+      id: row.id,
       serviceKind: row.serviceKind as ProviderServiceKind,
       providerPresetId: row.providerPresetId,
       providerName: preset?.name ?? row.providerPresetId,
@@ -338,6 +379,8 @@ export class ProviderConfigService {
       baseUrl: row.baseUrl,
       modelAlias: row.modelAlias,
       enabled: row.enabled,
+      priority: row.priority,
+      timeoutMs: row.timeoutMs,
       credentialConfigured: Boolean(row.credentialsCiphertext),
       options: row.options && typeof row.options === 'object' && !Array.isArray(row.options)
         ? row.options as Record<string, unknown>
@@ -346,8 +389,14 @@ export class ProviderConfigService {
     };
   }
 
-  private async syncModelCatalog(value: z.infer<typeof configInput>): Promise<void> {
-    const alias = `configured_${value.serviceKind}`;
+  private providerAlias(serviceKind: ServiceKind | ProviderServiceKind, configId?: string): string {
+    return serviceKind === 'pronunciation'
+      ? `configured_pronunciation_${configId ?? ''}`
+      : `configured_${serviceKind}`;
+  }
+
+  private async syncModelCatalog(value: z.infer<typeof configInput>, configId: string): Promise<void> {
+    const alias = this.providerAlias(value.serviceKind, configId);
     await this.prisma.$transaction(async (tx) => {
       const provider = await tx.ai_providers.upsert({
         where: { alias },

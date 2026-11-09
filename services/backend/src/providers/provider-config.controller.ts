@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Post, Put, Query } from '@nestjs/common';
 import { SERVICE_KINDS, type ProviderServiceKind, type ServiceKind } from '@alg/shared-contracts';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ProviderConfigService, type ProviderConfigInput } from './provider-config.service';
@@ -21,6 +21,14 @@ export class ProviderConfigController {
     return this.configs.listPublicConfigs();
   }
 
+  @Delete('configs/:id')
+  async remove(@Headers('x-admin-token') token: string | undefined, @Param('id') id: string) {
+    this.configs.assertAdminToken(token);
+    const removed = await this.configs.deleteConfig(id);
+    await this.gateway.refreshRuntimeProvider(removed.serviceKind as ServiceKind);
+    return removed;
+  }
+
   @Put('configs')
   async save(
     @Headers('x-admin-token') token: string | undefined,
@@ -38,9 +46,10 @@ export class ProviderConfigController {
   async benchmarks(
     @Headers('x-admin-token') token: string | undefined,
     @Query('serviceKind') serviceKind: ServiceKind,
+    @Query('configId') configId?: string,
   ) {
     this.configs.assertAdminToken(token);
-    return this.configs.listBenchmarks(serviceKind);
+    return this.configs.listBenchmarks(serviceKind, configId);
   }
 
   @Post('benchmarks')
@@ -55,9 +64,10 @@ export class ProviderConfigController {
   async prices(
     @Headers('x-admin-token') token: string | undefined,
     @Query('serviceKind') serviceKind: ProviderServiceKind,
+    @Query('configId') configId?: string,
   ) {
     this.configs.assertAdminToken(token);
-    return this.configs.listPrices(serviceKind);
+    return this.configs.listPrices(serviceKind, configId);
   }
 
   @Put('prices')

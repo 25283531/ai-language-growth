@@ -96,6 +96,10 @@ export class AdapterRegistry {
       | undefined;
   }
 
+  unregister(serviceKind: ServiceKind, alias: string): void {
+    this.map.get(serviceKind)?.delete(alias);
+  }
+
   list(serviceKind: ServiceKind): string[] {
     return [...(this.map.get(serviceKind)?.keys() ?? [])];
   }

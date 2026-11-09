@@ -124,6 +124,20 @@ const DEFAULT_PRICING: ProviderPricing = {
 };
 
 /**
+ * 通用业务字段保护清单（与供应商无关）：防止配置注入覆盖业务字段。
+ *
+ * 约束二：必需键、允许取值、额外禁止键、以及策略本身全部来自 .env，
+ * 代码里不写任何厂商名 / 模型名 / 音色名 / 厂商专属字段名 / 取值。
+ * 额外的禁止键由 LLM_FORBIDDEN_EXTRA_KEYS 以逗号分隔追加，默认清单
+ * 永不丢失。LLM_EXTRA_POLICY 是必需项，防止「策略漏配」时校验被静默
+ * 跳过、退回空 content 故障路径。
+ */
+export const LLM_FORBIDDEN_EXTRA_KEYS: readonly string[] = [
+  'model', 'messages', 'max_tokens', 'temperature',
+  'response_format', 'stream', 'tools',
+];
+
+/**
  * 启动期 fail-fast：live 模式下必需配置缺失/非法时拒绝启动。
  *
  * 目的：不让「配置漏填」在运行期表现为静默回落 Mock 或空回复。
@@ -144,17 +158,57 @@ export function assertLiveProviderConfig(env: NodeJS.ProcessEnv = process.env): 
       throw new Error(`live 模式额外请求字段格式非法: ${keys.join(' / ')}`);
     }
   };
-  const requirePositiveInt = (key: string): void => {
-    const raw = env[key];
-    if (raw !== undefined && raw !== '' && (!Number.isInteger(Number(raw)) || Number(raw) <= 0)) {
-      throw new Error(`live 模式配置 ${key} 必须为正整数`);
-    }
-  };
 
   if (live.has('llm')) {
     for (const key of ['LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL']) require(key);
-    requireValidExtra(['LLM_EXTRA_BODY_KV', 'LLM_EXTRA_BODY_JSON']);
-    requirePositiveInt('LLM_MIN_MAX_TOKENS');
+
+    // 策略本身必需：漏配会让下方校验被静默跳过，退回空 content 故障路径。
+    const policy = env.LLM_EXTRA_POLICY;
+    if (policy !== 'required' && policy !== 'none') {
+      throw new Error('live 模式缺少必需配置 LLM_EXTRA_POLICY（只允许 required / none）');
+    }
+
+    const extra = parseExtraBody(env.LLM_EXTRA_BODY_KV ?? env.LLM_EXTRA_BODY_JSON);
+    if (policy === 'required') {
+      // 期望 KV 必需且可解析；漏填或格式非法都拒绝。
+      const required = parseExtraBody(env.LLM_REQUIRED_EXTRA_KV);
+      if (!required) {
+        throw new Error('live 模式缺少必需配置 LLM_REQUIRED_EXTRA_KV，或额外请求字段格式非法');
+      }
+      if (!extra) {
+        throw new Error(
+          'live 模式缺少必需配置 LLM_EXTRA_BODY_KV / LLM_EXTRA_BODY_JSON，或额外请求字段格式非法',
+        );
+      }
+      for (const [key, expected] of Object.entries(required)) {
+        if (!(key in extra) || String(extra[key]) !== String(expected)) {
+          throw new Error(`live 模式 LLM 额外请求字段 ${key} 与 LLM_REQUIRED_EXTRA_KV 不一致`);
+        }
+      }
+    }
+
+    // 两种策略都执行禁止键检查：默认通用业务字段 + .env 追加键，均不可被配置覆盖。
+    const forbiddenKeys = [
+      ...LLM_FORBIDDEN_EXTRA_KEYS,
+      ...(env.LLM_FORBIDDEN_EXTRA_KEYS ?? '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter(Boolean),
+    ];
+    if (extra) {
+      for (const key of forbiddenKeys) {
+        if (key in extra) {
+          throw new Error(`live 模式 LLM 额外请求字段禁止使用 ${key}`);
+        }
+      }
+    }
+
+    // token 下限漏填会让 Math.max(120, 0) 静默取业务侧下限，推理预算不足返回空 content。
+    const minRaw = env.LLM_MIN_MAX_TOKENS;
+    if (minRaw === undefined || minRaw === '' ||
+        !Number.isInteger(Number(minRaw)) || Number(minRaw) <= 0) {
+      throw new Error('live 模式缺少必需配置 LLM_MIN_MAX_TOKENS（必须为正整数）');
+    }
   }
 
   if (live.has('tts')) {

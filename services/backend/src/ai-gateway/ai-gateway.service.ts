@@ -69,6 +69,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   private readonly registry: AdapterRegistry;
   /** TTS 音频缓存：语音内容 + 参数 → 音频引用。 */
   private readonly ttsCache = new Map<string, { audioRef: string; characters: number }>();
+  private readonly providerTimeouts = new Map<string, number>();
+  private pronunciationCandidates: string[] = [];
 
   constructor(
     @Inject(ModelRouterImpl) private readonly modelRouter: ModelRouterImpl,
@@ -85,23 +87,45 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    for (const config of await this.providerConfigs.listEnabledRuntimeConfigs()) {
+    const configs = await this.providerConfigs.listEnabledRuntimeConfigs();
+    for (const config of configs.filter((item) => item.serviceKind !== 'pronunciation')) {
       await this.applyRuntimeProvider(config);
     }
+    await this.refreshRuntimeProvider('pronunciation');
   }
 
   /** Apply an operator-selected provider immediately after a configuration save. */
   async refreshRuntimeProvider(serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation'): Promise<void> {
-    const config = await this.providerConfigs.getEnabledRuntimeConfig(serviceKind);
-    if (config) {
-      await this.applyRuntimeProvider(config);
+    for (const alias of this.registry.list(serviceKind).filter((item) => item.startsWith('configured_'))) {
+      this.registry.unregister(serviceKind, alias);
+      this.providerTimeouts.delete(alias);
+    }
+    const configs = (await this.providerConfigs.listEnabledRuntimeConfigs()).filter((item) => item.serviceKind === serviceKind);
+    if (configs.length) {
+      for (const config of configs) await this.applyRuntimeProvider(config);
+      if (serviceKind === 'pronunciation') {
+        const passing: RuntimeProviderConfig[] = [];
+        for (const config of configs) {
+          if (await this.providerConfigs.hasPassingBenchmark(serviceKind, config.modelAlias, config.id)) passing.push(config);
+        }
+        this.pronunciationCandidates = passing.map((config) => `configured_pronunciation_${config.id}`);
+        if (passing[0]) {
+          this.modelRouter.setProviderAlias(serviceKind, this.pronunciationCandidates[0]!, passing[0].modelAlias);
+        } else {
+          this.modelRouter.setProviderAlias(serviceKind, MOCK_PROVIDER_ALIASES.pronunciation);
+        }
+      }
       return;
     }
+    if (serviceKind === 'pronunciation') this.pronunciationCandidates = [];
     this.modelRouter.setProviderAlias(serviceKind, resolveProviderAliases()[serviceKind]);
   }
 
   private async applyRuntimeProvider(config: RuntimeProviderConfig): Promise<void> {
-    const alias = `configured_${config.serviceKind}`;
+    const alias = config.serviceKind === 'pronunciation'
+      ? `configured_pronunciation_${config.id}`
+      : `configured_${config.serviceKind}`;
+    this.providerTimeouts.set(alias, config.timeoutMs);
     const options: HttpServiceOptions = {
       alias,
       serviceKind: config.serviceKind,
@@ -110,7 +134,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       baseUrl: config.baseUrl,
       apiKey: config.credentials.apiKey,
       credentials: config.credentials,
-      options: config.options,
+      options: { ...config.options, timeoutMs: config.timeoutMs },
       modelAlias: config.modelAlias,
       pricing: { checkedAt: new Date().toISOString().slice(0, 10) },
       ...(typeof config.options.voice === 'string' ? { voice: config.options.voice } : {}),
@@ -159,11 +183,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const benchmarkPassed = await this.providerConfigs.hasPassingBenchmark(
       config.serviceKind,
       config.modelAlias,
+      config.id,
     );
-    if (benchmarkPassed) {
+    if (benchmarkPassed && config.serviceKind !== 'pronunciation') {
       this.modelRouter.setProviderAlias(config.serviceKind, alias, config.modelAlias);
       this.logger.log(`运行时模型连接已更新：${config.serviceKind} → ${alias}（儿童专项 Benchmark 通过）`);
-    } else {
+    } else if (config.serviceKind !== 'pronunciation') {
       this.modelRouter.setProviderAlias(config.serviceKind, MOCK_PROVIDER_ALIASES[config.serviceKind]);
       this.logger.warn(`模型 ${config.serviceKind}/${config.modelAlias} 尚无通过的儿童专项 Benchmark，暂使用本地 Mock`);
     }
@@ -222,7 +247,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const outcome = await this.callWithFallback<TtsResponse>(
       'tts',
       decision,
-      async (adapter) => (adapter as TtsAdapter).invoke(request),
+      async (adapter, timeoutMs) => (adapter as TtsAdapter).invoke({
+        ...request,
+        ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
+      }),
       'mock_tts',
     );
 
@@ -266,7 +294,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const first = await this.callWithFallback<AsrResponse>(
       'asr',
       decision,
-      async (adapter) => (adapter as AsrAdapter).invoke(request),
+      async (adapter, timeoutMs) => (adapter as AsrAdapter).invoke({
+        ...request,
+        ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
+      }),
       'mock_asr',
     );
 
@@ -278,7 +309,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const upgraded = await this.callWithFallback<AsrResponse>(
       'asr',
       { ...decision, level: 'L2', fellBack: true, strategy: 'asr_high_quality_second_pass' },
-      async (adapter) => (adapter as AsrAdapter).invoke({ ...request, highQuality: true }),
+      async (adapter, timeoutMs) => (adapter as AsrAdapter).invoke({
+        ...request,
+        highQuality: true,
+        ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
+      }),
       'mock_asr',
     );
 
@@ -302,8 +337,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const outcome = await this.callWithFallback<PronunciationResponse>(
       'pronunciation',
       decision,
-      async (adapter) => (adapter as PronunciationAdapter).invoke(request),
-      'mock_pronunciation',
+      async (adapter, timeoutMs) => (adapter as PronunciationAdapter).invoke({
+        ...request,
+        ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
+      }),
+      undefined,
     );
     return outcome.result;
   }
@@ -322,35 +360,40 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   private async callWithFallback<T>(
     serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation',
     decision: RoutingDecision,
-    invoke: (adapter: unknown) => Promise<T>,
-    lastResortAlias: string,
+    invoke: (adapter: unknown, timeoutMs?: number) => Promise<T>,
+    lastResortAlias?: string,
   ): Promise<GatewayCallResult<T>> {
     const started = Date.now();
     const reasons: string[] = [];
 
-    // 第一候选：Router 指定的模型
-    const primary = this.registry.get(serviceKind, decision.providerAlias);
-    if (primary) {
+    const candidates = serviceKind === 'pronunciation'
+      ? this.pronunciationCandidates
+      : [decision.providerAlias];
+
+    for (const candidateAlias of candidates) {
+      const primary = this.registry.get(serviceKind, candidateAlias);
+      if (!primary) {
+        reasons.push(`adapter_not_found:${candidateAlias}`);
+        continue;
+      }
       try {
-        const result = await invoke(primary);
+        const result = await this.invokeWithTimeout(invoke, primary, this.providerTimeouts.get(candidateAlias));
         return {
           result,
-          degraded: decision.fellBack,
-          reasons: decision.fellBack ? [`fallback_to_${decision.providerAlias}`] : [],
+          degraded: decision.fellBack || candidateAlias !== decision.providerAlias,
+          reasons: decision.fellBack || candidateAlias !== decision.providerAlias ? [`fallback_to_${candidateAlias}`] : [],
           effectiveLevel: decision.level,
-          providerAlias: decision.providerAlias,
+          providerAlias: candidateAlias,
           latencyMs: Date.now() - started,
         };
       } catch (error) {
-        reasons.push(`primary_failed:${(error as Error).message}`);
-        this.logger.warn(`${serviceKind} 主模型 ${decision.providerAlias} 调用失败: ${(error as Error).message}`);
+        reasons.push(`${candidateAlias}_failed:${(error as Error).message}`);
+        this.logger.warn(`${serviceKind} 模型 ${candidateAlias} 调用失败: ${(error as Error).message}`);
       }
-    } else {
-      reasons.push(`adapter_not_found:${decision.providerAlias}`);
     }
 
     // 第二候选：兜底适配器（Mock / 缓存），保证课程不中断
-    const fallback = this.registry.get(serviceKind, lastResortAlias);
+    const fallback = lastResortAlias ? this.registry.get(serviceKind, lastResortAlias) : undefined;
     if (fallback) {
       try {
         const result = await invoke(fallback);
@@ -359,7 +402,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
           degraded: true,
           reasons: [...reasons, `fallback_to_${lastResortAlias}`],
           effectiveLevel: 'L0',
-          providerAlias: lastResortAlias,
+          providerAlias: lastResortAlias!,
           latencyMs: Date.now() - started,
         };
       } catch (error) {
@@ -369,6 +412,25 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
 
     // 全部不可用：抛出，由编排器决定离线兜底
     throw new Error(`${serviceKind} 全部供应商标识不可用: ${reasons.join('; ')}`);
+  }
+
+  private async invokeWithTimeout<T>(
+    invoke: (adapter: unknown, timeoutMs?: number) => Promise<T>,
+    adapter: unknown,
+    timeoutMs?: number,
+  ): Promise<T> {
+    if (!timeoutMs) return invoke(adapter);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        invoke(adapter, timeoutMs),
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`供应商调用超时（${timeoutMs}ms）`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /** 缓存统计，供成本与用量接口展示。 */

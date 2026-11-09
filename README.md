@@ -10,6 +10,8 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 
 > **Provider hardening:** TTS supports both binary OpenAI-compatible responses (`TTS_PROTOCOL=openai_audio`) and signed JSON/Base64 responses (`TTS_PROTOCOL=signed_json_audio`). Live configuration is checked at startup; an unsupported protocol or incomplete signed-protocol configuration fails fast instead of silently selecting a different adapter. In non-production runs, `GET /api/v1/config/audit` exposes redacted routing details for diagnosis; it never returns credential values.
 
+> **Verification-entry config change (2026-11-09, 验证入口配置变更):** live verification now uses Tencent Cloud `TextToVoice` (natural-language tier `VoiceType=502001`, signed JSON/Base64 protocol) for TTS and Zhipu `glm-5.3-flash` for LLM; ASR stays `FunAudioLLM/SenseVoiceSmall`, pronunciation assessment stays `mock_pronunciation`. This is a verification-entry config change only — **not** a formal vendor selection, not a real-time/latency sign-off, not a zero-cost claim. Live end-to-end **48/48 PASS**, unit tests **51/51**, build/typecheck EXIT=0; Mock regression 15/15 is an older record, not re-run this round. Pricing stays `unpriced` (`costCny=0` = no price table wired, not zero cost; prepaid resource packs are not free). The 1–2 s single-turn target is **not met**, and several items remain **unverified** (console quota screenshots, human listening, browser playback, 24h patrol, negative 401/403 tests, tier-adoption echo, upstream capture, CI run links, fault injection, etc.). Full unverified list and details: [`docs/M1-live-API-report.md`](docs/M1-live-API-report.md).
+
 ## Who it is for
 
 - 6–9-year-old children with zero English basis
