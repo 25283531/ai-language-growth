@@ -230,15 +230,17 @@ export default function AdminPage() {
     <><section className="notice"><strong>{active === 'embedding' ? '语义检索模型配置' : '两类语音能力分开配置'}</strong><span>{active === 'embedding' ? 'Embedding 是 Mem0 语义记忆与课程 RAG 的基础能力。当前先保存服务商和模型配置，检索链路接入并验证前不会调用该模型。' : '普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。启用配置后按优先级自动调用并故障切换。'}</span></section>
     <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{configs[item.id].some((config) => config.enabled) ? item.id === 'embedding' ? '已配置' : '已启用' : '未启用'}</i></button>)}</nav>
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div></div>
-        <div className="benchmark-list" aria-label={`${service.title}供应商列表`}>
-          {configs[active].length > 0 && <p className="helper">已配置 {configs[active].length} 个模型；同一服务可保存多个供应商或模型，运行时按优先级自动切换。</p>}
-          {configs[active].map((item) => <button type="button" key={item.id ?? item.draftKey} className="secondary" aria-pressed={(item.id ?? item.draftKey) === activeConfigIds[active]} onClick={() => setActiveConfigIds((old) => ({ ...old, [active]: item.id ?? item.draftKey }))} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, width: '100%', marginTop: 8 }}>
-            <span><strong>{item.providerPresetId ? catalog.find((preset) => preset.id === item.providerPresetId)?.name ?? item.providerPresetId : '未选择供应商'}</strong> · {item.modelAlias || '尚未填写模型名称'}</span>
-            <span>{item.enabled ? '已启用' : '已停用'} · 优先级 {item.priority ?? 100}</span>
-          </button>)}
-          {!configs[active].length && <p className="helper">此服务目前还没有供应商配置。</p>}
-        </div>
         <div className="fields" style={{ marginTop: 16 }}>
+          <label>当前供应商配置
+            <select value={activeConfigIds[active] ?? ''} onChange={(event) => setActiveConfigIds((old) => ({ ...old, [active]: event.target.value }))}>
+              {!configs[active].length && <option value="">尚无配置</option>}
+              {configs[active].map((item) => <option key={item.id ?? item.draftKey} value={item.id ?? item.draftKey}>
+                {item.providerPresetId ? catalog.find((preset) => preset.id === item.providerPresetId)?.name ?? item.providerPresetId : '未选择供应商'}
+                {' · '}{item.modelAlias || '未命名模型'} · {item.enabled ? '已启用' : '已停用'} · 优先级 {item.priority ?? 100}
+              </option>)}
+            </select>
+            <small>{configs[active].length ? `已配置 ${configs[active].length} 个模型；运行时按优先级自动切换。` : '添加第一个模型配置后即可设置服务商和密钥。'}</small>
+          </label>
           <button className="secondary" type="button" onClick={() => {
             const next = { ...emptyConfig(active), draftKey: crypto.randomUUID() };
             setConfigs((old) => ({ ...old, [active]: [...old[active], next] }));

@@ -325,6 +325,7 @@ export class CurriculumAdminController {
           snapshot: content as unknown as Prisma.InputJsonValue,
         },
       });
+      await this.queueDraftImages(content);
       return { packageId, packageTitle: title, imported: 1, skipped: 0, drafts: [{ id: draft.id, title, level }] };
     }
     const parsed = curriculumPackageSchema.safeParse(raw);
@@ -390,6 +391,7 @@ export class CurriculumAdminController {
             snapshot: generatedContent as unknown as Prisma.InputJsonValue,
           },
         });
+        await this.queueDraftImages(generatedContent);
         created.push({ id: draft.id, title: unit.title, level: level.code });
       }
     }
@@ -401,6 +403,39 @@ export class CurriculumAdminController {
       levels: levels.map((level) => ({ code: level.code, units: level.units.length })),
       drafts: created,
     };
+  }
+
+  /**
+   * 课程包导入后即登记图片资源，交给 ImageCacheService 在后台空闲下载。
+   * 资源仍处于草稿状态，发布校验和人工审核规则不因此改变。
+   */
+  private async queueDraftImages(content: GeneratedLesson): Promise<void> {
+    const images = [
+      ...(content.images ?? []),
+      ...content.vocabulary.flatMap((item) => item.image ? [item.image] : []),
+    ];
+    const unique = new Map<string, { url: string; license: string; attribution?: string }>();
+    for (const image of images) {
+      if (image?.url && image.license) unique.set(image.url, image);
+    }
+    for (const image of unique.values()) {
+      const existing = await this.prisma.media_assets.findFirst({
+        where: { kind: 'image', sourceUrl: image.url },
+        select: { id: true },
+      });
+      if (existing) continue;
+      await this.prisma.media_assets.create({
+        data: {
+          kind: 'image',
+          ref: image.url,
+          sourceUrl: image.url,
+          license: image.license,
+          attribution: image.attribution || null,
+          sourceProvider: 'curriculum_package',
+          cacheStatus: 'pending',
+        },
+      });
+    }
   }
 
   @Get('textbooks')

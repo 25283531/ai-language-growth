@@ -19,6 +19,9 @@ export class ImageCacheService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit(): void {
+    void this.cacheNext().catch((error) => {
+      this.logger.warn(`课程图片后台缓存失败：${(error as Error).message}`);
+    });
     this.timer = setInterval(() => void this.cacheNext().catch((error) => {
       this.logger.warn(`课程图片后台缓存失败：${(error as Error).message}`);
     }), 60_000);
