@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Headers, Post, Put, Query } from '@nestjs/common';
-import type { ServiceKind } from '@alg/shared-contracts';
+import { SERVICE_KINDS, type ProviderServiceKind, type ServiceKind } from '@alg/shared-contracts';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ProviderConfigService, type ProviderConfigInput } from './provider-config.service';
 
@@ -28,14 +28,16 @@ export class ProviderConfigController {
   ) {
     this.configs.assertAdminToken(token);
     const saved = await this.configs.save(body);
-    await this.gateway.refreshRuntimeProvider(saved.serviceKind);
+    if (SERVICE_KINDS.includes(saved.serviceKind as ServiceKind)) {
+      await this.gateway.refreshRuntimeProvider(saved.serviceKind as ServiceKind);
+    }
     return saved;
   }
 
   @Get('benchmarks')
   async benchmarks(
     @Headers('x-admin-token') token: string | undefined,
-    @Query('serviceKind') serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation',
+    @Query('serviceKind') serviceKind: ServiceKind,
   ) {
     this.configs.assertAdminToken(token);
     return this.configs.listBenchmarks(serviceKind);
@@ -52,7 +54,7 @@ export class ProviderConfigController {
   @Get('prices')
   async prices(
     @Headers('x-admin-token') token: string | undefined,
-    @Query('serviceKind') serviceKind: ServiceKind,
+    @Query('serviceKind') serviceKind: ProviderServiceKind,
   ) {
     this.configs.assertAdminToken(token);
     return this.configs.listPrices(serviceKind);

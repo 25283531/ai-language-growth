@@ -5,16 +5,16 @@ import { getProviderPreset, listProviderPresets, presetSupportsService } from '.
 describe('预置模型接入平台', () => {
   it('包含要求的平台及各自预置的服务入口', () => {
     const requiredServices = {
-      bailian: ['llm', 'tts', 'asr'],
+      bailian: ['llm', 'tts', 'asr', 'embedding'],
       volcengine: ['llm', 'tts', 'asr'],
       'baidu-qianfan': ['llm', 'tts', 'asr'],
       'iflytek-spark': ['llm', 'tts', 'asr', 'pronunciation'],
       minimax: ['llm', 'tts'],
-      ollama: ['llm', 'tts', 'asr'],
-      siliconflow: ['llm', 'tts', 'asr'],
+      ollama: ['llm', 'tts', 'asr', 'embedding'],
+      siliconflow: ['llm', 'tts', 'asr', 'embedding'],
       'tencent-cloud': ['tts', 'asr'],
       'tencent-hunyuan': ['llm'],
-      'openai-compatible': ['llm', 'tts', 'asr'],
+      'openai-compatible': ['llm', 'tts', 'asr', 'embedding'],
     } as const;
     for (const [id, services] of Object.entries(requiredServices)) {
       const preset = getProviderPreset(id);
@@ -38,6 +38,7 @@ describe('预置模型接入平台', () => {
     assert.equal(presetSupportsService('ollama', 'llm'), true);
     assert.equal(presetSupportsService('ollama', 'tts'), true);
     assert.equal(presetSupportsService('ollama', 'asr'), true);
+    assert.equal(presetSupportsService('ollama', 'embedding'), true);
     assert.equal(getProviderPreset('unknown-provider'), undefined);
     assert.equal(presetSupportsService('unknown-provider', 'llm'), false);
   });

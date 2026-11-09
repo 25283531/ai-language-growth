@@ -6,7 +6,12 @@ import {
 import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import type { ServiceKind } from '@alg/shared-contracts';
+import {
+  PROVIDER_SERVICE_KINDS,
+  SERVICE_KINDS,
+  type ProviderServiceKind,
+  type ServiceKind,
+} from '@alg/shared-contracts';
 import {
   getProviderPreset,
   listProviderPresets,
@@ -14,9 +19,8 @@ import {
 } from '@alg/ai-provider-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 
-const serviceKinds = ['llm', 'tts', 'asr', 'pronunciation'] as const;
 const configInput = z.object({
-  serviceKind: z.enum(serviceKinds),
+  serviceKind: z.enum(PROVIDER_SERVICE_KINDS),
   providerPresetId: z.string().min(1).max(80),
   baseUrl: z.string().url().max(2048),
   modelAlias: z.string().trim().min(1).max(160),
@@ -26,7 +30,7 @@ const configInput = z.object({
   options: z.record(z.unknown()).default({}),
 });
 const benchmarkInput = z.object({
-  serviceKind: z.enum(serviceKinds),
+  serviceKind: z.enum(SERVICE_KINDS),
   modelAlias: z.string().trim().min(1).max(160),
   score: z.number().finite(),
   sampleCount: z.number().int().min(1).max(100000),
@@ -41,7 +45,7 @@ const priceTypeSchema = z.enum([
   'per_call',
 ]);
 const pricesInput = z.object({
-  serviceKind: z.enum(serviceKinds),
+  serviceKind: z.enum(PROVIDER_SERVICE_KINDS),
   modelAlias: z.string().trim().min(1).max(160),
   prices: z.array(z.object({
     priceType: priceTypeSchema,
@@ -52,7 +56,7 @@ const pricesInput = z.object({
 export type ProviderConfigInput = z.input<typeof configInput>;
 
 export interface PublicProviderConfig {
-  serviceKind: ServiceKind;
+  serviceKind: ProviderServiceKind;
   providerPresetId: string;
   providerName: string;
   protocol: ProviderPreset['protocol'];
@@ -65,6 +69,7 @@ export interface PublicProviderConfig {
 }
 
 export interface RuntimeProviderConfig extends PublicProviderConfig {
+  serviceKind: ServiceKind;
   apiKey?: string;
   credentials: Record<string, string>;
 }
@@ -83,11 +88,14 @@ export class ProviderConfigService {
   }
 
   async listEnabledRuntimeConfigs(): Promise<RuntimeProviderConfig[]> {
-    const rows = await this.prisma.ai_provider_configs.findMany({ where: { enabled: true } });
+    const rows = await this.prisma.ai_provider_configs.findMany({
+      where: { enabled: true, serviceKind: { in: [...SERVICE_KINDS] } },
+    });
     return rows.map((row) => {
       const config = this.toPublic(row);
       return {
         ...config,
+        serviceKind: row.serviceKind as ServiceKind,
         credentials: row.credentialsCiphertext ? this.decrypt(row.credentialsCiphertext) : {},
       };
     });
@@ -99,6 +107,7 @@ export class ProviderConfigService {
     const config = this.toPublic(row);
     return {
       ...config,
+      serviceKind,
       credentials: row.credentialsCiphertext ? this.decrypt(row.credentialsCiphertext) : {},
     };
   }
@@ -222,7 +231,7 @@ export class ProviderConfigService {
     return { ...benchmark, serviceKind: value.serviceKind };
   }
 
-  async listPrices(serviceKind: ServiceKind) {
+  async listPrices(serviceKind: ProviderServiceKind) {
     const provider = await this.prisma.ai_providers.findUnique({
       where: { alias: `configured_${serviceKind}` },
       select: { id: true },
@@ -322,7 +331,7 @@ export class ProviderConfigService {
   }): PublicProviderConfig {
     const preset = getProviderPreset(row.providerPresetId);
     return {
-      serviceKind: row.serviceKind as ServiceKind,
+      serviceKind: row.serviceKind as ProviderServiceKind,
       providerPresetId: row.providerPresetId,
       providerName: preset?.name ?? row.providerPresetId,
       protocol: row.protocol as ProviderPreset['protocol'],

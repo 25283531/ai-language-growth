@@ -17,9 +17,13 @@ import { teacherVoiceParamsSchema } from './teaching';
 export const MODEL_LEVELS = ['L0', 'L1', 'L2', 'L3'] as const;
 export type ModelLevel = (typeof MODEL_LEVELS)[number];
 
-/** 四类服务独立建路由表（D-013）。 */
+/** 在线教学调用的四类服务独立路由表（D-013）。 */
 export const SERVICE_KINDS = ['llm', 'tts', 'asr', 'pronunciation'] as const;
 export type ServiceKind = (typeof SERVICE_KINDS)[number];
+
+/** 服务端配置目录还包含暂不参与教学 Model Router 的离线向量能力。 */
+export const PROVIDER_SERVICE_KINDS = [...SERVICE_KINDS, 'embedding'] as const;
+export type ProviderServiceKind = (typeof PROVIDER_SERVICE_KINDS)[number];
 
 /** 路由任务类型标识。与任务书第 7 章的路由配置示例对齐。 */
 export const TASK_ROUTES = [

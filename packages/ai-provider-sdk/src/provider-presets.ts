@@ -1,15 +1,15 @@
-import type { ServiceKind } from '@alg/shared-contracts';
+import type { ProviderServiceKind } from '@alg/shared-contracts';
 import entries from './provider-presets.json';
 
 export interface ProviderPreset {
   id: string;
   name: string;
   protocol: 'openai_compatible' | 'bailian_http' | 'volcengine_http' | 'baidu_speech' | 'iflytek_signed' | 'minimax_http' | 'tencent_soe' | 'tencent_cloud' | 'azure_speech' | 'speechace_http' | 'chivox_http';
-  defaultBaseUrls: Partial<Record<ServiceKind, string>>;
-  services: ServiceKind[];
+  defaultBaseUrls: Partial<Record<ProviderServiceKind, string>>;
+  services: ProviderServiceKind[];
   credentialRequired: boolean;
   documentationUrl: string | null;
-  documentationUrls?: Partial<Record<ServiceKind, string>>;
+  documentationUrls?: Partial<Record<ProviderServiceKind, string>>;
   credentialFields?: Array<{ key: string; label: string; required: boolean }>;
 }
 
@@ -29,6 +29,6 @@ export function getProviderPreset(id: string): ProviderPreset | undefined {
   return PRESETS.find((preset) => preset.id === id);
 }
 
-export function presetSupportsService(id: string, service: ServiceKind): boolean {
+export function presetSupportsService(id: string, service: ProviderServiceKind): boolean {
   return getProviderPreset(id)?.services.includes(service) ?? false;
 }

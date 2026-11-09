@@ -3,11 +3,11 @@
     "id": "bailian",
     "name": "阿里云百炼",
     "protocol": "bailian_http",
-    "defaultBaseUrls": { "llm": "https://dashscope.aliyuncs.com/compatible-mode/v1", "tts": "https://dashscope.aliyuncs.com", "asr": "https://dashscope.aliyuncs.com" },
-    "services": ["llm", "tts", "asr"],
+    "defaultBaseUrls": { "llm": "https://dashscope.aliyuncs.com/compatible-mode/v1", "tts": "https://dashscope.aliyuncs.com", "asr": "https://dashscope.aliyuncs.com", "embedding": "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    "services": ["llm", "tts", "asr", "embedding"],
     "credentialRequired": true,
     "documentationUrl": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions",
-    "documentationUrls": { "llm": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions", "tts": "https://help.aliyun.com/zh/model-studio/qwen-audio-tts-http-api", "asr": "https://help.aliyun.com/zh/model-studio/qwen-audio-asr-http-api" }
+    "documentationUrls": { "llm": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions", "tts": "https://help.aliyun.com/zh/model-studio/qwen-audio-tts-http-api", "asr": "https://help.aliyun.com/zh/model-studio/qwen-audio-asr-http-api", "embedding": "https://help.aliyun.com/zh/model-studio/embedding-interfaces-compatible-with-openai" }
   },
   {
     "id": "volcengine",
@@ -53,21 +53,21 @@
     "id": "ollama",
     "name": "Ollama",
     "protocol": "openai_compatible",
-    "defaultBaseUrls": { "llm": "http://localhost:11434/v1", "tts": "http://localhost:11434/v1", "asr": "http://localhost:11434/v1" },
-    "services": ["llm", "tts", "asr"],
+    "defaultBaseUrls": { "llm": "http://localhost:11434/v1", "tts": "http://localhost:11434/v1", "asr": "http://localhost:11434/v1", "embedding": "http://localhost:11434" },
+    "services": ["llm", "tts", "asr", "embedding"],
     "credentialRequired": false,
     "documentationUrl": "https://docs.ollama.com/api/openai-compatibility",
-    "documentationUrls": { "llm": "https://docs.ollama.com/api/openai-compatibility", "tts": "https://docs.ollama.com/api/openai-compatibility", "asr": "https://docs.ollama.com/api/openai-compatibility" }
+    "documentationUrls": { "llm": "https://docs.ollama.com/api/openai-compatibility", "tts": "https://docs.ollama.com/api/openai-compatibility", "asr": "https://docs.ollama.com/api/openai-compatibility", "embedding": "https://docs.ollama.com/capabilities/embeddings" }
   },
   {
     "id": "siliconflow",
     "name": "硅基流动",
     "protocol": "openai_compatible",
-    "defaultBaseUrls": { "llm": "https://api.siliconflow.cn/v1", "tts": "https://api.siliconflow.cn/v1", "asr": "https://api.siliconflow.cn/v1" },
-    "services": ["llm", "tts", "asr"],
+    "defaultBaseUrls": { "llm": "https://api.siliconflow.cn/v1", "tts": "https://api.siliconflow.cn/v1", "asr": "https://api.siliconflow.cn/v1", "embedding": "https://api.siliconflow.cn/v1" },
+    "services": ["llm", "tts", "asr", "embedding"],
     "credentialRequired": true,
     "documentationUrl": "https://docs.siliconflow.cn/",
-    "documentationUrls": { "llm": "https://docs.siliconflow.cn/", "tts": "https://docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech", "asr": "https://docs.siliconflow.cn/docs/api/audio-transcriptions-post" }
+    "documentationUrls": { "llm": "https://docs.siliconflow.cn/", "tts": "https://docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech", "asr": "https://docs.siliconflow.cn/docs/api/audio-transcriptions-post", "embedding": "https://docs.siliconflow.cn/api-reference/embeddings/create-embeddings" }
   },
   {
     "id": "tencent-cloud",
@@ -98,9 +98,10 @@
     "name": "OpenAI 兼容",
     "protocol": "openai_compatible",
     "defaultBaseUrls": {},
-    "services": ["llm", "tts", "asr"],
+    "services": ["llm", "tts", "asr", "embedding"],
     "credentialRequired": false,
-    "documentationUrl": null
+    "documentationUrl": null,
+    "documentationUrls": { "embedding": "https://platform.openai.com/docs/api-reference/embeddings" }
   },
   {
     "id": "tencent-soe",
