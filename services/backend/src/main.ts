@@ -7,6 +7,7 @@
 import 'reflect-metadata';
 import { Logger, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { timingSafeEqual } from 'node:crypto';
 import { json, raw } from 'express';
 import type { NextFunction, Response } from 'express';
 import type { Request } from 'express';
@@ -45,6 +46,22 @@ async function bootstrap(): Promise<void> {
   const auth = app.get(AuthService);
   const adminAuth = app.get(AdminAuthService);
   app.use('/api/v1/admin', (request: Request, response: Response, next: NextFunction) => {
+    if (request.method === 'POST' && request.path === '/curriculum/internal/model') {
+      const expected = process.env.CURRICULUM_GENERATOR_TOKEN ?? '';
+      const provided = String(request.headers['x-curriculum-token'] ?? '');
+      const expectedBytes = Buffer.from(expected);
+      const providedBytes = Buffer.from(provided);
+      if (
+        expectedBytes.length > 0
+        && expectedBytes.length === providedBytes.length
+        && timingSafeEqual(expectedBytes, providedBytes)
+      ) {
+        next();
+        return;
+      }
+      response.status(401).json({ message: '课程生成服务凭据无效' });
+      return;
+    }
     if (adminAuth.isAuthPath(request.path)) {
       next();
       return;
