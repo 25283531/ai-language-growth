@@ -35,6 +35,7 @@ model users {
   consents            consent_records[]
   sessions            auth_sessions[]
   passwordResetTokens password_reset_tokens[]
+  emailVerificationTokens email_verification_tokens[]
   membershipEvents    membership_events[]
   membershipRequests  membership_requests[]
 
@@ -97,6 +98,31 @@ model password_reset_tokens {
   @@index([userId, usedAt])
   @@index([expiresAt])
   @@map("password_reset_tokens")
+}
+
+model auth_captcha_challenges {
+  id        String    @id @default(uuid())
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@map("auth_captcha_challenges")
+}
+
+model email_verification_tokens {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
 }
 
 model membership_events {

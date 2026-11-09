@@ -116,6 +116,29 @@ export class EmailService {
     });
   }
 
+  async sendEmailVerification(input: { to: string; code: string }): Promise<void> {
+    const settings = await this.loadSettings();
+    if (!settings?.host || !settings.user || !settings.password || !settings.from) {
+      if (this.config.mail.disabled || this.config.nodeEnv !== 'production') {
+        this.logger.warn(`邮件未配置，开发模式邮箱验证码：${input.code}`);
+        return;
+      }
+      throw new ServiceUnavailableException('服务端尚未配置邮箱发送功能');
+    }
+    const transporter = nodemailer.createTransport({
+      host: settings.host, port: settings.port, secure: settings.secure,
+      auth: { user: settings.user, pass: settings.password },
+    });
+    await transporter.sendMail({
+      from: settings.from,
+      replyTo: settings.replyTo || undefined,
+      to: input.to,
+      subject: 'AI Language Growth 邮箱验证',
+      text: `您的邮箱验证码是 ${input.code}，15 分钟内有效。`,
+      html: `<p>您的邮箱验证码是：</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${input.code}</p><p>验证码 15 分钟内有效。</p>`,
+    });
+  }
+
   private async loadSettings(): Promise<(SmtpSettings & { password?: string }) | null> {
     const row = await this.prisma.app_settings.findUnique({ where: { key: 'smtp' } });
     if (!row) {

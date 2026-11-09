@@ -6,13 +6,27 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 export const MEMBERSHIP_TIERS = ['guest', 'free', 'member', 'advanced'] as const;
 export type MembershipTier = (typeof MEMBERSHIP_TIERS)[number];
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SIMPLE_PASSWORDS = new Set([
+  '123456',
+  '000000',
+  '111111',
+  '222222',
+  '333333',
+  '444444',
+  '555555',
+  '666666',
+  '777777',
+  '888888',
+  '999999',
+  '1234567',
+  '0000000',
+  '1111111',
   '12345678',
   '00000000',
   '11111111',
@@ -29,8 +43,8 @@ export function normalizeEmail(value: unknown): string {
 }
 
 export function assertPassword(value: unknown): string {
-  if (typeof value !== 'string' || value.length < 8) {
-    throw new ConflictException('密码至少需要 8 位');
+  if (typeof value !== 'string' || value.length < 6) {
+    throw new ConflictException('密码至少需要 6 位');
   }
   const normalized = value.toLowerCase();
   if (
@@ -82,7 +96,26 @@ export class AuthService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async register(input: { email: unknown; password: unknown; displayName?: unknown }) {
+  async createCaptcha(): Promise<{ captchaId: string; image: string; expiresInSeconds: number }> {
+    const captchaId = randomUUID();
+    const code = String(randomBytes(4).readUInt32BE(0) % 10000).padStart(4, '0');
+    await this.prisma.auth_captcha_challenges.deleteMany({ where: { expiresAt: { lte: new Date() } } });
+    await this.prisma.auth_captcha_challenges.create({
+      data: { id: captchaId, codeHash: hashToken(code), expiresAt: new Date(Date.now() + 5 * 60 * 1000) },
+    });
+    const image = `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="64" viewBox="0 0 180 64"><rect width="180" height="64" rx="8" fill="#f1f5f2"/>${Array.from({ length: 8 }, (_, i) => `<path d="M${i * 26} ${i % 2 ? 58 : 6} L${i * 26 + 25} ${i % 2 ? 5 : 59}" stroke="#8da69d" stroke-width="1" opacity=".45"/>`).join('')}<text x="90" y="46" text-anchor="middle" font-family="monospace" font-size="36" font-weight="700" letter-spacing="12" fill="#176b5b">${code}</text></svg>`;
+    return { captchaId, image: Buffer.from(image).toString('base64'), expiresInSeconds: 300 };
+  }
+
+  async register(input: { email: unknown; password: unknown; displayName?: unknown; captchaId: unknown; captchaCode: unknown }) {
+    if (typeof input.captchaId !== 'string' || typeof input.captchaCode !== 'string') {
+      throw new ConflictException('请完成图片验证码');
+    }
+    const captcha = await this.prisma.auth_captcha_challenges.findUnique({ where: { id: input.captchaId } });
+    if (!captcha || captcha.usedAt || captcha.expiresAt <= new Date() || captcha.codeHash !== hashToken(input.captchaCode.trim())) {
+      throw new ConflictException('图片验证码错误或已过期，请刷新后重试');
+    }
+    await this.prisma.auth_captcha_challenges.update({ where: { id: captcha.id }, data: { usedAt: new Date() } });
     const email = assertEmail(input.email);
     const password = assertPassword(input.password);
     const displayName =
@@ -174,6 +207,7 @@ export class AuthService {
     const email = normalizeEmail(emailInput);
     const user = await this.prisma.users.findUnique({ where: { email } });
     if (!user || user.disabledAt) return {};
+    if (!user.emailVerifiedAt) throw new ForbiddenException('请先登录并在账户设置中完成邮箱验证，再找回密码');
     const rawToken = randomBytes(32).toString('base64url');
     await this.prisma.$transaction([
       this.prisma.password_reset_tokens.updateMany({
@@ -189,6 +223,36 @@ export class AuthService {
       }),
     ]);
     return { token: rawToken, userId: user.id };
+  }
+
+  async createEmailVerification(userId: string): Promise<{ email: string; code: string }> {
+    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+    if (!user || user.disabledAt) throw new UnauthorizedException('请先登录');
+    if (user.emailVerifiedAt) throw new ConflictException('此邮箱已经验证');
+    const code = String(randomBytes(4).readUInt32BE(0) % 1000000).padStart(6, '0');
+    await this.prisma.email_verification_tokens.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await this.prisma.email_verification_tokens.create({
+      data: { userId, codeHash: hashToken(code), expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+    });
+    return { email: user.email, code };
+  }
+
+  async verifyEmail(userId: string, rawCode: unknown): Promise<void> {
+    const code = typeof rawCode === 'string' ? rawCode.trim() : '';
+    const verification = await this.prisma.email_verification_tokens.findFirst({
+      where: { userId, usedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!verification || verification.codeHash !== hashToken(code)) {
+      throw new UnauthorizedException('验证码无效或已过期');
+    }
+    await this.prisma.$transaction([
+      this.prisma.email_verification_tokens.update({ where: { id: verification.id }, data: { usedAt: new Date() } }),
+      this.prisma.users.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } }),
+    ]);
   }
 
   async getEmailForUser(userId: string): Promise<string | null> {
@@ -228,7 +292,12 @@ export class AuthService {
   }
 
   async me(rawToken: string | undefined) {
-    return publicUser(await this.resolveSession(rawToken));
+    const user = await this.resolveSession(rawToken);
+    const learner = await this.prisma.learner_profiles.findFirst({
+      where: { userId: user.id, guardianId: user.id },
+      select: { id: true },
+    });
+    return { ...publicUser(user), learnerId: learner?.id ?? null };
   }
 
   async assertLearnerOwnership(rawToken: string | undefined, learnerId: string): Promise<string> {

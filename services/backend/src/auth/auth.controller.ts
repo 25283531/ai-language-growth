@@ -11,6 +11,8 @@ const registerSchema = z.object({
   email: z.string(),
   password: z.string(),
   displayName: z.string().max(80).optional(),
+  captchaId: z.string().uuid(),
+  captchaCode: z.string().length(4),
 });
 const loginSchema = z.object({ email: z.string(), password: z.string() });
 const forgotSchema = z.object({ email: z.string() });
@@ -49,6 +51,11 @@ export class AuthController {
     return result;
   }
 
+  @Get('captcha')
+  captcha() {
+    return this.auth.createCaptcha();
+  }
+
   @Post('login')
   async login(@Body() body: unknown, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const parsed = loginSchema.safeParse(body);
@@ -61,6 +68,30 @@ export class AuthController {
   @Get('me')
   async me(@Headers('authorization') authorization?: string, @Headers('cookie') cookie?: string) {
     return { user: await this.auth.me(extractBearerToken(authorization, cookie)) };
+  }
+
+  @Post('email-verification')
+  async sendEmailVerification(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('cookie') cookie: string | undefined,
+  ) {
+    const user = await this.auth.resolveSession(extractBearerToken(authorization, cookie));
+    const verification = await this.auth.createEmailVerification(user.id);
+    await this.email.sendEmailVerification({ to: verification.email, code: verification.code });
+    return { message: `验证码已发送至 ${verification.email}` };
+  }
+
+  @Post('verify-email')
+  async verifyEmail(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('cookie') cookie: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const parsed = z.object({ code: z.string().length(6) }).safeParse(body);
+    if (!parsed.success) throw new HttpException({ message: '请输入 6 位邮箱验证码' }, 400);
+    const user = await this.auth.resolveSession(extractBearerToken(authorization, cookie));
+    await this.auth.verifyEmail(user.id, parsed.data.code);
+    return { message: '邮箱验证完成' };
   }
 
   @Post('logout')
