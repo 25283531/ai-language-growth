@@ -148,6 +148,7 @@ export class ProviderConfigService {
       'minimax': ['apiKey'],
       'volcengine': ['apiKey'],
       siliconflow: ['apiKey'],
+      zhipu: ['apiKey'],
       'tencent-cloud': ['secretId', 'secretKey'],
       'tencent-hunyuan': ['apiKey'],
       'bailian': ['apiKey'],

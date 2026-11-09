@@ -65,6 +65,7 @@ const credentialLabels: Record<string, Array<[string, string]>> = {
   'iflytek-spark': [['appId', '讯飞 AppID'], ['apiKey', '讯飞服务 API Key'], ['apiSecret', '讯飞 TTS/星火 API Secret']],
   minimax: [['apiKey', 'MiniMax API Key'], ['groupId', 'Group ID（如接口要求）']],
   siliconflow: [['apiKey', '硅基流动 API Key']],
+  zhipu: [['apiKey', '智谱 API Key']],
   'tencent-cloud': [['secretId', '腾讯云 Secret ID'], ['secretKey', '腾讯云 Secret Key']],
   'tencent-hunyuan': [['apiKey', '腾讯云混元 API Key']],
   ollama: [],
@@ -230,6 +231,7 @@ export default function AdminPage() {
     <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{configs[item.id].some((config) => config.enabled) ? item.id === 'embedding' ? '已配置' : '已启用' : '未启用'}</i></button>)}</nav>
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div></div>
         <div className="benchmark-list" aria-label={`${service.title}供应商列表`}>
+          {configs[active].length > 0 && <p className="helper">已配置 {configs[active].length} 个模型；同一服务可保存多个供应商或模型，运行时按优先级自动切换。</p>}
           {configs[active].map((item) => <button type="button" key={item.id ?? item.draftKey} className="secondary" aria-pressed={(item.id ?? item.draftKey) === activeConfigIds[active]} onClick={() => setActiveConfigIds((old) => ({ ...old, [active]: item.id ?? item.draftKey }))} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, width: '100%', marginTop: 8 }}>
             <span><strong>{item.providerPresetId ? catalog.find((preset) => preset.id === item.providerPresetId)?.name ?? item.providerPresetId : '未选择供应商'}</strong> · {item.modelAlias || '尚未填写模型名称'}</span>
             <span>{item.enabled ? '已启用' : '已停用'} · 优先级 {item.priority ?? 100}</span>

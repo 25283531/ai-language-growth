@@ -70,6 +70,16 @@
     "documentationUrls": { "llm": "https://docs.siliconflow.cn/", "tts": "https://docs.siliconflow.cn/docs/userguide/capabilities/text-to-speech", "asr": "https://docs.siliconflow.cn/docs/api/audio-transcriptions-post", "embedding": "https://docs.siliconflow.cn/api-reference/embeddings/create-embeddings" }
   },
   {
+    "id": "zhipu",
+    "name": "智谱 AI",
+    "protocol": "openai_compatible",
+    "defaultBaseUrls": { "llm": "https://open.bigmodel.cn/api/paas/v4" },
+    "services": ["llm"],
+    "credentialRequired": true,
+    "documentationUrl": "https://open.bigmodel.cn/dev/api",
+    "documentationUrls": { "llm": "https://docs.bigmodel.cn/cn/best-practice/case/ai-search-engine" }
+  },
+  {
     "id": "tencent-cloud",
     "name": "腾讯云语音服务",
     "protocol": "tencent_cloud",

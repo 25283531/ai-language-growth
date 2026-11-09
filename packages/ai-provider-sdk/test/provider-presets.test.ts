@@ -12,6 +12,7 @@ describe('预置模型接入平台', () => {
       minimax: ['llm', 'tts'],
       ollama: ['llm', 'tts', 'asr', 'embedding'],
       siliconflow: ['llm', 'tts', 'asr', 'embedding'],
+      zhipu: ['llm'],
       'tencent-cloud': ['tts', 'asr'],
       'tencent-hunyuan': ['llm'],
       'openai-compatible': ['llm', 'tts', 'asr', 'embedding'],
