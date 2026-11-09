@@ -173,7 +173,7 @@ export const teachingActivitySchema = z.object({
     ref: z.string(),
     sourceUrl: z.string().url().optional(),
     targetWord: z.string().optional(),
-  })).default([]),
+  })).optional(),
   /** 英文示范文本 */
   demonstrationText: z.string().nullable().default(null),
   /** 中文引导语 */
