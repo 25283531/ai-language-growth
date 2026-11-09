@@ -135,10 +135,10 @@ export class IflytekTtsAdapter implements TtsAdapter {
         header: { app_id: appId, status: 2 },
         parameter: {
           oral: {
-              oral_level: String(this.config.options?.oralLevel ?? 'mid'),
+            oral_level: String(this.config.options?.oralLevel ?? 'mid'),
             spark_assist: Number(this.config.options?.sparkAssist ?? 1),
-              remain: Number(this.config.options?.remain ?? 0),
-              stop_split: Number(this.config.options?.stopSplit ?? 0),
+            remain: Number(this.config.options?.remain ?? 0),
+            stop_split: Number(this.config.options?.stopSplit ?? 0),
           },
           tts: {
             vcn: voice,
@@ -165,7 +165,10 @@ export class IflytekTtsAdapter implements TtsAdapter {
       }
       : { common: { app_id: appId }, business: { aue: 'lame', sfl: 1, tte: 'UTF8', vcn: voice, speed, volume: 50, pitch: 50 }, data: { status: 2, text: Buffer.from(request.text).toString('base64') } });
     const bytes = Buffer.from(await connectAndSend(signedUrl(this.config.baseUrl, apiKey, apiSecret), payload, request.timeoutMs ?? 20000, (message) => {
-      if (Number(message.code ?? 0) !== 0) return { error: `讯飞 TTS 错误 ${message.code}: ${String(message.message ?? '')}` };
+      const header = message.header as { code?: number; message?: string; status?: number } | undefined;
+      const code = header?.code ?? (typeof message.code === 'number' ? message.code : 0);
+      const errorMessage = header?.message ?? message.message;
+      if (Number(code) !== 0) return { error: `讯飞 TTS 错误 ${code}: ${String(errorMessage ?? '')}` };
       const data = isSuperSmart
         ? (message.payload as { audio?: { audio?: string; status?: number } } | undefined)?.audio
         : message.data as { audio?: string; status?: number } | undefined;
@@ -219,8 +222,8 @@ export class IflytekAsrAdapter implements AsrAdapter {
           parameter: {
             iat: {
               domain: 'spark_asr_v2',
-              language: String(this.config.options?.language ?? 'zh_cn'),
-              accent: String(this.config.options?.accent ?? 'mandarin'),
+              language: 'zh_cn',
+              accent: 'mandarin',
               result: { encoding: 'utf8', compress: 'raw', format: 'json' },
             },
           },

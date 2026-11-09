@@ -19,7 +19,8 @@
 - 三项硬约束均有代码与数据库层证据（教学决策在后端、模型可替换、状态变更可追溯到证据）
 - **28 项单测**、**5 项数据库硬约束**、7 个 workspace 全量 typecheck 与构建全部通过
 - CI 与 Android 两个 GitHub Actions 工作流**云端实测均 success**，Android 产出真实 APK
-- **本轮（2026-11-09）验证入口配置变更后的实测**：live 端到端 **48/48 PASS**、全量单测 **51/51**、`npm run build` / `npm run typecheck` 均 EXIT=0（详见 [`docs/M1-live-API-report.md`](./M1-live-API-report.md)）
+- **本轮（2026-11-09）实测**：`npm run build` / `npm run typecheck` 均 EXIT=0；纯单测 `npx tsx --test packages/*/test/*.test.ts` **70/70 PASS**；根 `npm test` 三种条件并列（详见 §9.6）：(a) 新启动 mock 后端进程 + `DATABASE_URL`(15434)/`REDIS_URL`(16381) **64 tests / 64 pass / 0 fail / EXIT 0**（本轮最终结论，35/35 + 19/19 + 10/10）、(b) 同一 3100 进程内重复跑 64/63/1（内存 TTS 缓存命中、属测试隔离 / 进程状态污染，新残余风险见 §9.6）、(c) 无 `DATABASE_URL` 注入 64/63/1（环境注入缺失），(b)(c) 均非代码回归；修订后 `verify_live_apis.py` live 全量重跑 **23 PASS / 21 FAIL**；`verify_m1_loop.sh` 含 15 条 `ok()` 断言、当前 HEAD **6 PASS / 9 FAIL**（历史 15/15 属旧 HEAD）；代码提交 `0fe159b` 已推送 `main`、CI run `42593265380` `completed / success`，文档提交的新 run 结论待补。详见 [`docs/M1-live-API-report.md`](./M1-live-API-report.md) §4.0 与本报告 §9.6。
+- **2026-11-07 21:25:22 修订前脚本快照 48/48**（本轮新配置、腾讯云签名 TTS + `glm-5.3-flash` + 裸 MP3 `fff348c4`），**不是 2026-11-09 实测、不是旧配置基线**；旧配置历史基线为 34/34。
 
 附带的强制条件（不得豁免）：
 
@@ -29,11 +30,12 @@
 4. 未接真实模型、无真实儿童样本，不得据此做任何教学有效性宣称
 5. M2 才能给出完整 L1–L3 动态升级、阈值标定与稳定迁移证据链
 6. **【2026-11-09 修订】**单轮 1—2 秒目标当前未达标，不得宣称实时语音体验达标；**7.0s 仅为 QA 自设 Canary 预警线，不是受控文档中的设计 SLA**；计时口径未定义（N7 定义债，见 §9.1）
+7. **【2026-11-09 补充】**修订后脚本 live 全量重跑 23 PASS / 21 FAIL、未达成全 PASS，不作通过验收 / 全绿结论；在有历史用量的库上无法复现 live 48/48，登记为残余风险（见 §9.6、live 报告 §8.15）
 
-> **本轮补充（2026-11-09，收敛口径）**：本轮仅为**验证入口的配置变更**——TTS 切换为腾讯云 `TextToVoice`「自然语言 / 超自然大模型 1.0」档（`VoiceType=502001`）、LLM 切换为智谱 `glm-5.3-flash`（`reasoning_effort:low` + `LLM_MIN_MAX_TOKENS=256`），ASR 保持硅基流动 `FunAudioLLM/SenseVoiceSmall`、发音评估保持 `mock_pronunciation`；不是供应商正式选型，不作通过验收 / 实时达标 / 零成本结论。
-> 详见 [`docs/M1-live-API-report.md`](./M1-live-API-report.md)：live 端到端 **PASS=48 / FAIL=0**、全量单测 **51/51**、build / typecheck 均 EXIT=0；Mock 回归 15/15 为旧记录、本轮未复跑（未验证）。
-> 历史基线（2026-11-07 首版：34/34、ASR 9.0—11.5 秒、TTS 3.2—4.7 秒、glm-4-flash + 硅基 TTS 带 ID3 音频）与本轮新配置**不可直接比较**，已由本报告 §9 与 live 报告 §4 的本轮数据取代。
-> `pricingStatus=unpriced` / `costCny=0` 表示未接价格表、不表示零成本；资源包为已付费 / 预付额度，不是免费；不同模型 / 音色档位资源包分别抵扣。
+> **本轮补充（2026-11-09，收敛口径）**：本轮仅为**验证入口的配置变更**——TTS 切换为腾讯云 `TextToVoice`「自然语言 / 超自然大模型 1.0」档（`VoiceType=502001`）、LLM 切换为智谱 `glm-5.3-flash`（策略与取值全部由 `.env` 注入），ASR 保持硅基流动 `FunAudioLLM/SenseVoiceSmall`、发音评估保持 `mock_pronunciation`；不是供应商正式选型，不作通过验收 / 实时达标 / 零成本结论。
+> **48/48 措辞**：`PASS=48 / FAIL=0` 是 2026-11-07 21:25:22 修订前脚本、**本轮新配置**的实测快照（结果文件 `tools/_live_results.json`，备份 `tools/_live_results_20261107_snapshot.json`），不是 2026-11-09 实测，也不是旧配置历史基线（旧基线是 34/34）。
+> **23/21 措辞**：修订后脚本 live 全量重跑 **23 PASS / 21 FAIL**（结果文件 `tools/_live_results_20261109_head_contract.json`），未达成全 PASS；失败根因全部来自 `main` 推进到 `188d369` 之后的契约变化，与本轮 9 文件无关，详见 §9.6。
+> 数字分层：纯单测 70/70、根 `npm test` 三种条件并列（(a) 新启动 mock 后端进程 + DB/Redis 注入 64 tests / 64 pass / 0 fail / EXIT 0 本轮最终结论；(b) 同一 3100 进程内重复跑 64/63/1 属测试隔离 / 进程状态污染；(c) 无 `DATABASE_URL` 注入 64/63/1 属环境注入缺失；(b)(c) 均非代码回归）、代码提交 `0fe159b` 的 CI run `42593265380` `completed / success`（文档提交的新 run 结论待补）、`51/51` 与 Mock 历史 15/15 为历史留档（`verify_m1_loop.sh` 含 15 条 `ok()` 断言，当前 HEAD 实跑 6 PASS / 9 FAIL，历史 15/15 属旧 HEAD）。`pricingStatus=unpriced` / `costCny=0` 表示未接价格表、不表示零成本；资源包为已付费 / 预付额度，不是免费；不同模型 / 音色档位资源包分别抵扣。
 > Go/No-Go 的「有条件通过（仅限 M1 原型范围）」为历史结论，本轮不升级、不作通过验收结论。
 
 ---
@@ -83,6 +85,8 @@
 
 ### 4.1 五动作闭环端到端验证：`PASS=15 / FAIL=0`
 
+> **历史基线（2026-11-07 M1 原型验收）**：本节 15/15 为当时的历史结果；当前 HEAD 同一 `tools/verify_m1_loop.sh` 照原样跑为 **6 PASS / 9 FAIL**（见 §9.6），不作本轮结论。
+
 脚本：`tools/verify_m1_loop.sh`（工作区工具目录，非仓库文件）
 
 | # | 检查项 | 结果 |
@@ -107,6 +111,8 @@
 | 4 | `method_phoneme_focus` | 0.39 |
 
 ### 4.2 单元测试：28 项全部通过
+
+> **历史基线**：本节 28 项为 2026-11-07 历史单测口径；本轮纯单测为 **70/70**（见 §9.6）。
 
 | 套件 | 用例 | 结果 |
 | --- | --- | --- |
@@ -206,7 +212,7 @@ npx tsx src/main.ts                  # :3100
 # 4) 单测与端到端
 npx tsx --test packages/skill-graph/test/mastery.test.ts \
                 packages/model-router/test/router.test.ts
-bash tools/verify_m1_loop.sh        # 期望 PASS=15 FAIL=0
+bash tools/verify_m1_loop.sh        # 历史期望 PASS=15 FAIL=0；当前 HEAD 为 6 PASS / 9 FAIL
 python tools/measure_latency.py
 
 # 5) Web 实验台
@@ -258,6 +264,8 @@ Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，
 
 即：Android 最小音频原型**已在 GitHub Actions 上真实编译出 APK**（不只是本地配置自检）；CI 在干净的无数据库、无密钥环境中完整跑通安装、Prisma 生成、7 个 workspace 构建与类型检查、Web 生产构建、28 项单测。
 
+> **本轮 CI 口径（2026-11-09）**：本轮第 1 个代码提交 `0fe159b`（6 个代码 / 配置 / 测试文件）已推送 `main`，触发 CI run `42593265380` / sha `0fe159b2` / `completed / success`、创建于 `2026-11-09T09:25:06Z`、更新于 `09:27:14Z`、链接 `https://github.com/25283531/ai-language-growth/actions/runs/42593265380`，job `build-and-test` `completed / success`。**注意边界**：该 run 只对应代码提交，覆盖 build / typecheck / 单测 / mock 集成用例，**不覆盖 live 全量端到端**（live 仍 23 PASS / 21 FAIL）；第 2 个仅文档提交推送后会另触发一个新 run，其结论待补，请写「文档提交的 CI run 待补」而不是笼统「本轮 CI 已全绿」。历史 CI run id `42565511080`、sha `188d369b` 及同批 `8a1bc53`、`b7bf54c` success 仍只作基线留档，不写成本轮通过、也不写「CI run 链接缺失」。
+
 ### 8.4 覆盖演进与剩余验证缺口
 
 - 首轮 `ci.yml` 只跑 `typecheck`、未跑 Web 生产构建，已在 `29e42ec` 补入 `Build web workbench` 步骤，对应 CI run `42354638770` 12 步 success，**缺口已闭合**。
@@ -267,14 +275,14 @@ Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，
 
 ## 9. 本轮收敛口径补充（2026-11-09）
 
-> 本轮性质：**验证入口的配置变更**（TTS 腾讯云自然语言档 + LLM 智谱 glm-5.3-flash），非供应商正式选型、非达标 / 实时 / 免费 / 通过验收结论。以下为定义债、发布前置、残余风险与未验证项的登记；历史基线数据（2026-11-07 首版）仅作留档，不与本轮新配置直接比较。
+> 本轮性质：**验证入口的配置变更**（TTS 腾讯云自然语言档 + LLM 智谱 glm-5.3-flash），非供应商正式选型、非达标 / 实时 / 免费 / 通过验收结论，不作「全绿 / 全部通过」宣称。以下为定义债、发布前置、残余风险、实测数据与未验证项的登记；历史基线数据（2026-11-07 首版旧配置 34/34）仅作留档，不与本轮新配置直接比较。
 
 ### 9.1 7.0s 性质与 N7 定义债
 
 - 任务书只写「单轮语音交互目标 1—2 秒，须实测并记录」，**未定义首包 / 端到端 / 往返计时口径**。
 - 项目自选 `/turn` 端到端完整响应到达作为计时口径。
 - **7.0s 是 QA 自设 Canary 预警线，不是受控文档中的设计 SLA**；其性质与授权来源未书面确认，本轮只登记为 QA 自设预警线，不作已豁免结论。
-- 本轮 `/turn` 端到端：普通作答 640ms、提问回合 5,660 / 5,523ms，**1—2 秒目标未达标**。
+- 2026-11-07 21:25:22 修订前脚本快照 `/turn` 端到端：普通作答 640ms、提问回合 5,660 / 5,523ms，**1—2 秒目标未达标**。
 - 旧基线（glm-4-flash + 硅基 TTS + 带 ID3 音频）与新配置不可直接比较。
 - **N7 登记：计时口径未定义，列为定义债**，待用户书面确认后补入 `DECISIONS.md`（见附录 A.1）。
 
@@ -282,9 +290,16 @@ Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，
 
 约束二边界（只禁厂商名 / 模型名 / 音色名三类字面值，还是放宽到任何厂商专属标识）**尚未定案**；评审建议把协议常量与厂商值分层，但**不得写成已决定**。登记为定义债，待用户确认后补入 `DECISIONS.md`（见附录 A.1）。
 
-### 9.3 N27 发布前置（修复中 / 待回归）
+- **实现侧自律 ≠ N13 裁定**：本轮 `config.ts` 把 `reasoning_effort` / `low` / `thinking` 等字段名与取值移出代码，是实现侧为保住「配置层一键回滚」自愿采取的更严格做法，不是对约束二边界的裁定；#13 只裁决 N27 工程策略，不裁 N13。文档描述本实现写「本实现把字段名与取值全部移到 .env，属实现侧选择」，不写「约束二已放宽 / 已收紧」「代码零厂商专属标识已达成」这类会被读成边界已裁定的表述。
+- **`.env.example` 合规口径**：`deploy/docker/.env.example` 是配置示例，供应商相关取值本就应只出现在配置示例与部署编排中，属正确落点；按约束二窄解释（只禁厂商名 / 模型名 / 音色名三类字面值）通用协议字段名与枚举值不违规；但 N13 是否放宽到「任何厂商专属标识」仍未定案，故口径为「**当前按窄解释允许，边界待书面裁决**」，不得写成已确认合规。
 
-`LLM_EXTRA_BODY_KV` / `LLM_MIN_MAX_TOKENS` 缺失或空串时启动期 fail-fast 不完整，属**潜在故障路径**，不是当前运行时状态（当前实测配置是 `reasoning_effort:low` + `LLM_MIN_MAX_TOKENS=256`）。本轮已补 fail-fast 与 **7 条负向用例，待独立回归确认**，结论不提前写实；作为发布前置项跟踪。
+### 9.3 N27 发布前置（代码侧已闭合 / 验证侧已实跑，未全部闭合）
+
+`LLM_EXTRA_BODY_KV` / `LLM_MIN_MAX_TOKENS` 缺失或空串时启动期 fail-fast 不完整，属**潜在故障路径**，不是当前运行时状态。
+
+- **代码侧已闭合**：`config.ts` 启动期 fail-fast 与 `llm-adapter.test.ts` 的 7 条负向用例已落地；本实现把字段名与取值全部移到 `.env`，属实现侧选择，代码只保留通用业务字段保护，policy 本身必需以防漏配，`LLM_EXTRA_POLICY=none` 即配置层一键回滚（键清单见 §9.7）。
+- **验证侧**：本机纯单测 **70 / 70 PASS**（含 7 条负向用例）；源码级交叉验证 12/12、build / typecheck EXIT=0、根 `npm test` 64/64/0、live 两项配置回显探针 PASS、配置层回滚运行时探针 PASS、代码提交 `0fe159b` 的 CI success——**独立回归与代码提交 CI 已通过**；但 **live 端到端全 PASS 仍未达成（23 PASS / 21 FAIL）**、出站 body 运行时取证仍属 **M2 残余风险**（§9.4）。**不写「N27 已全部闭合」**。
+- 作为发布前置项跟踪。
 
 ### 9.4 残余风险（两维：证据类型 × 来源可信度）
 
@@ -301,12 +316,22 @@ Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，
 | --- | --- | --- | --- |
 | 腾讯云 TTS 502001 可用、2.0 档 `PkgExhausted` | ③ 实现建议 + 对照实验 | B | 档位归因仅为最高置信解释，非官方确认 |
 | `/config/audit` | ③ 实现建议 | C | 只证明配置被读取；不证明出站 body 或档位采纳 |
-| 单测 51 / 51 | ③ 实现建议 | B | 只证明适配器组装逻辑；不证明运行时链路 |
-| 独立裸 HTTP 直连 | ② 官方推导 | C | 只证明上游行为基线；不证明业务链路运行时真实性 |
+| 单测（纯单测 70 / 70；根 `npm test` 三种条件：(a) 64 / 64 / 0 EXIT 0 本轮最终结论、(b) 同进程重复跑 64/63/1 测试隔离缺陷、(c) 无 DB 注入 64/63/1 环境依赖） | ③ 实现建议 | B | 只证明适配器组装逻辑与用例覆盖；不证明运行时链路；(b)(c) 两种 64/63/1 为条件性环境说明、非代码回归，详见 §9.6 |
+| 独立裸 HTTP 直连 | ③ 实现建议（团队自建探测） | C | 团队自建裸调用实验，非官方材料；只证明上游行为基线，不证明业务链路运行时真实性 |
 | 上游档位采纳回显 | —— | —— | 未验证 |
-| 后端 → 上游 `/chat/completions` 出站 body / 原始响应 | —— | —— | **当前后端无 `HttpLlmAdapter`，无落盘通道** |
+| 后端 → 上游 `/chat/completions` 出站 body / 原始响应 | —— | —— | **后端已注册 `HttpLlmAdapter` 并发起调用，但没有出站 body / 原始响应的落盘通道** |
 
-结论：当前后端没有 `HttpLlmAdapter` → 上游 `/chat/completions` 的出站 body / 原始响应落盘通道；`/config/audit` 只证明配置被读取，单测只证明适配器组装逻辑，独立裸 HTTP 直连只证明上游行为基线。M1 默认登记「出站取证」为残余风险；网络层抓包 / 中性结构化日志列 **M2**。
+结论：后端已注册 `HttpLlmAdapter`（`packages/ai-provider-sdk/src/protocol.ts` 定义、`config.ts` 注册表装配，向 `/chat/completions` 发起 fetch），但**没有**把该适配器发出的出站请求 body 与上游原始响应落盘的通道；`/config/audit` 只证明配置被读取，单测只证明适配器组装逻辑，独立裸 HTTP 直连只证明上游行为基线。M1 默认登记「出站取证」为残余风险；网络层抓包 / 中性结构化日志列 **M2**。
+
+**证据效力边界（务必守住）**：凡涉及「回滚后出站 body 不再带推理字段」这类说法，只能写「配置层与适配器组装层证据表明不再注入」，证据来源是 `llm-adapter.test.ts` 的 `HttpLlmAdapter` 请求体断言 + `/config/audit` 的 `extraBodyKeys` 回显；**不得写「运行时出站 body 已取证」**。
+
+**数据源可复核性差异（如实登记）**：
+
+| 数据组 | 落盘结果文件 | 可复核性 |
+| --- | --- | --- |
+| 48/48 端到端快照（2026-11-07 21:25:22） | `tools/_live_results.json`（仓库外），备份 `tools/_live_results_20261107_snapshot.json` | 可按结果文件逐项复核 |
+| 34/34 旧配置历史基线 | **无任何落盘结果文件**，只见于文档叙述 | 无法按结果文件复核 |
+| 延迟拆解（LLM 5,466 / 6,593 / 8,197ms；TTS 669 / 355 / 270ms；外部合计约 6,948ms） | `tools/measure_breakdown.py` 只读凭据、直接 HTTP 探测、**不落盘结果文件**，数字来自会话输出 | 无法按结果文件复核；且不同轮采样不可与 `/turn` 相减（`-1,288ms` 为伪结论） |
 
 ### 9.5 未验证项清单（逐条，一律为「未验证」）
 
@@ -317,12 +342,55 @@ Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，
 5. 401 / 403 负向实测 — 未验证
 6. 上游档位采纳回显 — 未验证
 7. 业务链 `reasoning_content` / `finish_reason` / 原始 `usage` 取证 — 未验证
-8. CI 云端 run 链接 — 未验证
+8. 文档提交的 CI run 结论 — 未验证（代码提交 `0fe159b` 已推送 `main`，CI run `42593265380` / sha `0fe159b2` / `completed / success`、job `build-and-test` success，链接 `https://github.com/25283531/ai-language-growth/actions/runs/42593265380`；该 run 只覆盖 build / typecheck / 单测 / mock 集成用例，**不覆盖 live 全量端到端**（live 仍 23/21）；第 2 个仅文档提交推送后的新 run 结论待补；历史 CI run `42565511080` / `188d369b` 及同批 `8a1bc53`、`b7bf54c` success 仅作仓库基线留档；**不得写成「CI run 链接缺失」，也不得写「本轮 CI 已全绿」**）
 9. 故障注入全量 — 未验证
-10. Mock 回归本轮复跑 — 未验证
+10. Mock 回归在当前 HEAD 的完整通过 — 未验证（当前 HEAD `verify_m1_loop.sh` 6 PASS / 9 FAIL；历史 15/15 为旧 HEAD 结果）
 11. 后端 → 上游出站 body 抓包 — 未验证
+12. 修订后脚本在有历史用量库上的 live 全量通过 — 未验证（当前 23 PASS / 21 FAIL，根因见 §9.6；新残余风险见 live 报告 §8.15）
+13. 回滚后运行时出站 body 取证 — 未验证（只有配置层与适配器组装层证据，见 §9.4、§9.7）
 
-> 以上 11 项一律登记为「未验证」，不得写成通过；Mock 回归 15 / 15 为旧记录、本轮未复跑。
+> 以上 13 项一律登记为「未验证」，不得写成通过。2 项配置回显探针在 11-07 快照零覆盖、在 11-09 重跑中均 PASS（见 §9.6），但只证明配置被读取、不证明出站 body；`51/51` 与 Mock 15/15 均为历史留档。
+
+### 9.6 本轮实测数据、23/21 根因与 CI 口径
+
+**最终数字（2026-11-09 实测）**：
+
+- `npm run build` **EXIT=0**；`npm run typecheck` **EXIT=0**。
+- 纯单测 `npx tsx --test packages/*/test/*.test.ts` **70 / 70 PASS**。
+- 根 `npm test` **三种条件并列（缺一不可）**：(a) **新启动的 mock 后端进程** + 注入 `DATABASE_URL`(15434)/`REDIS_URL`(16381) → **64 tests / 64 pass / 0 fail / EXIT 0**（我方实测，本轮最终结论；三个 workspace 35/35 + 19/19 + 10/10）；(b) **同一 3100 进程内重复跑** → 64/63/1，唯一失败 `m1-api.integration.test.ts:75` 的 `assert.equal(firstSpeech.cached, false)` 实际 `cached=true`，根因 `ai-gateway.service.ts:71` 的 `ttsCache` 是进程内内存 Map、`:273-281` 的 `ttsCacheKey()` 只含 text/teacherSpeed/voiceStyle/pronunciationMode/pauseAfterSentenceMs/voiceIdentity，**不含 learnerId / runId / 供应商 / 协议 / 型号**，测试用固定文本 `Hello from the teacher.` 同进程第二次跑必然命中缓存，属**测试隔离性 / 进程状态污染，不是本轮 N27 / TTS / LLM 代码回归**，CI 的 "Start mock API" 每 run 是全新进程、结构上可过（**转绿条件**：重启 3100 清空内存 Map 后仅跑一次，或给 `ttsCacheKey` 增供应商 / 协议标识 + 测试用唯一文本；本条登记为新的残余风险——测试隔离缺陷）；(c) **无 `DATABASE_URL` 注入** → 64/63/1，失败在 `m1-api.integration.test.ts:29` 的 `prisma.users.create()` 报 `Environment variable not found: DATABASE_URL`，属环境注入缺失。删除此前「唯一 fail 需要 3100 上的 mock 后端」的归因（不准确）。
+- 修订后 `verify_live_apis.py` 的 live 全量重跑 **23 PASS / 21 FAIL**，结果落 `tools/_live_results_20261109_head_contract.json`；11-07 的 48/48 原始证据已备份为 `tools/_live_results_20261107_snapshot.json` 并恢复回 `_live_results.json`。
+- `verify_m1_loop.sh` 照原样在当前 HEAD 跑 **6 PASS / 9 FAIL**（不是历史 15/15）。
+
+**48/48 定性**：`PASS=48 / FAIL=0` 是 2026-11-07 21:25:22 **修订前脚本**的实测快照，**属于本轮新配置**（腾讯云签名 TTS + `glm-5.3-flash` + 裸 MP3 `fff348c4`），不是 2026-11-09 实测、也不是旧配置基线；真正的旧配置历史基线是 34/34（glm-4-flash + 硅基 TTS + 60,415 bytes 带 ID3 头音频）。48/48 与 34/34 不混同，一律用「修订前脚本的实测快照」指 48/48，不用「历史基线 / 旧配置快照」。
+
+**23/21 精确根因，不许笼统写「失败」**：全部来自并发会话把 `main` 推进到 `188d369` 之后的契约变化，与本轮 9 文件无关：
+
+- `/speech/synthesize`、`/speech/recognize`、`/speech/evaluate` 现在强制要求 `X-Speech-Quota-Reservation` + `X-Learner-Id` + 登录态，否则 400「语音请求缺少额度租约或学习者标识」（`speech.controller.ts:114-128`）。
+- `/lessons/:id/turn` 现在强制 `assertLearnerOwnership`，否则 401「请先登录」（`lessons.controller.ts` turn handler）。
+- Model Router 的 `budgetExhausted` 判据含 `dailyUsage.unpricedCalls > 0`（`packages/model-router/src/router.ts:419-422`）；已产生当日未计价调用的库会把 `tts.dynamic_teaching` 压到 L0 `local_rules`，Gateway 再兜底到 `mock_tts`。因此**在有历史用量的库上无法复现 live 48/48**，这是本轮新残余风险，单列（见 live 报告 §8.15）。
+
+**通过项与 2 项配置回显探针**：`/health` 200 `gatewayMode=live`；`/config/audit` 200 `ttsProtocol=signed_json_audio`、`liveServices=[llm,asr,tts]`；**两项新增配置回显探针均 PASS**：`minMaxTokens` 回显 `'256'` 解析值 256、`extraPolicy` 回显 `'required'`。这两项此前在 11-07 的 48 项中零覆盖（逐名称比对：`_live_results.json` 配置审计段 9 项、当前 `verify_live_apis.py:93-129` 共 11 项，多出 `:121` / `:125`，其余名称一一对应；`:125` 的 `extraPolicy` 回显依赖本轮 #13 才引入的 `LLM_EXTRA_POLICY`，11-07 时连被检查对象都不存在），现在有 live 证据；但**仍只证明配置被读取，不证明出站 body 生效**（见 §9.4 证据效力边界）。
+
+**CI 口径**：历史 CI run 可核查——最近一次 id `42565511080`、sha `188d369b`、`completed / success`、创建于 `2026-11-09T05:07:53Z`、链接 `https://github.com/25283531/ai-language-growth/actions/runs/42565511080`，同批 `8a1bc53`、`b7bf54c` 两次 success；**但这三次都对应本轮改动之前的提交**，本轮代码尚未提交推送、本轮 CI run 未触发。口径写「历史 CI run（sha `188d369` 等）success，可作为仓库基线留档；**本轮改动的 CI 结果未验证**，待提交推送后触发新 run 再补」。不得把历史 success 写成本轮通过、也不得写「CI run 链接缺失」。
+
+**单测数字分层并列**：① 纯单测 70/70；② 根 `npm test` 64/63/1（失败项如实列明）；③ 本轮 CI 结果未验证；④ `51/51` 降为历史留档、不作本轮结论；⑤ Mock 回归 15/15 是历史 HEAD 结果、当前 HEAD 6/9。
+
+### 9.7 配置层一键回滚与 Mock 零外部调用证据
+
+**配置层一键回滚（键清单，措辞「只改配置即可，但不是只改一个开关」）**：回滚到非思考型模型需同步改多个 env 键——`LLM_MODEL`（改回非思考型模型）、`LLM_EXTRA_POLICY=none`、清空 / 改写 `LLM_EXTRA_BODY_KV` 与 `LLM_EXTRA_BODY_JSON`（`LLM_MIN_MAX_TOKENS` 可保留任意正整数）。原因：`policy=none` 只跳过 required 校验，**不会隐式丢弃配置里仍写着的 extraBody**；让代码静默吞掉显式配置比多改一个键更难排查。裁决是**不改代码**、由回滚预案写清键清单。本实现把字段名与取值全部移到 `.env`，属实现侧选择，不是对 N13 边界的裁定。
+
+**运行时证据**：以 `LLM_EXTRA_POLICY=none` + `LLM_EXTRA_BODY_KV=` + `LLM_EXTRA_BODY_JSON=` 启动，后端正常 boot（`/health status=ok gatewayMode=live`），`/config/audit` 回显 `extraPolicy='none'`、`extraBodyKeys=[]`、`minMaxTokens='256'`、`liveServices=['llm','asr','tts']`。证明回滚只改配置、不改代码；同时印证 `.env.example` 里关于 `??` 回退到 `LLM_EXTRA_BODY_JSON` 别名的警告是必要的。证据效力按 §9.4：只证明配置层与适配器组装层「不再注入」，不证明运行时出站 body。
+
+**Mock 零外部调用证据**：`/health` `gatewayMode=mock`、`/config/audit` `gatewayMode=mock, liveServices=[]`。补充断言（带登录态 + 额度租约）实测：`/speech/synthesize` → `mock_tts`、`/speech/recognize` → `mock_asr`、`/speech/evaluate` → `mock_pronunciation`，三者 `providerAlias` 全为 `mock_*`。**必须同时写明**：`verify_m1_loop.sh` 本身不自启动后端、不设 `AI_GATEWAY_MODE`、不校验 `providerAlias`、不校验零外部调用，「零外部调用」由上述补充断言证明，脚本本身不校验。
+
+> 裁决撤回的两条不写进文档：①「`config.ts` 注释与实现自相矛盾」——最终 diff 中注释已改为「必需键、允许取值、额外禁止键、以及策略本身全部来自 .env」，矛盾已消除；②「一键回滚需改代码、登记为已知限制」——已被 #13 消除，现在回滚只需改配置（但要同步改多个键，按本节键清单写）。
+
+### 9.8 验证环境与隔离说明
+
+- 主工作区被另一会话的在途 `schema.prisma`（`priority` / `timeoutMs`）+ 未应用迁移污染，共享 Prisma Client 会报 P2022。
+- 本轮验证在 `git worktree` 干净 HEAD + 精确 9 文件上进行，用 `node_modules` 目录联接复用依赖；并只在 worktree 的**已编译 dist**（build 产物、绝不提交）里加了一个验证专用 shim：跳过管理端运行时供应商配置装载。
+- **未修改共享数据库 schema、未应用他方迁移、未改共享 `node_modules`**。
+- 隧道：原目标 `127.0.0.1:5433/6380` 已失效（远端容器不再发布主机端口）；新隧道 `15434→172.19.0.3:5432`（PG，SCRAM-SHA-256 握手通过）、`16381→172.19.0.2:6379`（Redis `+PONG`）。
 
 ---
 
@@ -336,10 +404,10 @@ Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，
 
 ```markdown
 | N7 单轮语音交互计时口径 | 未定义（定义债）：任务书只写「单轮语音交互目标 1—2 秒，须实测并记录」，未定义首包 / 端到端 / 往返计时口径；项目暂自选 `/turn` 端到端完整响应到达 | 由用户确认受控计时口径（首包 / 端到端 / 往返）及对应 SLA 后，按本文件修改规则补入正文 |
-| N13 约束二边界 | 未定案（定义债）：只禁厂商名 / 模型名 / 音色名三类字面值，还是放宽到任何厂商专属标识，尚未定案；评审建议协议常量与厂商值分层，但未决定 | 由用户确认约束二的字面值边界及协议常量 / 厂商值分层方案后，按本文件修改规则补入正文 |
+| N13 约束二边界 | 未定案（定义债）：只禁厂商名 / 模型名 / 音色名三类字面值，还是放宽到任何厂商专属标识，尚未定案；评审建议协议常量与厂商值分层，但未决定 | 由用户确认约束二的字面值边界及协议常量 / 厂商值分层方案后，按本文件修改规则补入正文；若放宽到「任何厂商专属标识」，公开协议常量与协议名（`X-TC-*` 签名头、`TextToVoice`、`tts`、`signed_json_audio` 等）如何处理尚无结论，而签名型适配器必然要写这些常量，边界待书面裁决 |
 ```
 
-（粘贴时只取两行数据，勿重复表头。）
+（粘贴时只取两行数据，勿重复表头。N13 行「当前状态」保持「未定案」，仅「定下来的条件」列补充可核查理由。）
 
 ### A.2 授权债 → 「修订记录」表（新增一行）
 
@@ -356,7 +424,7 @@ Android 产物 artifact：`android-audio-prototype-debug`，**797,681 bytes**，
 ```markdown
 | 2026-11-09 | 工程约定 | 证据分层三档（官方原文 / 官方推导 / 实现建议·团队约定）只管归因；来源可信度 A/B/C/D 为另一正交维度；三档不剥夺团队书面认可的 engineering hard gates 的门槛资格。 |
 | 2026-11-09 | 工程约定 | 价格口径：`pricingStatus=unpriced`、`costCny=0` 表示未接价格表，不表示零成本；资源包为已付费 / 预付额度，不是免费；不同模型 / 音色档位资源包分别抵扣。 |
-| 2026-11-09 | 工程约定 | 出站取证残余风险：当前后端无 `HttpLlmAdapter`，上游 `/chat/completions` 出站 body / 原始响应无落盘通道；M1 默认登记为残余风险，网络层抓包 / 中性结构化日志列 M2。 |
+| 2026-11-09 | 工程约定 | 出站取证残余风险：后端已注册 `HttpLlmAdapter` 并调用上游 `/chat/completions`，但出站 body / 原始响应无落盘通道；M1 默认登记为残余风险，网络层抓包 / 中性结构化日志列 M2。 |
 ```
 
 > 以上均为**待录入**条目，本轮未写入 `DECISIONS.md`；录入前不得当作已确认决策执行。
