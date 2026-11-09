@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
+import { createHash, randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -7,14 +8,15 @@ const runId = process.env.GITHUB_RUN_ID ?? `${Date.now()}`;
 const userId = `ci-m1-user-${runId}`;
 const learnerId = `ci-m1-learner-${runId}`;
 const api = process.env.M1_API_URL ?? 'http://127.0.0.1:3100/api/v1';
+let authHeaders: Record<string, string> = {};
 
 async function request(path: string, body?: unknown, extraHeaders: Record<string, string> = {}) {
   const response = await fetch(`${api}${path}`, {
     ...(body === undefined
-      ? { headers: extraHeaders }
+      ? { headers: { ...authHeaders, ...extraHeaders } }
       : {
           method: 'POST',
-          headers: { 'content-type': 'application/json', ...extraHeaders },
+          headers: { 'content-type': 'application/json', ...authHeaders, ...extraHeaders },
           body: JSON.stringify(body),
         }),
   });
@@ -38,6 +40,15 @@ before(async () => {
       membershipTier: 'free',
     },
   });
+  const rawToken = randomBytes(32).toString('base64url');
+  await prisma.auth_sessions.create({
+    data: {
+      userId,
+      tokenHash: createHash('sha256').update(rawToken).digest('hex'),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    },
+  });
+  authHeaders = { Authorization: `Bearer ${rawToken}` };
 });
 
 after(async () => { await prisma.$disconnect(); });
