@@ -577,6 +577,7 @@ model media_assets {
   sourceProvider String?
   cacheStatus    String   @default("pending") // pending | cached | failed
   cacheError     String?
+    cacheAttemptedAt DateTime?
   createdAt      DateTime @default(now())
 
   @@index([checksum])

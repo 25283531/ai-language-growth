@@ -660,8 +660,14 @@ export class CurriculumAdminController {
     }
     const skillIds = [...new Set(content.activities.flatMap((activity) => activity.skillNodeIds ?? []))];
     if (!skillIds.length) throw new BadRequestException('课程活动没有绑定能力节点，不能发布');
-    const validSkills = await this.prisma.skill_nodes.findMany({ where: { id: { in: skillIds } }, select: { id: true } });
+    // Course packages store stable skill codes. Resolve by code so publication
+    // remains valid even when a deployment uses opaque database IDs.
+    const validSkills = await this.prisma.skill_nodes.findMany({
+      where: { OR: [{ id: { in: skillIds } }, { code: { in: skillIds } }] },
+      select: { id: true, code: true },
+    });
     if (validSkills.length !== skillIds.length) throw new BadRequestException('课程绑定了不存在的能力节点，不能发布');
+    const skillIdByCode = new Map(validSkills.flatMap((skill) => [[skill.id, skill.id], [skill.code, skill.id]]));
     const topicId = draft.topicId || `topic-curriculum-${draft.id}`;
     const published = await this.prisma.$transaction(async (tx) => {
       const unit = await tx.curriculum_units.create({
@@ -706,14 +712,27 @@ export class CurriculumAdminController {
         const imageAssetIds = activity.targetWords
           .map((word) => imageByWord.get(word.toLowerCase()))
           .filter((id): id is string => Boolean(id));
+        const imageAssets = activity.targetWords.flatMap((word) => {
+          const id = imageByWord.get(word.toLowerCase());
+          if (!id) return [];
+          const image = content.vocabulary.find((item) => item.word.toLowerCase() === word.toLowerCase())?.image;
+          return [{
+            id,
+            ref: `/api/v1/media/audio/images/${id}`,
+            ...(image?.url ? { sourceUrl: image.url } : {}),
+            targetWord: word,
+          }];
+        });
+        const skillNodeId = skillIdByCode.get(activity.skillNodeIds[0] ?? '');
+        if (!skillNodeId) throw new BadRequestException(`第 ${index + 1} 个活动绑定了不存在的能力节点`);
         await tx.learning_items.create({
           data: {
-            skillNodeId: activity.skillNodeIds[0]!,
+            skillNodeId,
             itemType: 'curriculum_activity',
             refId: `${unit.id}:${index}`,
             topicId,
             reviewStatus: 'published',
-            content: { ...activity, imageAssetIds, id: `${unit.id}:${index}`, topicId, order: index, m1Scope: false },
+            content: { ...activity, imageAssetIds, imageAssets, id: `${unit.id}:${index}`, topicId, order: index, m1Scope: false },
           },
         });
       }

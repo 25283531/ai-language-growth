@@ -167,6 +167,13 @@ export const teachingActivitySchema = z.object({
   skillNodeIds: z.array(z.string()).min(1),
   /** 涉及的目标词 */
   targetWords: z.array(z.string()).default([]),
+  /** 已发布课程图片的缓存引用；缓存完成后通过服务端地址跨用户复用。 */
+  imageAssets: z.array(z.object({
+    id: z.string(),
+    ref: z.string(),
+    sourceUrl: z.string().url().optional(),
+    targetWord: z.string().optional(),
+  })).default([]),
   /** 英文示范文本 */
   demonstrationText: z.string().nullable().default(null),
   /** 中文引导语 */

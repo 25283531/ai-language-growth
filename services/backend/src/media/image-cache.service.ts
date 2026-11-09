@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const RETRY_COOLDOWN_MS = 60 * 60 * 1000;
+const STALE_DOWNLOAD_MS = 10 * 60 * 1000;
 const IMAGE_DIR = process.env.AI_MEDIA_CACHE_DIR || join(process.cwd(), '.cache', 'media');
 
 @Injectable()
@@ -32,11 +34,28 @@ export class ImageCacheService implements OnModuleInit, OnModuleDestroy {
     this.working = true;
     try {
       const asset = await this.prisma.media_assets.findFirst({
-        where: { kind: 'image', cacheStatus: 'pending', sourceUrl: { not: null } },
+        where: {
+          kind: 'image',
+          sourceUrl: { not: null },
+          OR: [
+            { cacheStatus: 'pending' },
+            {
+              cacheStatus: 'failed',
+              OR: [
+                { cacheAttemptedAt: null },
+                { cacheAttemptedAt: { lte: new Date(Date.now() - RETRY_COOLDOWN_MS) } },
+              ],
+            },
+            { cacheStatus: 'downloading', cacheAttemptedAt: { lte: new Date(Date.now() - STALE_DOWNLOAD_MS) } },
+          ],
+        },
         orderBy: { createdAt: 'asc' },
       });
       if (!asset?.sourceUrl) return;
-      await this.prisma.media_assets.update({ where: { id: asset.id }, data: { cacheStatus: 'downloading' } });
+      await this.prisma.media_assets.update({
+        where: { id: asset.id },
+        data: { cacheStatus: 'downloading', cacheAttemptedAt: new Date() },
+      });
       try {
         const { bytes, extension } = await this.download(asset.sourceUrl);
         const checksum = createHash('sha256').update(bytes).digest('hex');
