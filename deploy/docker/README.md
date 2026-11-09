@@ -11,3 +11,5 @@ The management console requires the administrator account configured in `.env`. 
 For account registration and password recovery, open the admin site's “系统设置” page and save the SMTP server, account, password, sender, and password-reset URL. The password is encrypted in the database and is never returned by the API. `MAIL_DISABLED=true` remains a development-only switch that logs reset links instead of sending mail. The admin membership page shows whether SMTP is ready.
 
 The Compose build uses the relative `/api/v1` path and the Next.js containers proxy it to the internal backend. For a domain deployment, put the user Web and admin console behind the public HTTPS reverse proxy. The Android prototype should use the user Web origin plus `/api/v1`; it should not connect directly to the internal backend port.
+
+课程生成由独立的 `curriculum-generator` 容器提供，包含在同一 Compose 文件中且不对外映射端口。部署时设置 `.env` 中的 `CURRICULUM_GENERATOR_TOKEN`。生成、下载、导入流程见 [`docs/curriculum-generator.md`](../../docs/curriculum-generator.md)。

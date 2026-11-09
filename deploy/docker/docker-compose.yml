@@ -108,6 +108,8 @@ services:
       MEMBER_ASR_DAILY_QUOTA_SECONDS: ${MEMBER_ASR_DAILY_QUOTA_SECONDS:-1800}
       MEMBER_TTS_DAILY_QUOTA_SECONDS: ${MEMBER_TTS_DAILY_QUOTA_SECONDS:-1800}
       MEMBER_PRONUNCIATION_DAILY_QUOTA_SECONDS: ${MEMBER_PRONUNCIATION_DAILY_QUOTA_SECONDS:-1800}
+      CURRICULUM_GENERATOR_URL: http://curriculum-generator:3200
+      CURRICULUM_GENERATOR_TOKEN: ${CURRICULUM_GENERATOR_TOKEN:?CURRICULUM_GENERATOR_TOKEN is required}
     volumes:
       - backenddata:/app/.cache
     healthcheck:
@@ -118,6 +120,26 @@ services:
       start_period: 25s
     networks:
       - alg-net
+
+  curriculum-generator:
+    build:
+      context: ../..
+      dockerfile: services/curriculum-generator/Dockerfile
+    container_name: alg-curriculum-generator
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3200
+      CURRICULUM_PACKAGE_DIR: /app/data/packages
+      BACKEND_INTERNAL_URL: http://backend:3000
+      CURRICULUM_GENERATOR_TOKEN: ${CURRICULUM_GENERATOR_TOKEN:?CURRICULUM_GENERATOR_TOKEN is required}
+    volumes:
+      - curriculum_packages:/app/data/packages
+    networks:
+      - alg-net
+    depends_on:
+      backend:
+        condition: service_healthy
 
   admin-web:
     build:
@@ -157,6 +179,7 @@ volumes:
   pgdata:
   redisdata:
   backenddata:
+  curriculum_packages:
 
 networks:
   alg-net:

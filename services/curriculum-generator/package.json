@@ -1,0 +1,19 @@
+{
+  "name": "@alg/curriculum-generator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "独立课程内容生产服务",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/adm-zip": "^0.5.5",
+    "typescript": "^5.7.2"
+  }
+}

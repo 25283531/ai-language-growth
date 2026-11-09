@@ -36,6 +36,8 @@ export default function CurriculumPage() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [packageFile, setPackageFile] = useState<File | null>(null);
+  const [generationDescription, setGenerationDescription] = useState('');
+  const [generatedPackage, setGeneratedPackage] = useState('');
   const [textbook, setTextbook] = useState({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
   const [draft, setDraft] = useState({ title: '', level: 'pre-A', words: '', textbookId: '', textbookUnitId: '' });
 
@@ -95,6 +97,30 @@ export default function CurriculumPage() {
       setBusy(false);
     }
   }
+  async function generatePackage() {
+    setBusy(true);
+    try {
+      const result = await request('/api/v1/admin/curriculum/generator/generate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: draft.title,
+          level: draft.level,
+          words: draft.words,
+          description: generationDescription,
+          textbook: selectedBook ? {
+            publisher: selectedBook.publisher,
+            publicationYear: selectedBook.publicationYear,
+            grade: selectedBook.grade,
+            edition: selectedBook.edition || undefined,
+          } : undefined,
+        }),
+      });
+      setGeneratedPackage(result.packageId);
+      setMessage('课程包已生成。请下载后导入审核队列，人工审核通过后再发布。');
+    } catch (error) { setMessage(error instanceof Error ? error.message : '课程包生成失败'); }
+    finally { setBusy(false); }
+  }
   async function draftAction(id: string, action: 'generate' | 'submit' | 'approve' | 'reject' | 'publish') {
     setBusy(true);
     try {
@@ -150,6 +176,9 @@ export default function CurriculumPage() {
       </div>
       <label>词表<textarea className="routing-editor" style={{ minHeight: 150 }} value={draft.words} onChange={(e) => setDraft({ ...draft, words: e.target.value })} placeholder={'hello\napple\nbook'} /></label>
       <button disabled={busy || !draft.title || !draft.words.trim()} onClick={() => void createDraft()}>创建课程草稿</button>
+      <label style={{ marginTop: 16 }}>自然语言课程要求<textarea className="routing-editor" style={{ minHeight: 120 }} value={generationDescription} onChange={(event) => setGenerationDescription(event.target.value)} placeholder="例如：面向零基础儿童，围绕校园用品设计由听辨、模仿到日常对话的七阶段课程；每阶段提供可判断掌握情况的活动。" /></label>
+      <button className="secondary" disabled={busy || !draft.title || !draft.words.trim() || !generationDescription.trim()} onClick={() => void generatePackage()}>生成并下载独立课程包</button>
+      {generatedPackage && <a className="doclink" href={`/api/v1/admin/curriculum/generator/packages/${generatedPackage}/download`}>下载刚生成的课程 ZIP</a>}
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
       <div className="panel-head"><div><p className="eyebrow">REVIEW QUEUE</p><h2>审核队列</h2></div></div>

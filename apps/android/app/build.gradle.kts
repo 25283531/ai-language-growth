@@ -12,8 +12,29 @@ android {
         applicationId = "com.alg.languagegrowth"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0-m3"
+        versionName = providers.gradleProperty("appVersionName").orElse("0.0.1").get()
+        versionCode = providers.gradleProperty("appVersionCode").orElse("1").get().toInt()
+    }
+
+    val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
+    val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+    signingConfigs {
+        if (!releaseStoreFile.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            if (!releaseStoreFile.isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     buildFeatures {

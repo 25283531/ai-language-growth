@@ -10,7 +10,9 @@
 
 ## 云端构建
 
-`.github/workflows/android-client.yml` 在变更或手动触发时编译 `assembleDebug` 并上传 APK artifact。仓库不要求开发机安装 Android SDK。
+`.github/workflows/android-client.yml` 在变更或手动触发时编译 APK 并上传 artifact。手动运行时默认版本为 `0.0.1`（version code `1`），可选择 `debug` 或 `release`。
+
+正式发布包需要在 GitHub 仓库 Secrets 配置 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。工作流只在运行器临时目录解码签名文件，不把 keystore、密码或密钥写入仓库。
 M1 runs a parallel minimal Android audio prototype (record / play / slow-speed / upload) to surface browser-vs-Android differences early: permissions, interruption, background playback, Bluetooth, player behaviour.
 
 The Android client talks to the same backend and the same `/lessons/{id}/turn` orchestrator as the web client.

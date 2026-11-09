@@ -1,5 +1,6 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Put, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,6 +37,11 @@ const reviewSchema = z.object({
   action: z.enum(['submit', 'approve', 'reject']),
   reviewer: z.string().trim().min(1).max(120),
   note: z.string().trim().max(2000).optional(),
+});
+const internalModelSchema = z.object({
+  role: z.enum(['small', 'main']),
+  system: z.string().min(1).max(20000),
+  prompt: z.string().min(1).max(50000),
 });
 const curriculumPackageSchema = z.object({
   schemaVersion: z.literal(1),
@@ -92,6 +98,8 @@ type GeneratedLesson = {
     meaningZh: string;
     syllables: string[];
     difficultPhonemes: string[];
+    phrases?: string[];
+    exampleSentences?: string[];
     image?: { url: string; license: string; attribution?: string };
   }>;
   activities: Array<{
@@ -127,6 +135,73 @@ export class CurriculumAdminController {
     this.configs.assertAdminToken(token);
   }
 
+  @Post('internal/model')
+  async internalModel(@Headers('x-curriculum-token') token: string | undefined, @Body() body: unknown) {
+    const expected = process.env.CURRICULUM_GENERATOR_TOKEN;
+    if (!expected || !token || token !== expected) throw new BadRequestException('课程生成服务凭据无效');
+    const parsed = internalModelSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    const decision = await this.router.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan' });
+    const request = {
+      promptKey: parsed.data.role === 'small' ? 'curriculum.generator.enrichment' : 'curriculum.generator.course',
+      promptVersion: 'v1',
+      system: parsed.data.system,
+      messages: [{ role: 'user' as const, content: parsed.data.prompt }],
+      temperature: parsed.data.role === 'small' ? 0.1 : 0.3,
+      maxTokens: parsed.data.role === 'small' ? 1800 : 5000,
+      timeoutMs: parsed.data.role === 'small' ? 15000 : 30000,
+    };
+    const result = parsed.data.role === 'small'
+      ? await this.gateway.smallLlm(request, decision)
+      : await this.gateway.llm(request, decision);
+    return { content: result.content, providerAlias: result.providerAlias, modelAlias: result.modelAlias };
+  }
+
+  @Post('generator/generate')
+  async generatePackage(@Headers('x-admin-token') token: string | undefined, @Body() body: unknown) {
+    this.authorize(token);
+    const generatorUrl = process.env.CURRICULUM_GENERATOR_URL;
+    const generatorToken = process.env.CURRICULUM_GENERATOR_TOKEN;
+    if (!generatorUrl || !generatorToken) throw new BadRequestException('独立课程生成服务尚未配置');
+    const skillNodes = await this.prisma.skill_nodes.findMany({
+      where: { m1Scope: true },
+      orderBy: [{ growthStage: 'asc' }, { code: 'asc' }],
+      take: 80,
+      select: { id: true, code: true, name: true, objective: true },
+    });
+    const response = await fetch(`${generatorUrl.replace(/\/+$/, '')}/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-curriculum-token': generatorToken },
+      body: JSON.stringify({
+        ...(body && typeof body === 'object' ? body as Record<string, unknown> : {}),
+        skillNodes,
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new BadRequestException((result as { message?: string }).message || '课程生成服务调用失败');
+    return result;
+  }
+
+  @Get('generator/packages/:packageId/download')
+  async downloadGeneratedPackage(
+    @Headers('x-admin-token') token: string | undefined,
+    @Param('packageId') packageId: string,
+    @Res() response: Response,
+  ) {
+    this.authorize(token);
+    if (!/^[0-9a-f-]{36}$/i.test(packageId)) throw new BadRequestException('课程包编号无效');
+    const generatorUrl = process.env.CURRICULUM_GENERATOR_URL;
+    const generatorToken = process.env.CURRICULUM_GENERATOR_TOKEN;
+    if (!generatorUrl || !generatorToken) throw new BadRequestException('独立课程生成服务尚未配置');
+    const result = await fetch(`${generatorUrl.replace(/\/+$/, '')}/packages/${packageId}/download`, {
+      headers: { 'x-curriculum-token': generatorToken },
+    });
+    if (!result.ok) throw new BadRequestException('课程包不存在或下载失败');
+    response.setHeader('content-type', 'application/zip');
+    response.setHeader('content-disposition', `attachment; filename="curriculum-${packageId}.zip"`);
+    response.send(Buffer.from(await result.arrayBuffer()));
+  }
+
   @Post('package/import')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024, files: 1 } }))
   async importCurriculumPackage(
@@ -153,6 +228,96 @@ export class CurriculumAdminController {
       raw = JSON.parse(packageText);
     } catch {
       throw new BadRequestException('课程包中的 JSON 格式无效');
+    }
+    if (
+      raw && typeof raw === 'object' &&
+      (raw as Record<string, unknown>).source === 'curriculum-generator'
+    ) {
+      const generated = raw as Record<string, unknown>;
+      const packageId = typeof generated.packageId === 'string' ? generated.packageId : '';
+      const title = typeof generated.title === 'string' ? generated.title : '';
+      const level = typeof generated.level === 'string' ? generated.level : '';
+      const vocabulary = Array.isArray(generated.vocabulary) ? generated.vocabulary : [];
+      const activities = Array.isArray(generated.activities) ? generated.activities : [];
+      if (!packageId || !title || !level || !vocabulary.length || !activities.length) {
+        throw new BadRequestException('AI 课程包缺少标题、等级、词汇或七阶段活动');
+      }
+      const topicId = `generator:${packageId}`.slice(0, 120);
+      const existing = await this.prisma.curriculum_drafts.findFirst({ where: { topicId }, select: { id: true } });
+      if (existing) return { packageId, packageTitle: title, imported: 0, skipped: 1, drafts: [] };
+      const words = vocabulary.flatMap((item) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).word === 'string'
+        ? [(item as Record<string, unknown>).word as string]
+        : []);
+      const skillNodes = await this.prisma.skill_nodes.findMany({
+        where: { m1Scope: true },
+        orderBy: [{ growthStage: 'asc' }, { code: 'asc' }],
+        take: 80,
+        select: { id: true, code: true },
+      });
+      const fallbackSkillId = skillNodes[0]?.id || '';
+      const normalizedActivities = activities.map((item, index) => {
+        const activity = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+        const taskType = typeof activity.taskType === 'string' ? activity.taskType : 'listening_comprehension';
+        const skillNodeIds = Array.isArray(activity.skillNodeIds)
+          ? activity.skillNodeIds.filter((id): id is string => typeof id === 'string')
+          : [fallbackSkillId].filter(Boolean);
+        return {
+          ...activity,
+          taskType,
+          scenario: typeof activity.scenario === 'string' ? activity.scenario : 'object_pic_scene',
+          targetWords: Array.isArray(activity.targetWords) ? activity.targetWords : words.slice(0, 8),
+          teacherUtteranceZh: typeof activity.teacherUtteranceZh === 'string' ? activity.teacherUtteranceZh : '听一听，再试着说出来。',
+          demonstrationText: typeof activity.demonstrationText === 'string' ? activity.demonstrationText : words[0] || '',
+          skillNodeIds,
+          requiresPronunciationAssessment: activity.requiresPronunciationAssessment === true,
+          requiresAsr: activity.requiresAsr === true,
+          assessment: activity.assessment && typeof activity.assessment === 'object'
+            ? activity.assessment
+            : { acceptedImageIds: [], acceptedTexts: words.slice(0, 1), requiredPhrases: [], openResponse: false },
+          difficulty: typeof activity.difficulty === 'number' ? activity.difficulty : Math.min(5, index + 1),
+        };
+      });
+      const content: GeneratedLesson = {
+        title,
+        level,
+        objectives: Array.isArray(generated.objectives) ? generated.objectives.filter((item): item is string => typeof item === 'string') : [],
+        vocabulary: vocabulary.map((item) => {
+          const entry = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+          return {
+            word: String(entry.word || ''),
+            phonetic: String(entry.phonetic || ''),
+            meaningZh: String(entry.meaningZh || ''),
+            syllables: Array.isArray(entry.syllables) ? entry.syllables.map(String) : [],
+            difficultPhonemes: Array.isArray(entry.difficultPhonemes) ? entry.difficultPhonemes.map(String) : [],
+            phrases: Array.isArray(entry.phrases) ? entry.phrases.map(String) : [],
+            exampleSentences: Array.isArray(entry.exampleSentences) ? entry.exampleSentences.map(String) : [],
+          };
+        }),
+        activities: normalizedActivities as GeneratedLesson['activities'],
+        images: Array.isArray(generated.images) ? generated.images as GeneratedLesson['images'] : [],
+      };
+      const draft = await this.prisma.curriculum_drafts.create({
+        data: {
+          title,
+          level,
+          topicId,
+          wordList: words,
+          generatedContent: content as unknown as Prisma.InputJsonValue,
+          status: 'generated',
+          generatedAt: new Date(),
+          createdBy: `generator:${packageId}`,
+        },
+      });
+      await this.prisma.curriculum_review_records.create({
+        data: {
+          draftId: draft.id,
+          action: 'generated',
+          reviewer: `generator:${packageId}`,
+          note: '独立课程生成器生成；已加入人工审核队列，发布前须核对七阶段活动与掌握评判标准。',
+          snapshot: content as unknown as Prisma.InputJsonValue,
+        },
+      });
+      return { packageId, packageTitle: title, imported: 1, skipped: 0, drafts: [{ id: draft.id, title, level }] };
     }
     const parsed = curriculumPackageSchema.safeParse(raw);
     if (!parsed.success) throw new BadRequestException({ message: '课程包结构不符合规范', details: parsed.error.flatten() });
@@ -341,18 +506,37 @@ export class CurriculumAdminController {
     let content = fallback;
     try {
       const decision = await this.router.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan' });
+      let enrichedWords: unknown = words;
+      try {
+        const enrichment = await this.gateway.smallLlm({
+          promptKey: 'curriculum.vocabulary_enrichment',
+          promptVersion: 'v1',
+          system: '你是儿童英语课程素材整理器。只输出 JSON 对象，格式必须是 {"words":[...]}。为每个输入单词补充 IPA 音标、中文释义、音节、常见短语、儿童短句和发音难点；无法确认的图片不要编造。',
+          messages: [{ role: 'user', content: JSON.stringify({ level: draft.level, words }) }],
+          temperature: 0.1,
+          maxTokens: 1200,
+          timeoutMs: 12000,
+        }, decision);
+        const parsedEnrichment = parseJsonObject(enrichment.content);
+        if (parsedEnrichment && Array.isArray(parsedEnrichment.words)) enrichedWords = parsedEnrichment.words;
+      } catch {
+        // Main model below receives the raw words when the lightweight model is unavailable.
+      }
       const result = await this.gateway.llm({
         promptKey: 'curriculum.generate',
         promptVersion: 'm2.1',
         system: [
           '你是儿童英语课程编辑。只输出 JSON，不要 markdown。',
           '为 6—9 岁中国儿童生成可人工审核的课程草稿。',
-          '课程等级必须保留输入 level；每个词包含音标、中文释义、音节、发音难点。',
+          '课程等级必须保留输入 level；每个词包含 IPA 音标、中文释义、音节、发音难点、常见短语和儿童短句。',
           `活动必须使用以下能力节点 ID，不得自行编造：${JSON.stringify(skillNodes)}。活动 taskType/scenario 必须使用系统已支持的值。不能声称孩子已掌握。`,
           '图片只能给出可公开访问且授权明确的网络资源建议，必须填写 url、license、attribution；无法确认时 images 为空。',
           '每个 activity 必须有 assessment：点选题填写 acceptedImageIds；固定文字或句型填写 acceptedTexts 或 requiredPhrases；确实没有固定答案的 free_response 才允许 openResponse=true。没有可验证答案的活动不要声称完成。输出字段：title,level,objectives,vocabulary,activities,images。',
         ].join(''),
-        messages: [{ role: 'user', content: JSON.stringify({ title: draft.title, level: draft.level, words }) }],
+        messages: [{ role: 'user', content: JSON.stringify({ title: draft.title, level: draft.level, words: enrichedWords, sevenStages: [
+          '启蒙与适应', '听力理解与语言反应', '声音辨别与发音形成', '词汇理解与主动表达',
+          '短语与完整句子', '对话与语言组织', '自主日常交流',
+        ] }) }],
         temperature: 0.3,
         maxTokens: 1800,
         timeoutMs: 20000,
