@@ -265,7 +265,14 @@ export class OrchestratorService {
     state.currentReviewScheduleId = session.currentReviewScheduleId;
     state.turnCount = session.turnCount;
     if (session.methodState && typeof session.methodState === 'object') {
-      state.methodLadder = session.methodState as unknown as MethodLadderState;
+      const persistedState = session.methodState as unknown as MethodLadderState & {
+        completedActivities?: string[];
+      };
+      const { completedActivities, ...methodLadder } = persistedState;
+      state.methodLadder = methodLadder as MethodLadderState;
+      state.completedActivities = Array.isArray(persistedState.completedActivities)
+        ? persistedState.completedActivities
+        : [];
     }
     const activityId = session.currentActivityId;
     const activity = activityId
@@ -282,6 +289,12 @@ export class OrchestratorService {
       teacherUtteranceZh: string;
       requiresPronunciationAssessment: boolean;
       requiresAsr: boolean;
+      assessment?: {
+        acceptedImageIds?: string[];
+        acceptedTexts?: string[];
+        requiredPhrases?: string[];
+        openResponse?: boolean;
+      };
     } | null;
 
     // —— 第一步：判断性质（意图识别，L0 规则优先）——
@@ -356,6 +369,10 @@ export class OrchestratorService {
       learnerId: input.learnerId,
       lessonSessionId: input.lessonSessionId,
     });
+    const passiveActivityCompleted = isPassiveActivity(currentActivity!.taskType) &&
+      !input.response.text?.trim() &&
+      !input.response.audioRef &&
+      !input.response.selectedImageId;
 
     // —— 第四步：更新档案（写证据 + 重算状态）——
     const evidence = await this.recordEvidence({
@@ -366,22 +383,32 @@ export class OrchestratorService {
       lessonSessionId: input.lessonSessionId,
     });
 
-    const stateChanges = await this.recomputeStates({
-      learnerId: input.learnerId,
-      activity: currentActivity,
-    });
+    const stateChanges = assessment.evaluated
+      ? await this.recomputeStates({
+          learnerId: input.learnerId,
+          activity: currentActivity,
+        })
+      : [];
 
     if (state.currentReviewScheduleId) {
-      await this.planner.resolveReview({
-        learnerId: input.learnerId,
-        lessonSessionId: input.lessonSessionId,
-        reviewScheduleId: state.currentReviewScheduleId,
-        succeeded: assessment.passed,
-      });
-      state.currentReviewScheduleId = null;
+      if (assessment.evaluated) {
+        await this.planner.resolveReview({
+          learnerId: input.learnerId,
+          lessonSessionId: input.lessonSessionId,
+          reviewScheduleId: state.currentReviewScheduleId,
+          succeeded: assessment.passed,
+        });
+        state.currentReviewScheduleId = null;
+      } else if (passiveActivityCompleted) {
+        await this.planner.releaseReviewClaim({
+          lessonSessionId: input.lessonSessionId,
+          reviewScheduleId: state.currentReviewScheduleId,
+        });
+        state.currentReviewScheduleId = null;
+      }
     }
 
-    if (assessment.passed) {
+    if (assessment.passed && assessment.evaluated) {
       for (const skillNodeId of currentActivity!.skillNodeIds) {
         await this.planner.scheduleInitialReview({
           learnerId: input.learnerId,
@@ -394,32 +421,72 @@ export class OrchestratorService {
     }
 
     // —— 第五步：调整下一次教学（方法阶梯，L0 规则）——
-    const ladder = advanceMethodLadder({
-      passed: assessment.passed,
-      state: state.methodLadder,
-    });
+    const ladder = assessment.evaluated
+      ? advanceMethodLadder({
+          passed: assessment.passed,
+          state: state.methodLadder,
+        })
+      : { state: state.methodLadder, needsEscalation: false };
     state.methodLadder = ladder.state;
 
     if (ladder.needsEscalation) {
       escalationSignals.push('method_already_changed');
     }
-    if (!assessment.passed && state.methodLadder.consecutiveFailures >= 2) {
+    if (assessment.evaluated && !assessment.passed && state.methodLadder.consecutiveFailures >= 2) {
       escalationSignals.push('task_incomplete');
     }
 
-    // —— 第六步：生成语音 ——
+    // —— 第七步：决定是否结束本堂课 ——
+    state.turnCount += 1;
+    const activityCompleted = assessment.evaluated
+      ? assessment.passed
+      : passiveActivityCompleted;
+    if (activityCompleted) {
+      if (!state.completedActivities.includes(currentActivity!.id)) {
+        state.completedActivities.push(currentActivity!.id);
+      }
+      if (assessment.evaluated && assessment.passed) {
+        state.consecutiveSuccesses[currentActivity!.skillNodeIds[0] ?? ''] =
+          (state.consecutiveSuccesses[currentActivity!.skillNodeIds[0] ?? ''] ?? 0) + 1;
+      }
+      state.currentActivityId = null;
+      state.currentReviewScheduleId = null;
+    } else {
+      // 未达标不推进到下一个活动，继续陪练
+    }
+
+    if (activityCompleted) {
+      const nextStep = await this.planner.planNext({
+        topicId: session.topicId,
+        learnerId: input.learnerId,
+        lessonSessionId: input.lessonSessionId,
+        excludeActivityIds: state.completedActivities,
+      });
+      if (nextStep) {
+        state.currentActivityId = nextStep.activity.id;
+        state.currentReviewScheduleId = nextStep.reviewScheduleId;
+      }
+    }
+    const lessonFinished = activityCompleted && state.currentActivityId === null;
+    const outputActivityId = state.currentActivityId ?? currentActivity!.id;
+    const outputIsReview = state.currentActivityId
+      ? Boolean(state.currentReviewScheduleId)
+      : isReviewRound;
+    const outputErrorUnits = state.currentActivityId ? [] : assessment.errorUnits;
+
+    // —— 第六步：生成下一步语音 ——
     const directive = await this.buildDirective({
-      activityId: currentActivity!.id,
+      activityId: outputActivityId,
       learnerId: input.learnerId,
       sessionId: input.lessonSessionId,
       methodState: state.methodLadder,
-      errorUnits: assessment.errorUnits,
-      isReview: isReviewRound,
+      errorUnits: outputErrorUnits,
+      isReview: outputIsReview,
     });
 
     // 普通提问/闲聊已在评估前单独处理；学习回合不额外调用对话模型。
-    let llmInputTokens = 0;
-    let llmOutputTokens = 0;
+    const llmInputTokens = 0;
+    const llmOutputTokens = 0;
     const llmDegradationReasons: string[] = [];
 
     const routingDecision = await this.router.route({
@@ -448,24 +515,14 @@ export class OrchestratorService {
       }),
     );
 
-    // —— 第七步：决定是否结束本堂课 ——
-    state.turnCount += 1;
-    if (!assessment.passed) {
-      // 未达标不推进到下一个活动，继续陪练
-    } else {
-      state.completedActivities.push(currentActivity!.id);
-      state.consecutiveSuccesses[currentActivity!.skillNodeIds[0] ?? ''] =
-        (state.consecutiveSuccesses[currentActivity!.skillNodeIds[0] ?? ''] ?? 0) + 1;
-      state.currentActivityId = null;
-      state.currentReviewScheduleId = null;
-    }
-
-    const lessonFinished = state.completedActivities.length >= 4;
+    const persistedMethodState = Object.assign({}, state.methodLadder, {
+      completedActivities: state.completedActivities,
+    });
     await this.prisma.lesson_sessions.update({
       where: { id: input.lessonSessionId },
       data: {
         turnCount: state.turnCount,
-        methodState: state.methodLadder as unknown as object,
+        methodState: persistedMethodState as unknown as object,
         currentActivityId: lessonFinished ? null : state.currentActivityId,
         currentReviewScheduleId: lessonFinished ? null : state.currentReviewScheduleId,
       },
@@ -479,6 +536,7 @@ export class OrchestratorService {
       assessment: {
         performedPronunciationAssessment: assessment.performedPronunciationAssessment,
         performedAsr: assessment.performedAsr,
+        evaluated: assessment.evaluated,
         score: assessment.score,
         passed: assessment.passed,
         errorUnits: assessment.errorUnits,
@@ -533,7 +591,7 @@ export class OrchestratorService {
       },
       intent,
       lessonFinished,
-      summary: lessonFinished ? '本堂课完成，孩子掌握了本轮练习的目标。' : null,
+      summary: lessonFinished ? '本堂课的可用活动已完成；能力掌握仍以持续的有效评估证据为准。' : null,
     };
 
     // —— 幂等落库 ——
@@ -635,6 +693,7 @@ export class OrchestratorService {
       assessment: {
         performedPronunciationAssessment: false,
         performedAsr: false,
+        evaluated: false,
         score: null,
         passed: false,
         errorUnits: [],
@@ -759,6 +818,7 @@ export class OrchestratorService {
       assessment: {
         performedPronunciationAssessment: false,
         performedAsr: false,
+        evaluated: false,
         score: null,
         passed: false,
         errorUnits: [],
@@ -1120,6 +1180,7 @@ export class OrchestratorService {
       assessment: {
         performedPronunciationAssessment: false,
         performedAsr: false,
+        evaluated: false,
         score: null,
         passed: false,
         errorUnits: [],
@@ -1310,14 +1371,22 @@ export class OrchestratorService {
     activity: {
       taskType: string;
       targetWords: string[];
+      demonstrationText?: string | null;
       requiresPronunciationAssessment: boolean;
       requiresAsr: boolean;
+      assessment?: {
+        acceptedImageIds?: string[];
+        acceptedTexts?: string[];
+        requiredPhrases?: string[];
+        openResponse?: boolean;
+      };
     } | null;
     learnerId: string;
     lessonSessionId: string;
   }): Promise<{
     performedPronunciationAssessment: boolean;
     performedAsr: boolean;
+    evaluated: boolean;
     score: number | null;
     passed: boolean;
     errorUnits: AssessmentRecord extends never ? never : Array<{ unit: string; kind: 'syllable' | 'phoneme' | 'word' | 'pitch' | 'rhythm'; detail: string | null }>;
@@ -1335,6 +1404,7 @@ export class OrchestratorService {
       return {
         performedPronunciationAssessment: false,
         performedAsr: false,
+        evaluated: false,
         score: null,
         passed: false,
         errorUnits: emptyUnits,
@@ -1390,6 +1460,7 @@ export class OrchestratorService {
       return {
         performedPronunciationAssessment: true,
         performedAsr: false,
+        evaluated: true,
         score: result.score,
         passed,
         errorUnits,
@@ -1424,26 +1495,60 @@ export class OrchestratorService {
         }),
       );
 
-      const passed = result.transcript.length > 0 && !result.suspect;
+      const passed = matchesSpeechAnswer({
+        transcript: result.transcript,
+        taskType: input.activity.taskType,
+        targetWords: input.activity.targetWords,
+        demonstrationText: input.activity.demonstrationText,
+        assessment: input.activity.assessment,
+        suspect: result.suspect,
+      });
+      const evaluated = hasTextAnswerConfiguration({
+        taskType: input.activity.taskType,
+        targetWords: input.activity.targetWords,
+        demonstrationText: input.activity.demonstrationText,
+        assessment: input.activity.assessment,
+      });
       return {
         performedPronunciationAssessment: false,
         performedAsr: true,
+        evaluated,
         score: null,
-        passed,
+        passed: evaluated && passed,
         errorUnits: emptyUnits,
         prompted: false,
-        independent: passed,
+        independent: evaluated && passed,
+        thresholdVersion: threshold?.version ?? null,
+      };
+    }
+
+    // 被动听读可以结束活动，但没有作答证据，不得当作通过或掌握。
+    if (isPassiveActivity(input.activity.taskType) &&
+      !input.response.text?.trim() &&
+      !input.response.audioRef &&
+      !input.response.selectedImageId) {
+      return {
+        performedPronunciationAssessment: false,
+        performedAsr: false,
+        evaluated: false,
+        score: null,
+        passed: false,
+        errorUnits: emptyUnits,
+        prompted: false,
+        independent: false,
         thresholdVersion: threshold?.version ?? null,
       };
     }
 
     // —— 点选 / 作答类：本地确定性判定 ——
     if (input.response.selectedImageId) {
-      const passed = Boolean(input.response.selectedImageId);
+      const acceptedImageIds = input.activity.assessment?.acceptedImageIds ?? [];
+      const passed = acceptedImageIds.includes(input.response.selectedImageId);
       return {
         performedPronunciationAssessment: false,
         performedAsr: false,
-        score: passed ? 100 : 0,
+        evaluated: acceptedImageIds.length > 0,
+        score: acceptedImageIds.length > 0 ? (passed ? 100 : 0) : null,
         passed,
         errorUnits: emptyUnits,
         prompted: false,
@@ -1452,12 +1557,44 @@ export class OrchestratorService {
       };
     }
 
-    if (input.response.text) {
-      const passed = input.response.text.trim().length > 0;
+    // 语音任务必须由对应的音频观察完成，不能用键盘文本绕过 ASR/发音评估。
+    if (
+      (input.activity.requiresPronunciationAssessment || input.activity.requiresAsr) &&
+      !input.response.audioRef
+    ) {
       return {
         performedPronunciationAssessment: false,
         performedAsr: false,
-        score: passed ? 90 : 0,
+        evaluated: false,
+        score: null,
+        passed: false,
+        errorUnits: emptyUnits,
+        prompted: false,
+        independent: false,
+        thresholdVersion: threshold?.version ?? null,
+      };
+    }
+
+    if (input.response.text) {
+      const answer = input.response.text.trim();
+      const configured = hasTextAnswerConfiguration({
+        taskType: input.activity.taskType,
+        targetWords: input.activity.targetWords,
+        demonstrationText: input.activity.demonstrationText,
+        assessment: input.activity.assessment,
+      });
+      const passed = matchesTextAnswer({
+        answer,
+        taskType: input.activity.taskType,
+        targetWords: input.activity.targetWords,
+        demonstrationText: input.activity.demonstrationText,
+        assessment: input.activity.assessment,
+      });
+      return {
+        performedPronunciationAssessment: false,
+        performedAsr: false,
+        evaluated: configured,
+        score: configured ? (passed ? 100 : 0) : null,
         passed,
         errorUnits: emptyUnits,
         prompted: false,
@@ -1469,6 +1606,7 @@ export class OrchestratorService {
     return {
       performedPronunciationAssessment: false,
       performedAsr: false,
+      evaluated: false,
       score: null,
       passed: false,
       errorUnits: emptyUnits,
@@ -1487,7 +1625,7 @@ export class OrchestratorService {
     lessonSessionId: string;
   }) {
     const activity = input.activity;
-    if (!activity) return [];
+    if (!activity || !input.assessment.evaluated) return [];
 
     const source = input.assessment.performedPronunciationAssessment
       ? 'pronunciation_api'
@@ -1839,6 +1977,96 @@ function expectedResponseOf(taskType: string): TeachingDirective['expectedRespon
     default:
       return 'answer';
   }
+}
+
+type AssessmentAnswerConfig = {
+  acceptedImageIds?: string[];
+  acceptedTexts?: string[];
+  requiredPhrases?: string[];
+  openResponse?: boolean;
+};
+
+function normalizeAnswer(value: string): string {
+  return value
+    .toLocaleLowerCase('en-US')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function answerCandidates(input: {
+  taskType: string;
+  targetWords: string[];
+  demonstrationText?: string | null;
+  assessment?: AssessmentAnswerConfig;
+}): string[] {
+  const configured = input.assessment?.acceptedTexts ?? [];
+  if (configured.length) return configured.map(normalizeAnswer).filter(Boolean);
+  if (
+    ['word_mimicry', 'pronunciation_drill', 'phrase_assembly'].includes(input.taskType)
+  ) {
+    return input.targetWords.map(normalizeAnswer).filter(Boolean);
+  }
+  if (input.taskType === 'sentence_pattern' && input.demonstrationText?.trim()) {
+    return [normalizeAnswer(input.demonstrationText)].filter(Boolean);
+  }
+  return [];
+}
+
+function hasTextAnswerConfiguration(input: {
+  taskType: string;
+  targetWords: string[];
+  demonstrationText?: string | null;
+  assessment?: AssessmentAnswerConfig;
+}): boolean {
+  return Boolean(
+    input.assessment?.openResponse ||
+    answerCandidates(input).length ||
+    input.assessment?.requiredPhrases?.length,
+  );
+}
+
+function matchesTextAnswer(input: {
+  answer: string;
+  taskType: string;
+  targetWords: string[];
+  demonstrationText?: string | null;
+  assessment?: AssessmentAnswerConfig;
+}): boolean {
+  const normalized = normalizeAnswer(input.answer);
+  if (!normalized) return false;
+  if (input.assessment?.openResponse) return true;
+  const required = (input.assessment?.requiredPhrases ?? []).map(normalizeAnswer).filter(Boolean);
+  if (required.length && required.every((phrase) => containsWholePhrase(normalized, phrase))) return true;
+  const candidates = answerCandidates(input);
+  if (!candidates.length) return false;
+  return candidates.some((phrase) => normalized === phrase);
+}
+
+function containsWholePhrase(answer: string, phrase: string): boolean {
+  return ` ${answer} `.includes(` ${phrase} `);
+}
+
+function isPassiveActivity(taskType: string): boolean {
+  return taskType === 'listening_comprehension' || taskType === 'reading_story';
+}
+
+function matchesSpeechAnswer(input: {
+  transcript: string;
+  taskType: string;
+  targetWords: string[];
+  demonstrationText?: string | null;
+  assessment?: AssessmentAnswerConfig;
+  suspect?: boolean;
+}): boolean {
+  if (input.suspect || !input.transcript.trim()) return false;
+  return matchesTextAnswer({
+    answer: input.transcript,
+    taskType: input.taskType,
+    targetWords: input.targetWords,
+    demonstrationText: input.demonstrationText,
+    assessment: input.assessment,
+  });
 }
 
 /** 极简音节切分（后端不依赖 provider-sdk 的 mock 表）。 */

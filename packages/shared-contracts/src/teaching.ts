@@ -126,6 +126,8 @@ export const turnAssessmentSchema = z.object({
   /** 是否需要语音评估（自由对话不必调发音评估） */
   performedPronunciationAssessment: z.boolean(),
   performedAsr: z.boolean(),
+  /** 是否有足够的回答观察和答案配置完成了任务级评估。 */
+  evaluated: z.boolean().default(false),
   /** 评估得分 */
   score: z.number().min(0).max(100).nullable().default(null),
   /** 任务级通过与否（不等于掌握状态） */

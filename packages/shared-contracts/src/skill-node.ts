@@ -175,6 +175,25 @@ export const teachingActivitySchema = z.object({
   requiresPronunciationAssessment: z.boolean().default(false),
   /** 是否需要 ASR */
   requiresAsr: z.boolean().default(false),
+  /**
+   * 任务答案配置。课程内容由 AI 辅助生成时可以先保存草稿，
+   * 只有配置了可验证答案并通过人工审核后，活动才应发布。
+   */
+  assessment: z.object({
+    /** 点选题允许的图片资源 id；通常第一项是题目要求的正确选项。 */
+    acceptedImageIds: z.array(z.string().trim().min(1)).default([]),
+    /** 文字/ASR 题允许的完整答案（大小写、标点由服务端归一化）。 */
+    acceptedTexts: z.array(z.string().trim().min(1)).default([]),
+    /** 文字/ASR 题必须出现的词组；适合句型填充和开放句型。 */
+    requiredPhrases: z.array(z.string().trim().min(1)).default([]),
+    /** 是否允许任意非空表达；只用于 free_response 等确实没有固定答案的活动。 */
+    openResponse: z.boolean().default(false),
+  }).default({
+    acceptedImageIds: [],
+    acceptedTexts: [],
+    requiredPhrases: [],
+    openResponse: false,
+  }),
   /** 难度 1-3 */
   difficulty: z.number().int().min(1).max(3).default(1),
   /** 该活动的顺序权重 */

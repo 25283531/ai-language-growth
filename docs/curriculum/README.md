@@ -21,7 +21,7 @@ Create textbook editions with publisher, publication year, grade, title, and edi
 3. Review and edit the structured content, then submit it for human review.
 4. An administrator approves or rejects the draft. Only approved drafts can be published.
 
-Publication requires supported activity types, existing skill-node references, and at least one activity. Image resources must include a public source URL and a license string; attribution is stored when provided. The admin must verify source availability and permission before approval.
+Publication requires supported activity types, existing skill-node references, at least one activity, and a task-level assessment rule. Point-selection tasks need `acceptedImageIds`; fixed text or speech tasks need `acceptedTexts` or `requiredPhrases`; genuinely open responses must set `openResponse=true`; pronunciation tasks must declare the pronunciation assessment route. Passive listening/reading may be completed without an answer, but it never creates mastery evidence. Image resources must include a public source URL and a license string; attribution is stored when provided. The admin must verify source availability and permission before approval.
 
 ## Adaptive sequencing
 

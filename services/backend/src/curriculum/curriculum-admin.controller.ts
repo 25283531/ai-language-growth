@@ -66,6 +66,17 @@ const curriculumPackageSchema = z.object({
         teacherPrompt: z.string().trim().min(1).max(500),
         demonstrationText: z.string().max(2000).default(''),
         targetWords: z.array(z.string().trim().min(1).max(100)).min(1).max(30),
+        assessment: z.object({
+          acceptedImageIds: z.array(z.string().trim().min(1)).default([]),
+          acceptedTexts: z.array(z.string().trim().min(1)).default([]),
+          requiredPhrases: z.array(z.string().trim().min(1)).default([]),
+          openResponse: z.boolean().default(false),
+        }).default({
+          acceptedImageIds: [],
+          acceptedTexts: [],
+          requiredPhrases: [],
+          openResponse: false,
+        }),
       })).min(1).max(12),
     })).min(1).max(40),
   })).length(7),
@@ -92,6 +103,12 @@ type GeneratedLesson = {
     skillNodeIds: string[];
     requiresPronunciationAssessment: boolean;
     requiresAsr: boolean;
+    assessment: {
+      acceptedImageIds: string[];
+      acceptedTexts: string[];
+      requiredPhrases: string[];
+      openResponse: boolean;
+    };
     difficulty: number;
   }>;
   images: Array<{ url: string; license: string; attribution?: string }>;
@@ -174,6 +191,7 @@ export class CurriculumAdminController {
             skillNodeIds: [curriculumSkillNodeFor(lesson.taskType)],
             requiresPronunciationAssessment: ['word_mimicry', 'pronunciation_drill'].includes(lesson.taskType),
             requiresAsr: ['sentence_pattern', 'situational_dialogue', 'free_response'].includes(lesson.taskType),
+            assessment: lesson.assessment,
             difficulty: Math.min(5, Math.max(1, Math.ceil((index + 1) / 2))),
           })),
           images: [],
@@ -332,7 +350,7 @@ export class CurriculumAdminController {
           '课程等级必须保留输入 level；每个词包含音标、中文释义、音节、发音难点。',
           `活动必须使用以下能力节点 ID，不得自行编造：${JSON.stringify(skillNodes)}。活动 taskType/scenario 必须使用系统已支持的值。不能声称孩子已掌握。`,
           '图片只能给出可公开访问且授权明确的网络资源建议，必须填写 url、license、attribution；无法确认时 images 为空。',
-          '输出字段：title,level,objectives,vocabulary,activities,images。',
+          '每个 activity 必须有 assessment：点选题填写 acceptedImageIds；固定文字或句型填写 acceptedTexts 或 requiredPhrases；确实没有固定答案的 free_response 才允许 openResponse=true。没有可验证答案的活动不要声称完成。输出字段：title,level,objectives,vocabulary,activities,images。',
         ].join(''),
         messages: [{ role: 'user', content: JSON.stringify({ title: draft.title, level: draft.level, words }) }],
         temperature: 0.3,
@@ -439,6 +457,15 @@ export class CurriculumAdminController {
     if (!draft || draft.status !== 'approved') throw new BadRequestException('只有人工审核通过的课程才能发布');
     const content = draft.generatedContent as unknown as GeneratedLesson | null;
     if (!content?.activities?.length) throw new BadRequestException('课程缺少可发布活动');
+    const invalidActivities = content.activities
+      .map((activity, index) => ({ activity, index }))
+      .filter(({ activity }) => !hasPublishableAssessment(activity))
+      .map(({ index }) => index + 1);
+    if (invalidActivities.length) {
+      throw new BadRequestException(
+        `第 ${invalidActivities.join('、')} 个活动缺少明确评估规则；配置 acceptedTexts、requiredPhrases、acceptedImageIds、语音评估，或将确属被动听读的活动设为纯听读`,
+      );
+    }
     const skillIds = [...new Set(content.activities.flatMap((activity) => activity.skillNodeIds ?? []))];
     if (!skillIds.length) throw new BadRequestException('课程活动没有绑定能力节点，不能发布');
     const validSkills = await this.prisma.skill_nodes.findMany({ where: { id: { in: skillIds } }, select: { id: true } });
@@ -518,6 +545,12 @@ function buildFallbackLesson(title: string, level: string, words: string[], skil
       skillNodeIds: skillNodeId ? [skillNodeId] : [],
       requiresPronunciationAssessment: index % 2 === 1,
       requiresAsr: false,
+      assessment: {
+        acceptedImageIds: index % 2 ? [] : [`img-${word.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`],
+        acceptedTexts: index % 2 ? [word] : [],
+        requiredPhrases: [],
+        openResponse: false,
+      },
       difficulty: 1,
     })),
     images: [],
@@ -542,4 +575,26 @@ function curriculumSkillNodeFor(taskType: string): string {
     free_response: 'LA.COMM.free_talk',
   };
   return nodeByTask[taskType] ?? 'LA.VOCAB.receptive';
+}
+
+function hasPublishableAssessment(activity: GeneratedLesson['activities'][number]): boolean {
+  const hasTextAnswerRule = Boolean(
+    activity.assessment?.acceptedTexts?.length ||
+    activity.assessment?.requiredPhrases?.length ||
+    activity.assessment?.openResponse,
+  );
+  if (activity.taskType === 'image_identification') {
+    return Boolean(activity.assessment?.acceptedImageIds?.length);
+  }
+  if (activity.taskType === 'listening_comprehension' || activity.taskType === 'reading_story') {
+    return Boolean(
+      hasTextAnswerRule ||
+      activity.assessment?.acceptedImageIds?.length ||
+      (!activity.requiresAsr && !activity.requiresPronunciationAssessment),
+    );
+  }
+  return Boolean(
+    hasTextAnswerRule ||
+    activity.requiresPronunciationAssessment,
+  );
 }

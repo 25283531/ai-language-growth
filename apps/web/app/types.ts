@@ -58,6 +58,7 @@ export interface SpeechPayload {
 export interface TurnAssessment {
   performedPronunciationAssessment: boolean;
   performedAsr: boolean;
+  evaluated: boolean;
   score: number | null;
   passed: boolean;
   errorUnits: ErrorUnit[];

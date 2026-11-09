@@ -40,7 +40,7 @@ const TOPICS = [
   { id: 'topic-objects-around', label: '身边物品' },
 ];
 
-const IMAGE_IDS = ['img-apple', 'img-ball', 'img-cat', 'img-dog', 'img-cup'];
+const IMAGE_IDS = ['img-apple', 'img-ball', 'img-cat', 'img-dog', 'img-cup', 'img-hello', 'img-letter-a'];
 
 /**
  * 真实 TTS 返回平台内音频路径，可直接播放；Mock 返回占位引用，不渲染播放器。

@@ -13,25 +13,34 @@ export const TEACHING_AGENTS = {
     mayChangeMastery: false,
   },
   planner: {
-    purpose: 'Choose the next learning objective and explain why it is appropriate.',
+    purpose: 'Select the next eligible published activity from server-filtered candidates and explain the choice.',
     triggers: [
       'lesson_start',
       'activity_completed_when_next_activity_needed',
-      'rule_threshold_after_repeated_failure',
-      'lesson_finish_stage_review',
+      'adaptive_candidate_set_has_multiple_eligible_activities',
+      'lesson_finish_long_term_focus',
     ],
-    taskRoutes: ['llm.learning_plan', 'llm.method_adaptation'],
+    taskRoutes: ['llm.learning_plan'],
     authoritativeInputs: ['published_activities', 'skill_states', 'learning_evidence', 'review_schedule', 'textbook_mapping'],
     outputs: ['candidate_activity_id', 'rationale', 'next_focus_skill_node_ids'],
     mayChangeMastery: false,
+    constraints: [
+      'May only rank activities already filtered by server eligibility rules.',
+      'Repeated failure keeps the current activity and advances the deterministic method ladder; it does not invoke the planner.',
+      'No eligible next activity means the lesson can finish; the planner cannot invent one.',
+    ],
   },
   teacher: {
-    purpose: 'Demonstrate, explain, ask, encourage, correct, and adapt teaching language.',
-    triggers: ['learner_turn_requiring_language_reasoning', 'child_question', 'child_small_talk'],
-    taskRoutes: ['llm.simple_dialogue', 'llm.teaching_explanation', 'llm.method_adaptation'],
+    purpose: 'Respond conversationally to a child question or small talk without changing the active learning task.',
+    triggers: ['child_question', 'child_small_talk'],
+    taskRoutes: ['llm.simple_dialogue'],
     authoritativeInputs: ['current_directive', 'bounded_learner_context', 'teacher_profile'],
-    outputs: ['child_safe_utterance', 'teaching_explanation'],
+    outputs: ['child_safe_utterance'],
     mayChangeMastery: false,
+    constraints: [
+      'The orchestrator handles routine instruction, correction, and deterministic method changes without an LLM call.',
+      'Conversation replies do not assess the active task, write learning evidence, or advance the activity.',
+    ],
   },
   assessment: {
     purpose: 'Produce structured task observations from speech services, task results, and deterministic rules.',
@@ -70,11 +79,11 @@ export const TEACHING_AGENTS = {
 export type TeachingAgentRole = keyof typeof TEACHING_AGENTS;
 
 export const AGENT_INVOCATION_POLICY = {
-  learner_turn: ['teacher_orchestrator', 'teacher_or_small_talk_or_question', 'assessment_only_when_learning_task_requires_it'],
-  lesson_start: ['planner'],
-  activity_completed: ['planner_only_when_next_activity_needed'],
-  repeated_failure: ['teacher_method_ladder', 'planner_after_rule_threshold'],
-  lesson_finish: ['planner_stage_review', 'growth_mentor', 'memory_manager', 'personality_engine'],
+  learner_turn: ['teacher_orchestrator', 'teacher_only_for_question_or_small_talk', 'assessment_only_for_configured_learning_response'],
+  lesson_start: ['planner_for_first_eligible_activity'],
+  activity_completed: ['planner_to_find_next_activity', 'finish_when_no_eligible_activity_remains'],
+  repeated_failure: ['deterministic_method_ladder_only', 'planner_not_invoked_while_current_activity_remains'],
+  lesson_finish: ['growth_mentor', 'memory_manager', 'personality_engine', 'rule_based_long_term_focus'],
   memory_extraction: ['memory_manager'],
   personality_change: ['personality_engine'],
 } as const;
