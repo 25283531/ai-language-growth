@@ -137,17 +137,34 @@ export class LessonsController {
 
 /**
  * 学习者接口。
+ *
+ * 与课程接口使用同一套会话鉴权（AuthService + extractBearerToken）：
+ * 每个路由都必须先解析会话，再校验该 learner 是否属于当前账号，
+ * 列表接口只返回当前账号名下的学习者 —— 儿童档案属于敏感个人信息，
+ * 不允许匿名枚举。（本项目既有鉴权模型不变，这里只是补上遗漏的路由。）
  */
 @Controller('api/v1/learners')
 export class LearnersController {
   constructor(
     @Inject(LearnerModelService) private readonly learnerModel: LearnerModelService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AuthService) private readonly auth: AuthService,
   ) {}
 
+  /** 统一入口：解析会话 + 校验归属，返回当前账号 user id。 */
+  private async authorize(authorization: string | undefined, cookie: string | undefined, learnerId: string) {
+    return this.auth.assertLearnerOwnership(extractBearerToken(authorization, cookie), learnerId);
+  }
+
   @Get()
-  async list() {
+  async list(
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    // 先解析会话：无 cookie / 会话过期 -> 401，绝不返回任何学习者的存在性。
+    const user = await this.auth.resolveSession(extractBearerToken(authorization, cookie));
     return this.prisma.learner_profiles.findMany({
+      where: { userId: user.id, guardianId: user.id },
       select: {
         id: true,
         displayName: true,
@@ -156,11 +173,17 @@ export class LearnersController {
         currentTopic: true,
         createdAt: true,
       },
+      orderBy: { createdAt: 'asc' },
     });
   }
 
   @Get(':id/profile')
-  async profile(@Param('id') id: string) {
+  async profile(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    await this.authorize(authorization, cookie, id);
     const profile = await this.prisma.learner_profiles.findUnique({
       where: { id },
       include: { preferences: true },
@@ -170,7 +193,12 @@ export class LearnersController {
   }
 
   @Get(':id/abilities')
-  async abilities(@Param('id') id: string) {
+  async abilities(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    await this.authorize(authorization, cookie, id);
     const states = await this.learnerModel.abilitySnapshot(id);
     return {
       learnerId: id,
@@ -182,7 +210,13 @@ export class LearnersController {
   }
 
   @Get(':id/evidence')
-  async evidence(@Param('id') id: string, @Query('skillNodeId') skillNodeId?: string) {
+  async evidence(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+    @Query('skillNodeId') skillNodeId?: string,
+  ) {
+    await this.authorize(authorization, cookie, id);
     const rows = await this.prisma.learning_evidence.findMany({
       where: { learnerId: id, ...(skillNodeId ? { skillNodeId } : {}) },
       orderBy: { occurredAt: 'desc' },
@@ -192,7 +226,12 @@ export class LearnersController {
   }
 
   @Get(':id/growth')
-  async growth(@Param('id') id: string) {
+  async growth(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    await this.authorize(authorization, cookie, id);
     const learner = await this.prisma.learner_profiles.findUnique({
       where: { id },
       select: { id: true },

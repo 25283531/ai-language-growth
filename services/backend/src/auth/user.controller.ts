@@ -8,12 +8,19 @@ import {
   Put,
 } from '@nestjs/common';
 import { z } from 'zod';
+import { deriveAvatarLevel, isValidAvatarUrl } from '@alg/shared-contracts';
 import { AuthService, assertPassword, extractBearerToken } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { mapTextbookUnitToSkillNodeIds } from '../curriculum/textbook-skill-mapping';
 
+// avatarUrl 字段名保持不变：允许 http(s):// 外链或 preset:// 本地头像资源标识。
+// preset:// 不是通用 URL，不能用 .url()；不改数据库 schema、不加 migration。
+const avatarUrlSchema = z.string().trim().max(1000).refine(isValidAvatarUrl, {
+  message: 'avatarUrl 必须是 http(s):// 外链或 preset:// 本地头像资源标识',
+});
 const profileSchema = z.object({
   displayName: z.string().trim().min(1).max(80).optional(),
-  avatarUrl: z.string().trim().url().max(1000).nullable().optional(),
+  avatarUrl: avatarUrlSchema.nullable().optional(),
 });
 const passwordSchema = z.object({
   currentPassword: z.string(),
@@ -106,6 +113,10 @@ export class UserController {
       const best = rows.reduce((max, row) => Math.max(max, row.masteryCode), 0);
       return { category, label, stage: best, calibrated: rows.some((row) => row.calibrationStatus === 'calibrated') };
     });
+    // CEFR 参考档位 / 头像解锁档位由后端确定性推导（D-024 约束一：客户端只展示）。
+    // 单调保护取 max(当前 abilities, append-only learning_evidence 历史累计)，
+    // 保证能力状态回落不重新锁定头像；纯函数、不写库、不改 mastery 判定。
+    const avatarLevel = deriveAvatarLevel(abilitiesByCategory, evidence);
     const stats = {
       dictationWords: uniqueItems(succeeded.filter((row) => row.vocabularyDimension === 'use_in_sentence')),
       understoodWords: uniqueItems(succeeded.filter((row) => row.vocabularyDimension === 'heard_identify')),
@@ -133,6 +144,13 @@ export class UserController {
         membershipTier: learner.membershipTier,
       },
       textbook: mapping,
+      // 新增字段（additive）：既有字段一律不变。learner.entryLevel 仍是入学起点 pre_a1，
+      // level 是当前参考档位（仅展示）；avatarTier / unlockedCount 是解锁计数，
+      // 客户端不存解锁状态，也不得自行推导 CEFR。
+      level: avatarLevel.level,
+      avatarTier: avatarLevel.avatarTier,
+      unlockedCount: avatarLevel.unlockedCount,
+      levelProgress: avatarLevel.progress,
       abilities: abilitiesByCategory,
       stats,
       achievements: {
@@ -197,16 +215,23 @@ export class UserController {
     if (!parsed.success) throw new BadRequestException('教材选择无效');
     const textbook = await this.prisma.textbook_catalogs.findUnique({ where: { id: parsed.data.textbookId } });
     if (!textbook) throw new BadRequestException('教材不存在');
-    if (parsed.data.unitId) {
-      const unit = await this.prisma.textbook_units.findFirst({ where: { id: parsed.data.unitId, textbookId: textbook.id } });
-      if (!unit) throw new BadRequestException('教材单元不存在');
-    }
+    const unit = parsed.data.unitId
+      ? await this.prisma.textbook_units.findFirst({ where: { id: parsed.data.unitId, textbookId: textbook.id } })
+      : null;
+    if (parsed.data.unitId && !unit) throw new BadRequestException('教材单元不存在');
+    // 单元 → 能力节点映射由服务端确定性推导（关键词规则，不改 schema）。
+    // 之前这里恒为空数组，等于把「教材同步」变成了空承诺；Planner 现在会真的读它。
     const mappingData = {
       publisher: textbook.publisher,
       grade: textbook.grade,
       version: textbook.edition ?? textbook.title ?? '',
       currentUnit: parsed.data.unitId ?? '',
-      skillNodeIds: [] as never[],
+      skillNodeIds: mapTextbookUnitToSkillNodeIds({
+        unitCode: unit?.unitCode,
+        unitTitle: unit?.title,
+        textbookTitle: textbook.title,
+        grade: textbook.grade,
+      }),
     };
     const existing = await this.prisma.textbook_mappings.findFirst({ where: { learnerId: learner.id } });
     if (existing) {

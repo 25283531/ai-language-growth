@@ -31,6 +31,8 @@ const configInput = z.object({
   credentials: z.record(z.string().max(4096)).default({}),
   enabled: z.boolean(),
   options: z.record(z.unknown()).default({}),
+  // 显式覆盖运行时护栏：仅在管理员确认「该服务将没有启用配置」时使用。
+  force: z.boolean().optional(),
 });
 const benchmarkInput = z.object({
   serviceKind: z.enum(SERVICE_KINDS),
@@ -60,6 +62,14 @@ const pricesInput = z.object({
 
 export type ProviderConfigInput = z.input<typeof configInput>;
 
+/**
+ * 运行时护栏提示。PUT / DELETE 之后 controller 会立即 refreshRuntimeProvider：
+ * 若某服务不再有任何 enabled=true 配置，Gateway 会回落 Mock，在课儿童下一回合会被摘除模型。
+ */
+function runtimeGuardMessage(serviceKind: string, before: number): string {
+  return `${serviceKind.toUpperCase()} 服务仅剩 ${before} 个启用中的模型配置；删除或停用会使运行时 adapter 回落 Mock，影响正在上课的儿童下一回合。请先新增并启用替代配置，或显式传入 force=true 强制继续。`;
+}
+
 export interface PublicProviderConfig {
   id: string;
   serviceKind: ProviderServiceKind;
@@ -74,12 +84,28 @@ export interface PublicProviderConfig {
   credentialConfigured: boolean;
   options: Record<string, unknown>;
   updatedAt: string | null;
+  /** 强制越过运行时护栏时返回，提示对在课会话的影响。 */
+  runtimeNotice?: string;
 }
 
 export interface RuntimeProviderConfig extends PublicProviderConfig {
   serviceKind: ServiceKind;
   apiKey?: string;
   credentials: Record<string, string>;
+}
+
+/** 任务路由对某条模型配置的引用情况，用于管理端删除前的防误删判断。 */
+export interface ProviderRouteReference {
+  taskRoute: string;
+  role: 'primary' | 'fallback';
+  enabled: boolean;
+}
+
+export interface ProviderRoutingReferences {
+  configId: string;
+  serviceKind: ProviderServiceKind;
+  providerAlias: string;
+  references: ProviderRouteReference[];
 }
 
 @Injectable()
@@ -175,10 +201,37 @@ export class ProviderConfigService {
     const credentialsCiphertext = Object.keys(mergedCredentials).length
       ? this.encrypt(mergedCredentials)
       : sameProvider ? existing?.credentialsCiphertext ?? null : null;
-    const row = existing
-      ? await this.prisma.ai_provider_configs.update({
-        where: { id: existing.id },
+    // 护栏与写入放在同一事务里，避免并发下「先查后写」出现窗口。
+    let runtimeForced = false;
+    const row = await this.prisma.$transaction(async (tx) => {
+      const before = await tx.ai_provider_configs.count({
+        where: { serviceKind: value.serviceKind, enabled: true },
+      });
+      const after = before - (existing?.enabled ? 1 : 0) + (value.enabled ? 1 : 0);
+      const wouldDropRuntime = before > 0 && after === 0;
+      if (wouldDropRuntime && !value.force) {
+        throw new BadRequestException(runtimeGuardMessage(value.serviceKind, before));
+      }
+      runtimeForced = wouldDropRuntime && Boolean(value.force);
+      if (existing) {
+        return tx.ai_provider_configs.update({
+          where: { id: existing.id },
+          data: {
+            providerPresetId: preset.id,
+            protocol: preset.protocol,
+            baseUrl: value.baseUrl,
+            modelAlias: value.modelAlias,
+            credentialsCiphertext,
+            enabled: value.enabled,
+            priority: value.priority,
+            timeoutMs: value.timeoutMs,
+            options: value.options as Prisma.InputJsonValue,
+          },
+        });
+      }
+      return tx.ai_provider_configs.create({
         data: {
+          serviceKind: value.serviceKind,
           providerPresetId: preset.id,
           protocol: preset.protocol,
           baseUrl: value.baseUrl,
@@ -189,36 +242,113 @@ export class ProviderConfigService {
           timeoutMs: value.timeoutMs,
           options: value.options as Prisma.InputJsonValue,
         },
-      })
-      : await this.prisma.ai_provider_configs.create({
-        data: {
-        serviceKind: value.serviceKind,
-        providerPresetId: preset.id,
-        protocol: preset.protocol,
-        baseUrl: value.baseUrl,
-        modelAlias: value.modelAlias,
-        credentialsCiphertext,
-        enabled: value.enabled,
-        priority: value.priority,
-        timeoutMs: value.timeoutMs,
-        options: value.options as Prisma.InputJsonValue,
-      },
+      });
     });
     await this.syncModelCatalog(value, row.id);
-    return this.toPublic(row);
+    const publicConfig = this.toPublic(row);
+    if (runtimeForced) {
+      return {
+        ...publicConfig,
+        runtimeNotice: '已强制保存：该服务当前没有启用配置，运行时会回落 Mock，可能影响在课会话。',
+      };
+    }
+    return publicConfig;
   }
 
-  async deleteConfig(id: string) {
+  /**
+   * 删除配置：护栏 + 删除 + 运行时别名清理在同一事务内完成。
+   * syncModelCatalog 会为每个 serviceKind 创建 configured_<kind>_<id> 的
+   * ai_providers / ai_models；此前只有 pronunciation 会停用别名，llm/tts/asr
+   * 会留下仍启用的孤儿行，并被「任务路由」按同一别名继续引用。
+   */
+  async deleteConfig(id: string, force = false) {
     const config = await this.prisma.ai_provider_configs.findUnique({ where: { id } });
     if (!config) throw new BadRequestException('模型配置不存在');
-    await this.prisma.ai_provider_configs.delete({ where: { id } });
-    if (config.serviceKind === 'pronunciation') {
-      await this.prisma.ai_providers.updateMany({
-        where: { alias: `configured_pronunciation_${id}` },
-        data: { enabled: false },
+    let runtimeForced = false;
+    const alias = `configured_${config.serviceKind}_${id}`;
+    await this.prisma.$transaction(async (tx) => {
+      const before = await tx.ai_provider_configs.count({
+        where: { serviceKind: config.serviceKind, enabled: true },
       });
+      const after = before - (config.enabled ? 1 : 0);
+      const wouldDropRuntime = before > 0 && after === 0;
+      if (wouldDropRuntime && !force) {
+        throw new BadRequestException(runtimeGuardMessage(config.serviceKind, before));
+      }
+      runtimeForced = wouldDropRuntime && force;
+      await tx.ai_provider_configs.delete({ where: { id } });
+      const providers = await tx.ai_providers.findMany({
+        where: { alias },
+        select: { id: true },
+      });
+      if (providers.length) {
+        const providerIds = providers.map((item) => item.id);
+        await tx.ai_models.updateMany({
+          where: { providerId: { in: providerIds } },
+          data: { enabled: false },
+        });
+        await tx.ai_providers.updateMany({
+          where: { id: { in: providerIds } },
+          data: { enabled: false },
+        });
+      }
+    });
+    return {
+      id,
+      serviceKind: config.serviceKind as ProviderServiceKind,
+      ...(runtimeForced
+        ? { runtimeNotice: '已强制删除：该服务当前没有启用配置，运行时会回落 Mock，可能影响在课会话。' }
+        : {}),
+    };
+  }
+
+  /**
+   * 只读查询：某条供应商/模型配置是否被任务路由设为首选或备用。
+   *
+   * 路由规则通过 `configured_<serviceKind>_<configId>` 这个 providerAlias 引用配置
+   * （见 syncModelCatalog / 任务路由页面），因此这里按该别名反查 ai_models，
+   * 再比对 ai_task_routes 的 primaryModelId 与 fallbackModelIds。
+   * 不修改路由策略，也不回读任何凭据。
+   */
+  async listRoutingReferences(id: string): Promise<ProviderRoutingReferences> {
+    const config = await this.prisma.ai_provider_configs.findUnique({
+      where: { id },
+      select: { serviceKind: true },
+    });
+    if (!config) throw new BadRequestException('模型配置不存在');
+    const alias = this.providerAlias(config.serviceKind as ServiceKind, id);
+    const models = await this.prisma.ai_models.findMany({
+      where: { provider: { alias } },
+      select: { id: true },
+    });
+    const modelIds = new Set(models.map((model) => model.id));
+    const references: ProviderRouteReference[] = [];
+    if (modelIds.size) {
+      const routes = await this.prisma.ai_task_routes.findMany({
+        select: {
+          taskRoute: true,
+          enabled: true,
+          primaryModelId: true,
+          fallbackModelIds: true,
+        },
+        orderBy: { taskRoute: 'asc' },
+      });
+      for (const route of routes) {
+        if (route.primaryModelId && modelIds.has(route.primaryModelId)) {
+          references.push({ taskRoute: route.taskRoute, role: 'primary', enabled: route.enabled });
+        }
+        const fallbacks = Array.isArray(route.fallbackModelIds) ? route.fallbackModelIds : [];
+        if (fallbacks.some((value) => typeof value === 'string' && modelIds.has(value))) {
+          references.push({ taskRoute: route.taskRoute, role: 'fallback', enabled: route.enabled });
+        }
+      }
     }
-    return { id, serviceKind: config.serviceKind as ProviderServiceKind };
+    return {
+      configId: id,
+      serviceKind: config.serviceKind as ProviderServiceKind,
+      providerAlias: alias,
+      references,
+    };
   }
 
   async listBenchmarks(serviceKind: ServiceKind, configId?: string) {

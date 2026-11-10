@@ -22,6 +22,7 @@ import { teachingActivitySchema } from '@alg/shared-contracts';
 import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { parseSkillNodeIds } from '../curriculum/textbook-skill-mapping';
 import { chooseReviewActivity, nextReviewIntervalDays } from './review-policy';
 
 export interface PlannedStep {
@@ -288,16 +289,51 @@ export class PlannerService {
     return activity.skillNodeIds.includes('LA.COMM.free_talk');
   }
 
+  /**
+   * 能力节点所属的轨。编码三段式 `<track>.<DOMAIN>.<slug>`（D-002）。
+   * 返回 null 表示该编码不属于已知轨（忽略，不参与难度换算）。
+   */
+  private static nodeTrack(skillNodeId: string): 'LA' | 'SE' | null {
+    if (skillNodeId.startsWith('SE.')) return 'SE';
+    if (skillNodeId.startsWith('LA.')) return 'LA';
+    return null;
+  }
+
+  private static bandOfRank(highest: number): number {
+    return highest >= 3 ? 3 : highest >= 2 ? 2 : 1;
+  }
+
+  /**
+   * 活动的难度上限。
+   *
+   * 关键约束（D-002：双轨并行、进度独立）：**按活动自己所属的轨算档**，
+   * 不能所有活动都只看 `LA.*`。此前只取 `LA.*` 节点，导致只挂
+   * `SE.SCHOOL.*` 节点的活动永远算作难度档 1 —— 学校英语轨学到什么程度
+   * 都升不上去，等于用一条主线把另一条锁死。
+   *
+   * 规则：
+   *  - 按轨分组，各轨内取该活动自身目标节点的最高掌握等级换算档位；
+   *  - 活动挂多条轨时取各轨档位的最大值 —— 只要有一条它所属的轨已达标，
+   *    就不该被另一条轨拖住；
+   *  - 该轨还没有任何能力数据时，档位为 1（最低档），保证活动仍可排课。
+   */
   private activityDifficultyBand(
     activity: TeachingActivity,
     states: Record<string, MasteryState>,
     rank: (state: MasteryState) => number,
   ): number {
-    const relevant = activity.skillNodeIds
-      .filter((skillNodeId) => skillNodeId.startsWith('LA.'))
-      .map((skillNodeId) => rank(states[skillNodeId] ?? 'not_exposed'));
-    const highest = Math.max(0, ...relevant);
-    return highest >= 3 ? 3 : highest >= 2 ? 2 : 1;
+    const byTrack = new Map<'LA' | 'SE', number[]>();
+    for (const skillNodeId of activity.skillNodeIds) {
+      const track = PlannerService.nodeTrack(skillNodeId);
+      if (!track) continue;
+      const ranks = byTrack.get(track) ?? [];
+      ranks.push(rank(states[skillNodeId] ?? 'not_exposed'));
+      byTrack.set(track, ranks);
+    }
+    if (!byTrack.size) return 1; // 没有可识别轨的节点：按最低档处理，不阻塞
+    return Math.max(
+      ...[...byTrack.values()].map((ranks) => PlannerService.bandOfRank(Math.max(0, ...ranks))),
+    );
   }
 
   private hasIndependentConversationFoundation(
@@ -350,28 +386,43 @@ export class PlannerService {
     lessonSessionId: string;
     states: Record<string, MasteryState>;
   }): Promise<TeachingActivity> {
-    const fallback = [...input.activities].sort((a, b) => {
-      const masteryRank = (activity: TeachingActivity) => Math.min(
-        ...activity.skillNodeIds.map((id) => masteryCode(input.states[id] ?? 'not_exposed')),
-      );
-      return masteryRank(a) - masteryRank(b) || a.difficulty - b.difficulty || a.order - b.order;
-    })[0]!;
-    if (input.activities.length < 2) return fallback;
+    // 零个或一个候选时不需要排序，也不需要读教材映射（省一次查询）。
+    // 调用方保证候选集非空；这里保持与改造前一致的行为。
+    if (input.activities.length <= 1) return input.activities[0]!;
+
+    // 教材单元 → 能力节点映射（第 3 节「教材同步」的落地出口）。
+    // 只读一次：既用于下面的确定性排序，也作为 LLM 调序的上下文。
+    // 学习者从未选过教材时为空集合，此时行为与引入映射前完全一致。
+    const textbookMapping = await this.prisma.textbook_mappings.findFirst({
+      where: { learnerId: input.learnerId },
+      orderBy: { updatedAt: 'desc' },
+      select: { publisher: true, grade: true, version: true, currentUnit: true, skillNodeIds: true },
+    });
+    const unitSkillNodeIds = parseSkillNodeIds(textbookMapping?.skillNodeIds);
+    const masteryRankOf = (activity: TeachingActivity) => Math.min(
+      ...activity.skillNodeIds.map((id) => masteryCode(input.states[id] ?? 'not_exposed')),
+    );
+    // 教材对齐是「同等薄弱程度下」的次级优先：不覆盖「先补最薄弱能力」的既有规则。
+    const unitAlignedOf = (activity: TeachingActivity) =>
+      activity.skillNodeIds.some((id) => unitSkillNodeIds.includes(id)) ? 0 : 1;
+
+    const fallback = [...input.activities].sort((a, b) =>
+      masteryRankOf(a) - masteryRankOf(b) ||
+      unitAlignedOf(a) - unitAlignedOf(b) ||
+      a.difficulty - b.difficulty ||
+      a.order - b.order,
+    )[0]!;
 
     const decision = await this.router.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan' });
     let result: Awaited<ReturnType<AiGatewayService['llm']>> | null = null;
     try {
-      const [learner, textbook] = await Promise.all([
-        this.prisma.learner_profiles.findUnique({
-          where: { id: input.learnerId },
-          select: { ageGroup: true, entryLevel: true, target: true },
-        }),
-        this.prisma.textbook_mappings.findFirst({
-          where: { learnerId: input.learnerId },
-          orderBy: { updatedAt: 'desc' },
-          select: { publisher: true, grade: true, version: true, currentUnit: true },
-        }),
-      ]);
+      const learner = await this.prisma.learner_profiles.findUnique({
+        where: { id: input.learnerId },
+        select: { ageGroup: true, entryLevel: true, target: true },
+      });
+      const textbook = textbookMapping
+        ? { ...textbookMapping, skillNodeIds: unitSkillNodeIds }
+        : null;
       result = await this.gateway.llm({
         promptKey: 'planner.adaptive_candidate',
         promptVersion: 'm2.1',

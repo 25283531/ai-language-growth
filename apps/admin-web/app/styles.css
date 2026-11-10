@@ -50,6 +50,16 @@ button.secondary { background:#e9efea; color:#365344; padding:12px 14px; }
 .panel footer { display:flex; justify-content:space-between; align-items:center; gap:12px; border-top:1px solid #edf0ed; margin-top:16px; padding-top:18px; }
 .row-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .status { color:#78867d; font-size:11px; line-height:1.5; }
+.status.info { color:#5c6b62; }
+.status.success { color:#1f6b48; }
+.status.warn { color:#8a6518; }
+.status.error { color:#a13b32; }
+.feedback { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; border:1px solid var(--line); border-radius:12px; padding:12px 16px; margin-bottom:18px; font-size:12px; line-height:1.6; white-space:pre-line; }
+.feedback.info { background:#f2f7f3; border-color:#dcebe0; color:#365344; }
+.feedback.success { background:#eaf6ee; border-color:#c9e6d3; color:#1f6b48; }
+.feedback.warn { background:#fdf6e6; border-color:#efdfb8; color:#8a6518; }
+.feedback.error { background:#fdf0ee; border-color:#f0cfc9; color:#9d352c; }
+.feedback button { padding:7px 12px; font-size:11px; }
 .routing-editor { width:100%; min-height:420px; resize:vertical; border:1px solid var(--line); border-radius:9px; padding:14px; color:#26362d; background:#fbfcfb; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
 @media(max-width:780px) { .shell{padding:28px 16px}.topbar{align-items:stretch;flex-direction:column}.token{min-width:0;flex-wrap:wrap}.token input{flex:1}.workspace{grid-template-columns:1fr}.services{grid-template-columns:1fr 1fr}.panel{padding:20px}.fields{grid-template-columns:1fr}.notice{flex-direction:column;gap:4px} }
 .admin-nav{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px;padding:12px 0;border-bottom:1px solid var(--line)}

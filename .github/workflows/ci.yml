@@ -79,14 +79,32 @@ jobs:
         run: npm run typecheck
 
       - name: Unit tests
-        # 包含 Provider 协议适配器的签名向量、配置 fail-fast 与约束二静态守卫
+        # 包含 Provider 协议适配器的签名向量、配置 fail-fast 与约束二静态守卫；
+        # 以及 P0 回归守卫（learners 鉴权 / 教材映射 / 双轨难度档 / 预算熔断 / 家长 Web 端取数鉴权）。
+        #
+        # 必须带 --tsconfig services/backend/tsconfig.json：
+        #   learners-auth / planner-track-band / ai-gateway-budget 会 import 带 Nest 装饰器的模块
+        #   （@Controller / @Injectable / @Inject），而仓库根只有 tsconfig.base.json，未开
+        #   experimentalDecorators，从根目录裸跑 tsx --test 会整体 TransformError：
+        #   "Parameter decorators only work when experimental decorators are enabled"。
+        #   统一加这个参数后，纯函数类用例（skill-graph / model-router / cefr / 静态守卫）也照常通过。
+        #
+        # 注意：m1-api.integration.test.ts 依赖真实 Postgres + 起好的 mock API，
+        # 必须留在下面的 "M1 API flow" 步骤，不要加进本清单。
         run: |
-          npx tsx --test \
+          npx tsx --tsconfig services/backend/tsconfig.json --test \
             services/backend/test/review-policy.test.ts \
             services/backend/test/growth-followup.test.ts \
             services/backend/test/prisma-usage-ledger.test.ts \
+            services/backend/test/learners-auth.test.ts \
+            services/backend/test/textbook-skill-mapping.test.ts \
+            services/backend/test/planner-track-band.test.ts \
+            services/backend/test/ai-gateway-budget.test.ts \
+            services/backend/test/admin-console-static-guard.test.ts \
+            services/backend/test/web-client-auth-guard.test.ts \
             packages/skill-graph/test/mastery.test.ts \
             packages/model-router/test/router.test.ts \
+            packages/shared-contracts/test/cefr.test.ts \
             packages/ai-provider-sdk/test/*.test.ts
 
       - name: Start mock API for M1 integration acceptance

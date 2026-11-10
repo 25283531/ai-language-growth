@@ -1,11 +1,38 @@
+<!-- 儿童向启动图标：暖橙圆底 + 白色圆脸 + 两片嫩叶 + 微笑 + 右上小星星。
+     与 AppDesign.kt / MainActivity.kt 的"小芽 Buddy"图形语言一致；纯矢量，无外部图片依赖。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#E66A55" android:pathData="M54,4A50,50 0,1 0,54 104A50,50 0,1 0,54 4" />
-    <path android:fillColor="#FFFFFF" android:pathData="M26,30L82,30L82,76L26,76Z" />
-    <path android:fillColor="#3478B8" android:pathData="M34,38L74,38L74,43L34,43Z" />
-    <path android:fillColor="#3478B8" android:pathData="M34,49L68,49L68,54L34,54Z" />
-    <path android:fillColor="#176B5B" android:pathData="M34,60L62,60L62,65L34,65Z" />
+
+    <!-- 暖橙圆底（比原 #E66A55 更明亮柔和） -->
+    <path android:fillColor="#F57C4E" android:pathData="M54,4A50,50 0,1 0,54 104A50,50 0,1 0,54 4" />
+    <path android:fillColor="#FFB27A" android:pathData="M54,8A46,46 0,1 0,54 100A46,46 0,1 0,54 8" />
+
+    <!-- 白色圆脸 -->
+    <path android:fillColor="#FFF8F0" android:pathData="M54,22 a34,34 0 1,0 0,68 a34,34 0 1,0 0,-68" />
+
+    <!-- 两片嫩叶 -->
+    <path android:fillColor="#3FAE86" android:pathData="M53,26 C40,10 24,16 30,31 C34,40 46,38 53,26 Z" />
+    <path android:fillColor="#20775A" android:pathData="M55,26 C68,10 84,16 78,31 C74,40 62,38 55,26 Z" />
+
+    <!-- 眼睛 -->
+    <path android:fillColor="#2E3A45" android:pathData="M43,52 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0" />
+    <path android:fillColor="#2E3A45" android:pathData="M58,52 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0" />
+
+    <!-- 腮红 -->
+    <path android:fillColor="#F6A9BE" android:pathData="M35,62 a4.2,2.8 0 1,0 8.4,0 a4.2,2.8 0 1,0 -8.4,0" />
+    <path android:fillColor="#F6A9BE" android:pathData="M65,62 a4.2,2.8 0 1,0 8.4,0 a4.2,2.8 0 1,0 -8.4,0" />
+
+    <!-- 微笑 -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#2E3A45"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M45,65 Q54,76 63,65" />
+
+    <!-- 右上角小星星 -->
+    <path android:fillColor="#FFC24B" android:pathData="M86,15 L88.2,21.4 L94.8,21.8 L89.8,26.3 L91.4,32.8 L86,29.4 L80.6,32.8 L82.2,26.3 L77.2,21.8 L83.8,21.4 Z" />
 </vector>

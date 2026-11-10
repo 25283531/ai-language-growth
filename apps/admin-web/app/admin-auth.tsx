@@ -2,6 +2,31 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 
+/** 管理端请求错误：携带 HTTP 状态码，便于页面区分会话过期与普通失败。 */
+export class AdminApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'AdminApiError';
+  }
+}
+
+function responseMessage(body: unknown, status: number, path: string): string {
+  // /auth/login 的 401 是「账号或密码不正确」，不能被误写成会话过期。
+  if ((status === 401 || status === 403) && !path.startsWith('/auth/')) {
+    return '管理登录已失效，请重新登录管理后台。';
+  }
+  if (body && typeof body === 'object' && 'message' in body) {
+    const message = (body as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+    if (Array.isArray(message)) return message.join('；');
+  }
+  return `请求失败（${status}）`;
+}
+
+/**
+ * 管理端统一请求封装：HttpOnly 会话 Cookie、禁用缓存、统一 !ok 错误处理与 401 识别。
+ * 所有管理页面应通过 adminFetch 调用 /api/v1/admin/*，避免裸 fetch 漏带凭据或缓存旧配置。
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v1/admin${path}`, {
     ...init,
@@ -9,10 +34,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
     cache: 'no-store',
   });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(body && typeof body === 'object' && 'message' in body ? String(body.message) : `请求失败（${response.status}）`);
-  }
+  const body: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) throw new AdminApiError(responseMessage(body, response.status, path), response.status);
   return body as T;
 }
 

@@ -13,6 +13,7 @@ import type {
   EvidenceRow,
   GrowthArchiveResponse,
 } from './types';
+import { authRequest } from './auth-api';
 
 /** 后端已 enableCors，Web 直连；可用 NEXT_PUBLIC_API_BASE 覆盖。 */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api/v1';
@@ -150,14 +151,22 @@ export function synthesize(
   });
 }
 
+/**
+ * 学习者档案类只读接口必须带会话。
+ *
+ * `/api/v1/learners/:id/*` 需要登录态（后端 `LearnersController` 会校验归属，
+ * 匿名一律 401/403）。因此这三个接口走 `authRequest`（自动附加
+ * localStorage 里的 Bearer），而不是裸 `apiRequest`。
+ * 返回类型与调用签名保持不变，调用方无需改动。
+ */
 export const getAbilities = (learnerId: string): Promise<AbilitiesResponse> =>
-  apiRequest<AbilitiesResponse>(`/learners/${encodeURIComponent(learnerId)}/abilities`);
+  authRequest<AbilitiesResponse>(`/learners/${encodeURIComponent(learnerId)}/abilities`);
 
 export const getEvidence = (learnerId: string): Promise<EvidenceRow[]> =>
-  apiRequest<EvidenceRow[]>(`/learners/${encodeURIComponent(learnerId)}/evidence`);
+  authRequest<EvidenceRow[]>(`/learners/${encodeURIComponent(learnerId)}/evidence`);
 
 export const getGrowthArchive = (learnerId: string): Promise<GrowthArchiveResponse> =>
-  apiRequest<GrowthArchiveResponse>(`/learners/${encodeURIComponent(learnerId)}/growth`);
+  authRequest<GrowthArchiveResponse>(`/learners/${encodeURIComponent(learnerId)}/growth`);
 
 export function getUsage(sessionId?: string | null): Promise<UsageSummary> {
   const query = sessionId ? `?lessonSessionId=${encodeURIComponent(sessionId)}` : '';

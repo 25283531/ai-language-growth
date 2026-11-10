@@ -479,6 +479,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     if (!first.result.suspect || request.highQuality) {
       return first.result;
     }
+    // Router 判定 L0（预算熔断）时不得为了「二次高质量识别」把请求升级到付费供应商。
+    if (decision.level === 'L0') {
+      return first.result;
+    }
 
     // suspect：升级到高质量识别
     const upgraded = await this.callWithFallback<AsrResponse>(
@@ -531,6 +535,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
    *   → 外部服务全不可用时保留固定课程和缓存音频，保证课程不中断
    *
    * 最后一步由调用方（编排器）根据 degradation 结果决定是否走离线兜底。
+   *
+   * 预算熔断（Router 返回 level = 'L0'）时本函数只允许执行零成本路径：
+   * 本地规则 / 缓存 / Mock 兜底适配器。绝对不允许回落任何付费供应商。
    */
   private async callWithFallback<T>(
     serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation',
@@ -542,7 +549,22 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const started = Date.now();
     const reasons: string[] = [];
 
-    const candidates = candidateOverride !== undefined
+    // ————— Router 已经判定 L0：本次调用必须零成本 —————
+    // L0 只会在「预算熔断」或「全部供应商失败」时出现。此时唯一正确的执行方式
+    // 是本地规则 + 缓存 + 免费兜底适配器。此前 Gateway 会用自己的
+    // configured_* / mainLlmCandidates 覆盖这个决定，等于把预算熔断绕过去了
+    // （违反铁律一：Gateway 只按 Router 的决策执行，不自己选模型）。
+    const localOnly = decision.level === 'L0';
+    if (localOnly) {
+      reasons.push(`local_only_${decision.strategy}`);
+      this.logger.warn(
+        `${serviceKind} 按 Router 的 L0 决策执行本地兜底（${decision.strategy}），不调用任何付费供应商`,
+      );
+    }
+
+    const candidates = localOnly
+      ? []
+      : candidateOverride !== undefined
       ? candidateOverride
       : serviceKind === 'pronunciation'
       ? this.pronunciationCandidates
@@ -573,17 +595,20 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       }
     }
 
-    // 第二候选：兜底适配器（Mock / 缓存），保证课程不中断
-    const fallback = lastResortAlias ? this.registry.get(serviceKind, lastResortAlias) : undefined;
+    // 第二候选：兜底适配器（Mock / 缓存），保证课程不中断。
+    // L0 时即使调用方没给 lastResortAlias，也只用 Mock（免费），
+    // 不允许回落到任何付费适配器。
+    const fallbackAlias = lastResortAlias ?? (localOnly ? MOCK_PROVIDER_ALIASES[serviceKind] : undefined);
+    const fallback = fallbackAlias ? this.registry.get(serviceKind, fallbackAlias) : undefined;
     if (fallback) {
       try {
         const result = await invoke(fallback);
         return {
           result,
           degraded: true,
-          reasons: [...reasons, `fallback_to_${lastResortAlias}`],
+          reasons: [...reasons, `fallback_to_${fallbackAlias}`],
           effectiveLevel: 'L0',
-          providerAlias: lastResortAlias!,
+          providerAlias: fallbackAlias!,
           latencyMs: Date.now() - started,
         };
       } catch (error) {

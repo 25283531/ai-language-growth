@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminNav } from '../admin-nav';
+import { AdminApiError, adminFetch } from '../admin-auth';
 
 type TeacherProfile = {
   id: string;
@@ -14,6 +15,14 @@ type TeacherProfile = {
   };
 };
 
+type PersonaHistory = {
+  id: string;
+  version: number;
+  reason: string;
+  createdAt: string;
+  changeContent: string;
+};
+
 type Memory = {
   id: string;
   memoryType: string;
@@ -23,114 +32,219 @@ type Memory = {
   expiresAt: string | null;
 };
 
-function apiRoot() {
-  return '';
+type LoadState = 'loading' | 'ready' | 'error';
+type Tone = 'info' | 'success' | 'error' | 'warn';
+
+function readableError(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 export default function LearningPage() {
   const [teacher, setTeacher] = useState<TeacherProfile | null>(null);
+  // 服务端快照：用于判断表单是否有未保存编辑，刷新不能静默丢弃。
+  const [serverTeacher, setServerTeacher] = useState<TeacherProfile | null>(null);
   const [teacherReason, setTeacherReason] = useState('');
-  const [personaHistory, setPersonaHistory] = useState<Array<{
-    id: string;
-    version: number;
-    reason: string;
-    createdAt: string;
-    changeContent: string;
-  }>>([]);
+  const [personaHistory, setPersonaHistory] = useState<PersonaHistory[]>([]);
   const [learnerId, setLearnerId] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
   const [message, setMessage] = useState('');
+  const [tone, setTone] = useState<Tone>('info');
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [refreshArmed, setRefreshArmed] = useState(false);
+  // 学习记忆是按 learnerId 搜索的交互，不是页面级的自动加载项。
+  const [memorySearched, setMemorySearched] = useState(false);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryError, setMemoryError] = useState('');
+  // 卸载后不再 setState；并发读取只认最后一次。
+  const mountedRef = useRef(true);
+  const loadSeqRef = useRef(0);
+  const sessionExpiredRef = useRef(false);
 
-  async function loadLearningSettings() {
-    const [profileRes, historyRes] = await Promise.all([
-      fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile`),
-      fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile/history`),
-    ]);
-    if (!profileRes.ok || !historyRes.ok) throw new Error('读取教师人格配置失败');
-    setTeacher(await profileRes.json());
-    setPersonaHistory(await historyRes.json());
+  function notify(text: string, nextTone: Tone = 'info') {
+    setMessage(text);
+    setTone(nextTone);
+    if (text.includes('登录已失效')) {
+      sessionExpiredRef.current = true;
+      setSessionExpired(true);
+    }
+  }
+
+  const teacherDirty = Boolean(teacher && serverTeacher && (
+    teacher.style !== serverTeacher.style
+    || JSON.stringify(teacher.adjustable) !== JSON.stringify(serverTeacher.adjustable)
+    || teacherReason.trim().length > 0
+  ));
+
+  /**
+   * 进入页面（以及 AdminAuthGate 确认登录后重新挂载）即自动读取教师人格配置与版本历史，
+   * 不再需要人工点「读取人格配置」。手动刷新按钮保留，但会拦住未保存编辑。
+   */
+  const loadLearningSettings = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    if (mountedRef.current) setLoadState('loading');
+    try {
+      const [profile, history] = await Promise.all([
+        adminFetch<TeacherProfile>('/learning/teacher-profile'),
+        adminFetch<PersonaHistory[]>('/learning/teacher-profile/history'),
+      ]);
+      if (!mountedRef.current || seq !== loadSeqRef.current) return;
+      setTeacher(profile);
+      setServerTeacher(profile);
+      setPersonaHistory(Array.isArray(history) ? history : []);
+      setTeacherReason('');
+      setRefreshArmed(false);
+      sessionExpiredRef.current = false;
+      setSessionExpired(false);
+      setLoadState('ready');
+      notify('已自动读取教师人格配置与版本历史。', 'success');
+    } catch (error) {
+      if (!mountedRef.current || seq !== loadSeqRef.current) return;
+      const text = readableError(error, '读取教师人格配置失败');
+      const expired = error instanceof AdminApiError && (error.status === 401 || error.status === 403);
+      sessionExpiredRef.current = expired;
+      setSessionExpired(expired);
+      setLoadState('error');
+      notify(text, 'error');
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => { void loadLearningSettings(); }, []);
+
+  // 会话过期后重新登录或切回本页时自动重试，不留在旧表单上让人继续保存。
+  useEffect(() => {
+    const retryAfterReauth = () => {
+      if (document.visibilityState !== 'hidden' && sessionExpiredRef.current) void loadLearningSettings();
+    };
+    window.addEventListener('focus', retryAfterReauth);
+    document.addEventListener('visibilitychange', retryAfterReauth);
+    return () => {
+      window.removeEventListener('focus', retryAfterReauth);
+      document.removeEventListener('visibilitychange', retryAfterReauth);
+    };
+  }, [loadLearningSettings]);
+
+  function refreshSettings() {
+    if (teacherDirty && !refreshArmed) {
+      setRefreshArmed(true);
+      notify('教师风格有未保存修改；再次点击「刷新」将放弃这些修改，或先点「保存新版本」。', 'warn');
+      return;
+    }
+    setRefreshArmed(false);
+    void loadLearningSettings();
   }
 
   async function saveTeacher() {
-    if (!teacher || !teacherReason.trim()) return;
+    if (!teacher || !teacherReason.trim() || busy) return;
     setBusy(true);
     try {
-      const response = await fetch(`${apiRoot()}/api/v1/admin/learning/teacher-profile`, {
+      const saved = await adminFetch<TeacherProfile>('/learning/teacher-profile', {
         method: 'PUT',
-        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           adjustable: teacher.adjustable,
           style: teacher.style,
           reason: teacherReason.trim(),
         }),
       });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.message ?? `保存失败 (${response.status})`);
-      setTeacher(body);
-      setTeacherReason('');
-      await loadLearningSettings();
-      setMessage('教师风格已保存并记录版本。');
+      if (mountedRef.current) {
+        setTeacher(saved);
+        setServerTeacher(saved);
+        setTeacherReason('');
+        setRefreshArmed(false);
+        await loadLearningSettings();
+        notify('教师风格已保存并记录版本。', 'success');
+      }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '保存教师风格失败');
+      notify(readableError(error, '保存教师风格失败'), 'error');
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   }
 
   async function rollbackPersona(historyId: string) {
-    const response = await fetch(
-      `${apiRoot()}/api/v1/admin/learning/teacher-profile/rollback/${encodeURIComponent(historyId)}`,
-      { method: 'PUT' },
-    );
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.message ?? `回滚失败 (${response.status})`);
-    await loadLearningSettings();
-    setMessage('教师风格已回滚并生成新版本。');
+    if (busy) return;
+    setBusy(true);
+    try {
+      await adminFetch<unknown>(`/learning/teacher-profile/rollback/${encodeURIComponent(historyId)}`, { method: 'PUT' });
+      await loadLearningSettings();
+      notify('教师风格已回滚并生成新版本。', 'success');
+    } catch (error) {
+      notify(readableError(error, '回滚失败'), 'error');
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
   }
 
   async function loadMemories() {
-    const response = await fetch(
-      `${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories`,
-      {},
-    );
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.message ?? `读取记忆失败 (${response.status})`);
-    setMemories(body);
+    if (!learnerId.trim() || memoryLoading) return;
+    setMemoryLoading(true);
+    setMemoryError('');
+    try {
+      const body = await adminFetch<Memory[]>(
+        `/learning/learners/${encodeURIComponent(learnerId.trim())}/memories`,
+      );
+      if (mountedRef.current) {
+        setMemories(Array.isArray(body) ? body : []);
+        setMemorySearched(true);
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setMemoryError(readableError(error, '读取学习记忆失败'));
+        setMemorySearched(true);
+      }
+    } finally {
+      if (mountedRef.current) setMemoryLoading(false);
+    }
   }
 
   async function deleteMemory(memoryId: string) {
-    const response = await fetch(
-      `${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories/${encodeURIComponent(memoryId)}`,
-      { method: 'DELETE' },
-    );
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.message ?? `删除失败 (${response.status})`);
-    await loadMemories();
-    setMessage('记忆已删除。');
+    if (busy) return;
+    setBusy(true);
+    try {
+      await adminFetch<unknown>(
+        `/learning/learners/${encodeURIComponent(learnerId.trim())}/memories/${encodeURIComponent(memoryId)}`,
+        { method: 'DELETE' },
+      );
+      await loadMemories();
+      notify('记忆已删除。', 'success');
+    } catch (error) {
+      notify(readableError(error, '删除失败'), 'error');
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
   }
 
   async function saveMemoryEdit() {
-    if (!editingMemory) return;
-    const response = await fetch(
-      `${apiRoot()}/api/v1/admin/learning/learners/${encodeURIComponent(learnerId)}/memories/${encodeURIComponent(editingMemory.id)}`,
-      {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          memoryType: editingMemory.memoryType,
-          content: editingMemory.content,
-          importance: editingMemory.importance,
-          expiresAt: editingMemory.expiresAt,
-        }),
-      },
-    );
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.message ?? `保存失败 (${response.status})`);
-    setEditingMemory(null);
-    await loadMemories();
-    setMessage('记忆已纠正。');
+    if (!editingMemory || busy) return;
+    setBusy(true);
+    try {
+      await adminFetch<unknown>(
+        `/learning/learners/${encodeURIComponent(learnerId.trim())}/memories/${encodeURIComponent(editingMemory.id)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            memoryType: editingMemory.memoryType,
+            content: editingMemory.content,
+            importance: editingMemory.importance,
+            expiresAt: editingMemory.expiresAt,
+          }),
+        },
+      );
+      if (mountedRef.current) setEditingMemory(null);
+      await loadMemories();
+      notify('记忆已纠正。', 'success');
+    } catch (error) {
+      notify(readableError(error, '保存失败'), 'error');
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
   }
 
   return (
@@ -140,29 +254,31 @@ export default function LearningPage() {
         <div>
           <p className="eyebrow">LEARNING SETTINGS</p>
           <h1>学习与记忆</h1>
-          <p className="muted">教师风格、版本历史和学习者长期记忆分开管理。</p>
+          <p className="muted">教师风格、版本历史和学习者长期记忆分开管理。进入页面即自动读取教师人格配置。</p>
         </div>
+        <button className="secondary" type="button" disabled={busy || loadState === 'loading'} onClick={refreshSettings}>
+          {loadState === 'loading' ? '读取中…' : refreshArmed ? '确认放弃修改并刷新' : '重新读取人格配置'}
+        </button>
       </header>
+
+      {sessionExpired && <div className="feedback error" role="alert">管理登录已失效，请重新登录后再操作；重新登录后本页会自动重试。<button className="secondary" type="button" onClick={() => window.location.reload()}>重新登录</button></div>}
+      {message && <div className={`feedback ${tone}`} role="status">{message}</div>}
 
       <section className="panel">
         <div className="panel-head">
           <div>
             <p className="eyebrow">TEACHER PERSONA</p>
             <h2>教师风格</h2>
-            <p className="muted">安全底线固定，不可编辑；风格调整有版本历史，可回滚。</p>
+            <p className="muted">安全底线固定，不可编辑；风格调整有版本历史，可回滚。启用或修改后需点击「保存新版本」才生效。</p>
           </div>
-          {!teacher && (
-            <button
-              className="secondary"
-              onClick={() => void loadLearningSettings().catch((error) => setMessage(error.message))}
-            >
-              读取人格配置
-            </button>
-          )}
         </div>
 
-        {teacher && (
+        {loadState === 'loading' && <p className="status">正在读取教师人格配置与版本历史…</p>}
+        {loadState === 'error' && <div className="panel"><p className="status error">{message || '读取教师人格配置失败'}</p><div className="row-actions" style={{ marginTop: 12 }}><button className="secondary" type="button" onClick={() => void loadLearningSettings()}>重试读取</button>{sessionExpired && <button type="button" onClick={() => window.location.reload()}>重新登录</button>}</div></div>}
+        {loadState === 'ready' && !teacher && <p className="helper">尚无教师人格配置；请点击「重试读取」或先保存一个新版本。</p>}
+        {loadState === 'ready' && teacher && (
           <>
+            {teacherDirty && <p className="helper">有未保存修改；点击「保存新版本」后才会写入服务端。</p>}
             <div className="fields">
               <label>
                 教师风格
@@ -253,13 +369,12 @@ export default function LearningPage() {
                 placeholder="记录为什么调整教师风格"
               />
             </label>
-            <button
-              disabled={!teacherReason.trim() || busy}
-              onClick={() => void saveTeacher()}
-            >
-              保存新版本
-            </button>
+            <div className="row-actions">
+              <button type="button" disabled={!teacherReason.trim() || busy} onClick={() => void saveTeacher()}>保存新版本</button>
+              <button className="secondary" type="button" disabled={busy} onClick={refreshSettings}>刷新配置</button>
+            </div>
             <h3>变更历史</h3>
+            {personaHistory.length === 0 && <p className="helper">尚无变更历史记录。</p>}
             <div className="benchmark-list">
               {personaHistory.map((entry) => (
                 <div className="helper" key={entry.id}>
@@ -267,7 +382,9 @@ export default function LearningPage() {
                   {entry.changeContent.includes('"before"') && (
                     <button
                       className="secondary"
-                      onClick={() => void rollbackPersona(entry.id).catch((error) => setMessage(error.message))}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void rollbackPersona(entry.id)}
                     >
                       回滚到此前配置
                     </button>
@@ -284,7 +401,7 @@ export default function LearningPage() {
           <div>
             <p className="eyebrow">LEARNER MEMORY</p>
             <h2>学习记忆</h2>
-            <p className="muted">仅管理端令牌可纠正或删除长期记忆。</p>
+            <p className="muted">按学习者 ID 搜索，仅管理端令牌可纠正或删除长期记忆。此区不会自动加载：输入学习者 ID 后点击「查询学习记忆」。</p>
           </div>
         </div>
         <div className="fields">
@@ -292,29 +409,27 @@ export default function LearningPage() {
             学习者 ID
             <input
               value={learnerId}
-              onChange={(event) => setLearnerId(event.target.value)}
+              onChange={(event) => { setLearnerId(event.target.value); setMemorySearched(false); }}
               placeholder="从学习者档案中复制 ID"
             />
+            <small>输入学习者 ID 后查询；未输入并按查询前，下方空白不代表加载失败。</small>
           </label>
-          <button
-            className="secondary"
-            disabled={!learnerId}
-            onClick={() => void loadMemories().catch((error) => setMessage(error.message))}
-          >
-            读取学习记忆
-          </button>
+          <div className="row-actions" style={{ alignItems: 'flex-start' }}>
+            <button className="secondary" type="button" disabled={!learnerId.trim() || memoryLoading} onClick={() => void loadMemories()}>
+              {memoryLoading ? '查询中…' : '查询学习记忆'}
+            </button>
+          </div>
         </div>
+        {memoryLoading && <p className="status">正在按学习者 ID 查询长期记忆…</p>}
+        {!memoryLoading && memoryError && <div className="feedback error" role="alert">{memoryError}<button className="secondary" type="button" onClick={() => void loadMemories()}>重试查询</button></div>}
+        {!memoryLoading && !memoryError && !memorySearched && <p className="helper">输入学习者 ID 后查询；此区为按 ID 的搜索型交互，不会随页面自动加载。</p>}
+        {!memoryLoading && !memoryError && memorySearched && memories.length === 0 && <p className="helper">该学习者暂无长期记忆；这是查询后的空结果，不是加载失败。</p>}
         <div className="benchmark-list">
           {memories.map((memory) => (
             <div className="helper" key={memory.id}>
               <strong>{memory.memoryType}</strong> · {memory.content} · 重要度 {memory.importance} · {memory.source}
-              <button className="secondary" onClick={() => setEditingMemory({ ...memory })}>纠正</button>
-              <button
-                className="secondary"
-                onClick={() => void deleteMemory(memory.id).catch((error) => setMessage(error.message))}
-              >
-                删除
-              </button>
+              <button className="secondary" type="button" onClick={() => setEditingMemory({ ...memory })}>纠正</button>
+              <button className="secondary" type="button" disabled={busy} onClick={() => void deleteMemory(memory.id)}>删除</button>
             </div>
           ))}
         </div>
@@ -339,18 +454,12 @@ export default function LearningPage() {
                 <option value="caregiver_note">照护者备注</option>
               </select>
             </label>
-            <button
-              disabled={!editingMemory.content.trim()}
-              onClick={() => void saveMemoryEdit().catch((error) => setMessage(error.message))}
-            >
-              保存纠正
-            </button>
-            <button className="secondary" onClick={() => setEditingMemory(null)}>取消</button>
+            <button type="button" disabled={!editingMemory.content.trim() || busy} onClick={() => void saveMemoryEdit()}>保存纠正</button>
+            <button className="secondary" type="button" onClick={() => setEditingMemory(null)}>取消</button>
           </div>
         )}
         <p className="helper">面向监护人的专用账号与授权仍待账户体系实现。</p>
       </section>
-      <p className="status">{message}</p>
     </main>
   );
 }

@@ -129,6 +129,32 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 | `GET /admin/learning/teacher-profile/history` | 无 | 查询最近人格版本记录 |
 | `PUT /admin/learning/teacher-profile/rollback/{historyId}` | 无 | 校验历史参数后回滚并写新版本 |
 
+### 本轮补充登记
+
+下列 5 组接口此前未在本快照登记，另有 1 个本轮新增的只读引用查询接口（`GET /admin/model-providers/configs/:id/references`），一并按当前 controller 登记；全部要求有效管理员会话（HttpOnly Cookie），不返回密钥明文。
+
+1. `DELETE /admin/model-providers/configs/:id` — 删除单条模型接入配置。删除前可用配套只读接口 `GET /admin/model-providers/configs/:id/references`（本轮新增）查询任务路由对该配置的首选 / 备用引用；该接口不回读凭据。删除或停用后若该 `serviceKind` 不再有 `enabled=true` 配置，服务端默认返回 HTTP 400 并说明在课会话影响；显式 `?force=true`（`PUT` 为 body 内 `force: true`）才会继续，并在响应中给出 `runtimeNotice`。
+2. `GET /admin/model-providers/runtime-scores?serviceKind=...` — 近 30 天按供应商别名 / 模型聚合的调用次数、平均延迟与运行速度分。
+3. `GET /admin/model-providers/prices?serviceKind=...&configId=...` 与 `PUT /admin/model-providers/prices` — 读取 / 覆盖写入模型单价；写入体为 `{ serviceKind, configId, modelAlias, prices: [{ priceType, unitPrice }] }`。
+4. `PUT /admin/email/settings` — 保存 SMTP 配置；密码字段留空表示保留已保存值，响应不返回密码明文。
+5. `POST /admin/email/test` — 按当前保存的 SMTP 设置发起连接验证。
+
+> 创建模型配置仍沿用既有 `PUT /admin/model-providers/configs` 的 upsert 语义（body 带 `id` 为更新、不带 `id` 为创建）；本轮评估后不新增 `POST /configs`，避免第二条创建路径与现有 Zod 校验产生漂移。
+
+### 用户资料与等级字段契约（本轮补充登记）
+
+- `PUT /user/profile` 的 `avatarUrl` **字段名不变**，值域放宽为：`http(s)://` 外链，或 `preset://` 本地头像资源标识（规范顺序 `preset://b00..b23` / `preset://d00..d09`；历史长写法 `preset://avatar/basic_NN` 等亦兼容）。此前 `z.string().url()` 不接受 `preset://`，本地头像无法保存；非 http(s) 协议、空串与非法标识仍返回 400。不改数据库 schema、不加 migration。
+- `GET /user/dashboard` 新增以下 additive 字段；既有字段（`user` / `learner` / `textbook` / `abilities` / `stats` / `achievements` / `textbooks` / `calibrationNotice` / `profile`）一律不变。`learner.entryLevel` 仍为入学起点 `pre_a1`，客户端不得自行推导 CEFR：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `level` | CEFR 枚举字符串（pre_a1 / a1 / a2 / b1 / b2） | 参考档位，仅展示；阈值未校准时须使用「参考档位 · 未校准 · 不代表掌握」措辞 |
+| `avatarTier` | 整数 0–14 | 头像解锁档位；取 `max(当前 abilities 推导值, learning_evidence 历史累计推导值)`，降级不重新锁定 |
+| `unlockedCount` | 整数 24–34 | 可用头像数：`24 + min(2 * ceil(avatarTier / 3), 10)`。24 个基础头像（`b00..b23`）从档位 0 起全部可用；10 个 3D 头像（`d00..d09`）每 3 档解锁 2 个，5 步解锁完。分段锚点：tier 0→24；1–3→26；4–6→28；7–9→30；10–12→32；13–14→34 |
+| `levelProgress` | 对象 | 下一档所需条件 / 进度 / 依据 / 免责说明；含 `next.requirements`、`next.progress`、`next.additionalUnlocks`（升到下一档新增数量，0 或 2）、`next.unlockAhead`（下一个真正新增头像的档位）、`next.reward`、`baseUnlockedCount`、`extrasUnlocked`、`displayLabel`、`notice` |
+
+推导规则（服务端纯函数，客户端只展示）：`S = Σ clamp(abilities[].stage, 0, 4)`（7 类，缺失按 0），`tier = clamp(floor(S / 2), 0, 14)`，`level = CEFR_BUCKETS[tier]`（0-2 Pre-A1 / 3-5 A1 / 6-8 A2 / 9-11 B1 / 12-14 B2），`extrasUnlocked = min(2 * ceil(tier / 3), 10)`，`unlockedCount = 24 + extrasUnlocked`。并非每档都新增头像（每 3 档才 +2），客户端应使用 `next.unlockAhead` 而不是假定 `next` 一定解锁 2 个。`calibrated` 不作为解锁开关，只影响展示措辞；客户端不保存任何解锁状态，推导幂等。契约与纯函数单测见 `packages/shared-contracts/src/cefr.ts`。
+
 ## 当前契约缺口
 
 1. OpenAPI 3 文档尚未生成；管理配置、结课和数据库响应仍缺统一的 Zod schema 与字段级响应约束。
@@ -136,6 +162,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 3. 学习者教学 API 仍需把已登录用户与 `guardianId` 归属校验接入所有读写路径；当前账户认证接口已具备。
 4. 原型音频上传已实现，但短期保留、自动删除、对象存储和正式访问控制尚未实现。
 5. 本 API 快照与 M0 冻结验收记录尚未建立，不能称为“contracts are locked in M0”。
+6. 管理端 `admin/auth/*`（登录 / 登出 / 会话查询）、`admin/model-routing`、`admin/curriculum/*`、`admin/backups/*` 尚未在本快照逐条登记；Android 侧 `/user/*` 等接口同样未登记。以上如实记为已知登记缺口：本文仍保持「M0 冻结快照（原型范围）」定位，不改写为完整 API 手册。
 
 ## 代码来源
 

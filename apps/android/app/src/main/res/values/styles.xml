@@ -1,10 +1,12 @@
 <resources>
+    <!-- 与 AppDesign.kt 的儿童浅色主题对齐：暖奶油底 + 珊瑚橙强调，
+         保持 light status/navigation bar，避免深色系统栏压住儿童向界面。 -->
     <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#176B5B</item>
+        <item name="android:colorAccent">#E8623C</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F5F7F4</item>
-        <item name="android:navigationBarColor">#F5F7F4</item>
+        <item name="android:statusBarColor">#FFF8F0</item>
+        <item name="android:navigationBarColor">#FFF8F0</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>
