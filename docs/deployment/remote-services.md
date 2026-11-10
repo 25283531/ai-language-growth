@@ -81,7 +81,11 @@ docker compose exec backend node -e "fetch('http://127.0.0.1:3000/api/v1/health'
 docker compose ps
 ```
 
-手机端和浏览器不应直接访问 PostgreSQL、Redis 或后端容器端口。真机需要使用服务器已有的 HTTPS 入口，并将 `/api` 反向代理到 `alg-web:3000`（管理后台使用 `alg-admin-web:3001`）；如果没有反向代理，可临时开放 Web 的 `3002` 端口进行联调。
+手机端和浏览器不应直接访问 PostgreSQL、Redis 或后端容器端口。
+
+**HTTPS 入口（已就绪）**：`https://152.136.230.132:3000` —— Caddy 终结 TLS（Let's Encrypt，证书含 IP SAN），反代到 `alg-admin-web:3001`，再由该 Next.js 应用的 `/api/v1` rewrite 转发到 `backend:3000`。API 前缀为 `/api/v1`，例如 `GET https://152.136.230.132:3000/api/v1/health` 返回 200。
+
+**端口陷阱**：服务器 `443` 指向无关的 `elder-server`，因此不能省略 `:3000`（不要写成 `https://152.136.230.132`）。旧的 HTTP 联调端口 `3100` 对 Android 正式客户端无效（明文流量已关闭）。儿童 Web 端仍可用 `3002` 端口临时直连联调。
 
 ## 备份与音频缓存
 

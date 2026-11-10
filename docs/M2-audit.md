@@ -79,7 +79,7 @@ Agent 是职责契约，不代表部署多个模型。编排器按以下顺序�
 
 ## 下一里程碑
 
-M2 代码范围已完成，2026 年 11 月 8 日开始 M3 Android 正式客户端。首个切片位于 `apps/android`：Compose 课堂首页连接后端开课接口并渲染服务端指令，客户端强制 HTTPS；APK 由 `.github/workflows/android-client.yml` 云端编译。现有远程联调服务仅提供 HTTP，因此在为服务增加 HTTPS 入口前，该正式客户端不能连接当前远程地址；音频额度流程继续由 M1 原型覆盖。
+M2 代码范围已完成，2026 年 11 月 8 日开始 M3 Android 正式客户端。首个切片位于 `apps/android`：Compose 课堂首页连接后端开课接口并渲染服务端指令，客户端强制 HTTPS；APK 由 `.github/workflows/android-client.yml` 云端编译。远程联调现已具备 HTTPS 入口 `https://152.136.230.132:3000`（Caddy 终结 TLS → `alg-admin-web:3001` → Next rewrite → `backend:3000`，Let's Encrypt 证书含 IP SAN），`/api/v1/health` 返回 200，该正式客户端可直接连接此地址；旧的 HTTP 端口 `3100` 不再用于正式客户端，服务器 `443` 指向无关的 `elder-server` 故不可省略 `:3000`。音频额度流程继续由 M1 原型覆盖。
 
 ## 仍需外部实测的验收
 
