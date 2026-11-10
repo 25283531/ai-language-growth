@@ -29,11 +29,16 @@ export class LessonsController {
   ) {}
 
   @Post('start')
-  async start(@Body() body: unknown) {
+  async start(
+    @Body() body: unknown,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
     const parsed = lessonStartRequestSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.auth.assertLearnerOwnership(extractBearerToken(authorization, cookie), parsed.data.learnerId);
     return this.orchestrator.startLesson(parsed.data);
   }
 
@@ -96,16 +101,28 @@ export class LessonsController {
   }
 
   @Post(':id/finish')
-  async finish(@Param('id') id: string, @Body() body: unknown) {
+  async finish(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
     const parsed = lessonFinishRequestSchema.safeParse(body);
     if (!parsed.success) {
       throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    await this.auth.assertLearnerOwnership(extractBearerToken(authorization, cookie), parsed.data.learnerId);
+    const session = await this.prisma.lesson_sessions.findUnique({ where: { id }, select: { learnerId: true } });
+    if (!session || session.learnerId !== parsed.data.learnerId) throw new HttpException('无权访问该课堂', 403);
     return this.orchestrator.finishLesson(id, parsed.data.learnerId);
   }
 
   @Get(':id')
-  async detail(@Param('id') id: string) {
+  async detail(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
     const session = await this.prisma.lesson_sessions.findUnique({
       where: { id },
       include: {
@@ -113,6 +130,7 @@ export class LessonsController {
       },
     });
     if (!session) throw new HttpException({ message: '课堂不存在' }, 404);
+    await this.auth.assertLearnerOwnership(extractBearerToken(authorization, cookie), session.learnerId);
     return session;
   }
 }

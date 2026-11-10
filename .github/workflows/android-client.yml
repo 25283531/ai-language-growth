@@ -6,11 +6,11 @@ on:
       version_name:
         description: App version name
         required: true
-        default: '0.0.1'
+        default: '0.0.3'
       version_code:
         description: App version code
         required: true
-        default: '1'
+        default: '3'
       build_type:
         description: APK build type
         required: true
@@ -61,8 +61,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS || secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.ANDROID_KEY_PASSWORD }}
-          APP_VERSION_NAME: ${{ github.event.inputs.version_name || '0.0.1' }}
-          APP_VERSION_CODE: ${{ github.event.inputs.version_code || '1' }}
+          APP_VERSION_NAME: ${{ github.event.inputs.version_name || '0.0.3' }}
+          APP_VERSION_CODE: ${{ github.event.inputs.version_code || '3' }}
           APK_BUILD_TYPE: ${{ github.event.inputs.build_type || 'debug' }}
         run: |
           if [ "$APK_BUILD_TYPE" = "release" ]; then
@@ -76,7 +76,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: android-client-${{ github.event.inputs.build_type || 'debug' }}-${{ github.event.inputs.version_name || '0.0.1' }}
+          name: android-client-${{ github.event.inputs.build_type || 'debug' }}-${{ github.event.inputs.version_name || '0.0.3' }}
           path: apps/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14

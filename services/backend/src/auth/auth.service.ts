@@ -78,11 +78,13 @@ function publicUser(user: {
   membershipTier: string;
   emailVerifiedAt: Date | null;
   createdAt: Date;
+  avatarUrl?: string | null;
 }) {
   return {
     id: user.id,
     email: user.email,
     displayName: user.displayName,
+    avatarUrl: user.avatarUrl ?? null,
     role: user.role,
     membershipTier: user.membershipTier,
     emailVerifiedAt: user.emailVerifiedAt,
@@ -95,6 +97,19 @@ export class AuthService {
   private readonly sessionDays = 30;
 
   constructor(private readonly prisma: PrismaService) {}
+
+  async verifyPassword(userId: string, password: string): Promise<boolean> {
+    const user = await this.prisma.users.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+    return Boolean(user && (await bcrypt.compare(password, user.passwordHash)));
+  }
+
+  async changePassword(userId: string, password: string): Promise<void> {
+    const passwordHash = await bcrypt.hash(password, 12);
+    await this.prisma.$transaction([
+      this.prisma.users.update({ where: { id: userId }, data: { passwordHash, passwordChangedAt: new Date() } }),
+      this.prisma.auth_sessions.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } }),
+    ]);
+  }
 
   async createCaptcha(): Promise<{ captchaId: string; image: string; expiresInSeconds: number }> {
     const captchaId = randomUUID();

@@ -24,6 +24,7 @@ model users {
   passwordHash      String
   role              String    @default("guardian") // guardian | operator | admin
   displayName       String
+  avatarUrl         String?
   membershipTier    String    @default("free") // free | member | advanced; guest is for non-registered clients
   emailVerifiedAt   DateTime?
   passwordChangedAt DateTime?

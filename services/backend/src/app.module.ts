@@ -31,6 +31,7 @@ import { RoutingConfigService } from './routing/routing-config.service';
 import { MembershipAdminController } from './membership/membership-admin.controller';
 import { CurriculumAdminController } from './curriculum/curriculum-admin.controller';
 import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
+import { UserController } from './auth/user.controller';
 import { AuthService } from './auth/auth.service';
 import { AdminAuthService } from './auth/admin-auth.service';
 import { EmailService } from './auth/email.service';
@@ -62,6 +63,7 @@ import { PersonalityEngineService } from './agents/personality-engine.service';
     MembershipController,
     MembershipUsersAdminController,
     BackupController,
+    UserController,
   ],
   providers: [
     PrismaService,
