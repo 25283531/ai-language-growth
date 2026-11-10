@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -693,7 +694,7 @@ private fun AchievementScreen(data: JSONObject?) {
                     contentPadding = GrowthDimens.CardPadSmall,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        MedalBadge(earned, size = 44.dp)
+                        MedalBadge(earned, badgeSize = 44.dp)
                         Column(Modifier.weight(1f)) {
                             Text(label, style = MaterialTheme.typography.titleSmall, color = GrowthColors.Ink)
                             Text(

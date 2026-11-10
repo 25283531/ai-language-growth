@@ -51,7 +51,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -868,8 +867,9 @@ private fun starPath(center: Offset, outer: Float, inner: Float): Path {
 
 /** 自绘圆形勋章：已获得为亮色奖章，未获得为柔和灰 + 细环，像收集册而非设置列表。 */
 @Composable
-fun MedalBadge(earned: Boolean, modifier: Modifier = Modifier, size: Dp = 56.dp) {
-    Canvas(modifier.size(size)) {
+fun MedalBadge(earned: Boolean, modifier: Modifier = Modifier, badgeSize: Dp = 56.dp) {
+    // 参数名刻意不用 size：局部参数会遮蔽 DrawScope.size，导致 lambda 内 size.minDimension 解析到 Dp
+    Canvas(modifier.size(badgeSize)) {
         val r = size.minDimension / 2f
         val c = Offset(size.width / 2f, size.height / 2f)
         val ring = if (earned) GrowthColors.Sun else Color(0xFFD9DEE2)
