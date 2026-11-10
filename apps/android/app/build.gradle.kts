@@ -12,8 +12,8 @@ android {
         applicationId = "com.alg.languagegrowth"
         minSdk = 26
         targetSdk = 34
-        versionName = providers.gradleProperty("appVersionName").orElse("0.0.1").get()
-        versionCode = providers.gradleProperty("appVersionCode").orElse("1").get().toInt()
+        versionName = providers.gradleProperty("appVersionName").orElse("0.0.3").get()
+        versionCode = providers.gradleProperty("appVersionCode").orElse("3").get().toInt()
     }
 
     val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
