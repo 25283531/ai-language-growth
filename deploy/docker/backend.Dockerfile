@@ -10,7 +10,9 @@
 # 遵守 D-024 约束二：镜像中不写入任何服务商或模型名称，全部由环境变量注入。
 
 # ---------------- 构建阶段 ----------------
-FROM node:20-alpine AS builder
+# Node 22：ai-provider-sdk 的讯飞/腾讯语音供应商走全局 WebSocket，
+# Node 20 默认不提供（需 --experimental-websocket），会导致 TTS/ASR 真实供应商不可用并降级到 mock。
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -41,7 +43,8 @@ RUN npm run build --workspace @alg/shared-contracts \
  && npm run build --workspace @alg/backend
 
 # ---------------- 运行阶段 ----------------
-FROM node:20-alpine AS runtime
+# 同样必须是 Node 22：运行时缺失全局 WebSocket 会让语音真实供应商调用失败。
+FROM node:22-alpine AS runtime
 
 WORKDIR /app
 

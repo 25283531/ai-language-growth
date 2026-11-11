@@ -54,7 +54,7 @@ function signedUrl(baseUrl: string, apiKey: string, apiSecret: string): string {
 }
 
 function connectAndSend(url: string, payload: string | string[], timeoutMs: number, decode: (message: Record<string, unknown>) => { done?: boolean; bytes?: Uint8Array; seq?: number; error?: string }): Promise<Uint8Array> {
-  if (typeof WebSocket === 'undefined') return Promise.reject(new Error('当前 Node.js 运行时未提供 WebSocket；请使用 Node 20.10+ 或更新版本'));
+  if (typeof WebSocket === 'undefined') return Promise.reject(new Error('当前 Node.js 运行时未提供全局 WebSocket；请使用 Node 22+ 或为 Node 20 启用 --experimental-websocket'));
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
     const chunks: Array<{ seq?: number; bytes: Uint8Array }> = [];

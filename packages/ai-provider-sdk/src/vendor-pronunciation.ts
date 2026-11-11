@@ -378,7 +378,7 @@ export class IflytekIseAdapter implements PronunciationAdapter {
 }
 
 async function tencentSocketCall(url: string, audio: Uint8Array, timeoutMs: number): Promise<{ result?: unknown }> {
-  if (typeof WebSocket === 'undefined') throw new Error('当前 Node.js 运行时未提供 WebSocket；请使用 Node 20.10+ 或更新版本');
+  if (typeof WebSocket === 'undefined') throw new Error('当前 Node.js 运行时未提供全局 WebSocket；请使用 Node 22+ 或为 Node 20 启用 --experimental-websocket');
   return await new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
     const timer = setTimeout(() => { socket.close(); reject(new Error('腾讯 SOE 评测超时')); }, timeoutMs);
