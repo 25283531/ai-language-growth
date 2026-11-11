@@ -80,6 +80,8 @@ export default function CurriculumPage() {
   const [generatedSummary, setGeneratedSummary] = useState('');
   const [presetSummary, setPresetSummary] = useState('');
   const [warmupLevel, setWarmupLevel] = useState('pre-A1');
+  const [missingImages, setMissingImages] = useState<Array<{ key: string; kind: string; targetText: string; query: string; reason: string }>>([]);
+  const [uploadingKey, setUploadingKey] = useState('');
 
   function headers() { return {}; }
   async function request(path: string, init?: RequestInit) {
@@ -217,9 +219,39 @@ export default function CurriculumPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ level: warmupLevel, maxImages: 24, maxSpeech: 30 }),
       });
-      setMessage(`级别 ${result.level} 预热：图片 ${result.imagesResolved} 张 / 语音 ${result.speechGenerated} 条，跳过 ${result.speechSkipped} 条，失败 ${result.speechFailed} 条。${result.reason || ''}`);
+      setMissingImages(Array.isArray(result.missingImages) ? result.missingImages : []);
+      setMessage(`级别 ${result.level} 预热：图片已下载 ${result.imagesResolved} 张 / 排队 ${result.imagesQueued} 张，语音 ${result.speechGenerated} 条，跳过 ${result.speechSkipped} 条，失败 ${result.speechFailed} 条。${result.reason || ''}`);
+      await load();
     } catch (error) { setMessage(error instanceof Error ? error.message : '级别媒体预热失败'); }
     finally { setBusy(false); }
+  }
+  async function uploadMissingImage(missing: { key: string; kind: string; targetText: string }, file: File) {
+    setUploadingKey(missing.key);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('key', missing.key);
+      form.append('kind', missing.kind);
+      form.append('targetText', missing.targetText);
+      form.append('license', 'admin-uploaded');
+      const response = await fetch(`${apiRoot()}/api/v1/admin/curriculum/images/upload`, { method: 'POST', body: form });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message || `上传失败 (${response.status})`);
+      setMissingImages((old) => old.filter((item) => item.key !== missing.key));
+      setMessage(`图片已上传并挂到 ${body.attached} 个已发布活动；如已生成过语音，需重新预热以更新内容版本。`);
+      await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : '图片上传失败'); }
+    finally { setUploadingKey(''); }
+  }
+  function downloadMissingImages() {
+    if (!missingImages.length) return;
+    const blob = new Blob([JSON.stringify(missingImages, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `missing-images-${warmupLevel}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
   function downloadGeneratedJson() {
     if (!generatedJson) return;
@@ -322,6 +354,16 @@ export default function CurriculumPage() {
         <div className="helper">只处理该级别已发布的课程：先解析并缓存图片，再按发布内容预生成公共语音。mock 模式会跳过语音，避免占位音频进入正式缓存。</div>
       </div>
       <button className="secondary" disabled={busy} onClick={() => void warmLevelMedia()}>预热该级别图片与语音</button>
+      {missingImages.length > 0 && <div style={{ marginTop: 16 }}>
+        <div className="panel-head"><div><h3>未找到合适图片（{missingImages.length}）</h3><p className="muted">服务端已优先从 Openverse / Wikimedia Commons 搜索并下载；以下条目无授权明确且可下载的结果，可导出清单后自行生成图片并上传。</p></div></div>
+        <button className="secondary" onClick={downloadMissingImages}>导出缺失清单 JSON</button>
+        {missingImages.map((missing) => <div className="helper" key={missing.key} style={{ marginTop: 10 }}>
+          <strong>{missing.targetText}</strong> · {missing.kind} · <code>{missing.key}</code>
+          <div className="muted">{missing.reason} · 搜索词：{missing.query}</div>
+          <label style={{ display: 'block', marginTop: 6 }}>上传这张图片<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploadingKey === missing.key} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadMissingImage(missing, file); event.target.value = ''; }} /></label>
+          {uploadingKey === missing.key && <span className="status">正在上传并挂载…</span>}
+        </div>)}
+      </div>}
     </section>
     <section className="panel">
       <div className="panel-head"><div><p className="eyebrow">TEXTBOOK CATALOG</p><h2>教材版本</h2><p className="muted">按出版社、出版年份、年级归类，可继续扩展版本和单元。</p></div></div>

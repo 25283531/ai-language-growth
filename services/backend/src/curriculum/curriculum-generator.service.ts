@@ -10,6 +10,7 @@ import {
   cefrCurriculumPackageSchema,
   type CefrCurriculumPackage,
   type CefrCurriculumLevelContent,
+  type CefrImageRequirement,
   type CefrUnit,
   type CurriculumWordListRequest,
 } from '@alg/shared-contracts';
@@ -48,6 +49,8 @@ type DraftContent = {
       openResponse: boolean;
     };
     difficulty: number;
+    imageRequirements?: CefrImageRequirement[];
+    imageKeys?: string[];
   }>;
   images: Array<{ url: string; license: string; attribution?: string }>;
 };
@@ -295,6 +298,8 @@ function toDraftContent(
       requiresAsr: lesson.requiresAsr,
       assessment: lesson.assessment,
       difficulty: lesson.difficulty,
+      imageRequirements: lesson.imageRequirements,
+      imageKeys: lesson.media.imageKeys,
     })),
     // v2 JSON 不携带图片 URL；这里留空，级别预热时再解析并回填。
     images: [],

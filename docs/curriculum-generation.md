@@ -7,7 +7,7 @@
 
 | 层 | 位置 | 是否含媒体 | 说明 |
 |---|---|---|---|
-| 纯 JSON 课程 | `packages/curriculum/data/cefr-curriculum.json` | 否 | 7 个等级、35 个单元、595 个活动；只含教学结构、词汇、例句、活动、评估规则和图片需求键 |
+| 纯 JSON 课程 | `packages/curriculum/data/cefr-curriculum.json` | 否 | 7 个等级、49 个单元、917 个活动；含核心词汇单元与日常用语/场景单元 |
 | 生成器 | `packages/curriculum/src/cefr.ts` | 否 | 纯函数；不访问数据库、不调用模型，输入词表即可生成稳定结构 |
 | 后端生成服务 | `services/backend/src/curriculum/curriculum-generator.service.ts` | 否 | 可选 AI 润色音标/释义/例句；失败保留确定性结构；可写入草稿库 |
 | 媒体预热 | `services/backend/src/curriculum/curriculum-warmup.service.ts` | 是 | 到达级别后解析图片、写入 `media_assets`，再按发布内容预生成 `PUBLIC_CURRICULUM` TTS |
@@ -51,7 +51,9 @@
               "exampleSentences": [{ "en": "Hello! I am Anna.", "zh": "你好！我是安娜。" }],
               "image": {
                 "key": "img:prea1-u01:hello",
+                "kind": "word",
                 "targetWord": "hello",
+                "targetText": "hello",
                 "query": "hello children flashcard illustration",
                 "alt": "hello 的儿童教学图片"
               }
@@ -77,6 +79,16 @@
                 "openResponse": false
               },
               "difficulty": 1,
+              "imageRequirements": [
+                {
+                  "key": "img:prea1-u01:hello",
+                  "kind": "word",
+                  "targetWord": "hello",
+                  "targetText": "hello",
+                  "query": "hello children flashcard illustration",
+                  "alt": "hello 的儿童教学图片"
+                }
+              ],
               "media": {
                 "speechKey": "prea1-u01:0",
                 "speechText": "听一听，选出你听到的词：hello。 hello",
@@ -200,13 +212,14 @@ this.warmup.warmLearnerLevel(learner.id, avatarLevel.level);
 
 1. 查该级别 `curriculum_units.reviewStatus=published`；
 2. 查对应 `learning_items`（`itemType=curriculum_activity`）；
-3. 从 `targetWords` 提取真实用到的词；已有 `imageAssets` 直接复用；
-4. 缺失图片调用 Openverse 搜索（`CURRICULUM_IMAGE_SEARCH_URL` 可替换），只选有明确 license 的结果；
-5. 创建 `media_assets` 并调用 `ImageCacheService.cacheNext`；下载失败保留记录等待调度器重试；
-6. 把 `imageAssets` / `imageAssetIds` 回填到 `learning_items.content`；
-7. 从数据库重新读取最终 JSON，计算 `sha256(JSON.stringify(content))`；
-8. 用固定课程音色档（`gentle / 1000ms / slow_clear / 0.65`）和 `PUBLIC_CURRICULUM` scope 调用 `gateway.ttsWithResult`；
-9. 返回图片/语音成功、跳过、失败计数。
+3. 从 `imageRequirements` 提取真实用到的单词图、短句图、场景图；旧内容没有该字段时回退到 `targetWords`；已有 `imageAssets` 按 `key` 或 `targetText` 复用；
+4. 缺失图片同时搜索 **Openverse** 与 **Wikimedia Commons**（免密钥；`CURRICULUM_IMAGE_SEARCH_URL` 可替换 Openverse 端点），按标题/标签与目标文本匹配度、分辨率、横竖版和插画关键词排序；
+5. 只尝试授权明确、HTTPS、非 SVG 的候选；逐个创建 `media_assets` 并调用 `ImageCacheService.cacheNext`，失败自动换下一候选；
+6. 把成功或已排队的 `imageAssets` / `imageAssetIds` 回填到 `learning_items.content`；
+7. 剩余确实找不到的图片进入 `missingImages` 清单，管理端可导出 JSON 并逐张上传；
+8. 从数据库重新读取最终 JSON，计算 `sha256(JSON.stringify(content))`；
+9. 用固定课程音色档（`gentle / 1000ms / slow_clear / 0.65`）和 `PUBLIC_CURRICULUM` scope 调用 `gateway.ttsWithResult`；
+10. 返回图片下载/排队/挂载、缺失清单和语音成功/跳过/失败计数。
 
 ### 5.4 mock 保护
 
@@ -225,7 +238,44 @@ this.warmup.warmLearnerLevel(learner.id, avatarLevel.level);
 | `CURRICULUM_WARMUP_ENABLED` | 未设置（启用） | `false` 关闭仪表盘自动触发 |
 | `CURRICULUM_IMAGE_SEARCH` | 未设置（启用） | `disabled` 关闭图片搜索，只保留已有图片 |
 | `CURRICULUM_IMAGE_SEARCH_URL` | `https://api.openverse.org/v1/images/` | Openverse 兼容的图片搜索端点 |
+| `CURRICULUM_IMAGE_COMMONS` | 未设置（启用） | `disabled` 关闭 Wikimedia Commons 备用来源 |
 | `AI_GATEWAY_MODE` | — | `mock` 时跳过语音预热 |
+
+### 5.6 缺失清单与管理员上传
+
+预热接口返回：
+
+```json
+{
+  "imagesResolved": 18,
+  "imagesQueued": 2,
+  "missingImages": [
+    {
+      "key": "img:prea1-u01:hello",
+      "kind": "word",
+      "targetText": "hello",
+      "query": "hello children flashcard illustration",
+      "reason": "未搜索到授权明确的图片"
+    }
+  ]
+}
+```
+
+管理端「课程管理」页会显示缺失清单，可导出 JSON，并为每条上传 JPEG/PNG/WebP/GIF：
+
+`POST /api/v1/admin/curriculum/images/upload`（multipart）
+
+| 字段 | 必填 | 含义 |
+|---|---|---|
+| `file` | 是 | 图片文件，最大 8MB |
+| `key` | 是 | 缺失清单中的 `imageKey` |
+| `kind` | 是 | `word` / `phrase` / `scene` |
+| `targetText` | 是 | 目标词、短句或场景描述 |
+| `targetWord` | 否 | 单词配图的目标词 |
+| `license` | 否 | 默认 `admin-uploaded` |
+| `attribution` | 否 | 来源说明 |
+
+上传后服务端会写入 `media_assets`，按 `key` 挂到所有已发布活动，并返回挂载数量。图片变更会改变 `contentVersion`，已生成的语音需要重新预热才会命中。
 
 ## 6. 审核与发布
 
@@ -239,8 +289,9 @@ this.warmup.warmLearnerLevel(learner.id, avatarLevel.level);
 
 ## 7. 已知边界
 
-- Openverse 返回的是通用儿童闪卡图，可能不完全贴合教材语境；必须人工审核，必要时在后台替换 `imageAssets`。
-- 预置词库每级 25 个核心词，是长期课程骨架，不是完整词典；教材词表可按需扩展。
+- Openverse 与 Wikimedia Commons 返回的是通用图片，可能不完全贴合教材语境；必须人工审核，必要时在后台替换 `imageAssets`。
+- 每个级别包含 5 个核心词汇单元和 2 个日常用语单元；日常用语覆盖问候、自我介绍、请求、购物、出行、就医、观点、协商等常见场景。
+- 预置词库每级 25 个核心词、14 条日常用语，是长期课程骨架，不是完整词典；教材词表可按需扩展。
 - `difficultPhonemes` 与音节切分是启发式结果，预置 JSON 已标注；正式发布前应人工核对。
 - 媒体预热每次默认最多 24 张图、30 条语音；大级别可分多次触发，已缓存资源不会重复计费。
-- 预置课程导入后仍需人工审核；不会自动把 595 个活动直接推给孩子。
+- 预置课程导入后仍需人工审核；不会自动把 917 个活动直接推给孩子。

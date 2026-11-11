@@ -15,7 +15,12 @@ export type CefrCurriculumLevel = z.infer<typeof cefrCurriculumLevelSchema>;
 export const cefrImageRequirementSchema = z.object({
   /** 稳定的图片需求键，用于跨版本去重；不是图片 URL。 */
   key: z.string().trim().min(1).max(160),
-  targetWord: z.string().trim().min(1).max(100),
+  /** word=单词配图；phrase=短句配图；scene=情境配图。 */
+  kind: z.enum(['word', 'phrase', 'scene']).default('word'),
+  /** 单词配图的目标词；短句/场景可为空。 */
+  targetWord: z.string().trim().min(1).max(100).optional(),
+  /** 需要被图片表达的目标文本（单词、短句或场景描述）。 */
+  targetText: z.string().trim().min(1).max(500).optional(),
   /** 给图片搜索/生成服务的英文查询词。 */
   query: z.string().trim().min(1).max(300),
   alt: z.string().trim().min(1).max(300),
@@ -56,6 +61,8 @@ export const cefrLessonSchema = z.object({
     openResponse: z.boolean().default(false),
   }),
   difficulty: z.number().int().min(1).max(5),
+  /** 本活动需要的图片；单词图、短句图、场景图分开描述。 */
+  imageRequirements: z.array(cefrImageRequirementSchema).max(10).default([]),
   media: z.object({
     /** 语音预热键；与 lesson.id 一致，便于按课程回填。 */
     speechKey: z.string().trim().min(1).max(160),

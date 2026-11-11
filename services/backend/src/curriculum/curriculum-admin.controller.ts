@@ -12,6 +12,7 @@ import type { Prisma } from '@prisma/client';
 import AdmZip from 'adm-zip';
 import { CurriculumGeneratorService } from './curriculum-generator.service';
 import { CurriculumWarmupService } from './curriculum-warmup.service';
+import { persistCachedImage } from '../media/image-cache.service';
 
 const levelSchema = z.string().trim().min(1).max(24);
 const textbookSchema = z.object({
@@ -145,6 +146,15 @@ type GeneratedLesson = {
       openResponse: boolean;
     };
     difficulty: number;
+    imageRequirements?: Array<{
+      key: string;
+      kind?: 'word' | 'phrase' | 'scene';
+      targetWord?: string;
+      targetText?: string;
+      query?: string;
+      alt?: string;
+    }>;
+    imageKeys?: string[];
   }>;
   images: Array<{ url: string; license: string; attribution?: string }>;
 };
@@ -203,6 +213,53 @@ export class CurriculumAdminController {
       maxSpeech: parsed.data.maxSpeech,
       force: parsed.data.force,
     });
+  }
+
+  /** 管理员上传缺失图片；按 imageKey 挂到已发布活动，不修改教学话术。 */
+  @Post('images/upload')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024, files: 1 } }))
+  async uploadCurriculumImage(
+    @Headers('cookie') cookie: string | undefined,
+    @UploadedFile() file: { buffer: Buffer; originalname?: string; mimetype?: string } | undefined,
+    @Body() body: unknown,
+  ) {
+    this.authorize(cookie);
+    if (!file?.buffer?.length) throw new BadRequestException('请选择要上传的图片');
+    const parsed = z.object({
+      key: z.string().trim().min(1).max(160),
+      kind: z.enum(['word', 'phrase', 'scene']).default('word'),
+      targetText: z.string().trim().min(1).max(500),
+      targetWord: z.string().trim().min(1).max(100).optional(),
+      license: z.string().trim().max(300).optional(),
+      attribution: z.string().trim().max(500).optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    const extension = imageExtension(file);
+    if (!extension) throw new BadRequestException('图片仅支持 JPEG、PNG、WebP 和 GIF');
+    const checksum = await persistCachedImage(file.buffer, extension);
+    const asset = await this.prisma.media_assets.create({
+      data: {
+        kind: 'image',
+        ref: parsed.data.key,
+        checksum,
+        cacheExtension: extension,
+        cacheStatus: 'cached',
+        license: parsed.data.license || 'admin-uploaded',
+        attribution: parsed.data.attribution || null,
+        sourceProvider: 'admin_upload',
+      },
+      select: { id: true },
+    });
+    const ref = `/api/v1/media/audio/images/${asset.id}`;
+    await this.prisma.media_assets.update({ where: { id: asset.id }, data: { ref } });
+    const attached = await this.warmup.attachUploadedImage({
+      assetId: asset.id,
+      key: parsed.data.key,
+      kind: parsed.data.kind,
+      targetText: parsed.data.targetText,
+      targetWord: parsed.data.targetWord,
+    });
+    return { asset: { id: asset.id, ref }, attached: attached.attached };
   }
 
   /** 教材词表 → 完整 JSON；默认同时把每个单元写入课程草稿，等待人工审核。 */
@@ -979,11 +1036,19 @@ export class CurriculumAdminController {
           const id = imageByWord.get(word.toLowerCase());
           if (!id) return [];
           const image = content.vocabulary.find((item) => item.word.toLowerCase() === word.toLowerCase())?.image;
+          const requirement = activity.imageRequirements?.find((item) =>
+            item.targetWord?.toLowerCase() === word.toLowerCase() || item.targetText === word,
+          );
           return [{
             id,
             ref: `/api/v1/media/audio/images/${id}`,
             ...(image?.url ? { sourceUrl: image.url } : {}),
             targetWord: word,
+            ...(requirement ? {
+              key: requirement.key,
+              kind: requirement.kind || 'word',
+              ...(requirement.targetText ? { targetText: requirement.targetText } : {}),
+            } : {}),
           }];
         });
         const skillNodeId = skillIdByCode.get(activity.skillNodeIds[0] ?? '');
@@ -1006,6 +1071,20 @@ export class CurriculumAdminController {
     return published;
   }
 
+}
+
+function imageExtension(file: { originalname?: string; mimetype?: string }): 'jpg' | 'png' | 'webp' | 'gif' | null {
+  const mime = (file.mimetype || '').toLowerCase();
+  if (mime === 'image/jpeg') return 'jpg';
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/gif') return 'gif';
+  const name = (file.originalname || '').toLowerCase();
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'jpg';
+  if (name.endsWith('.png')) return 'png';
+  if (name.endsWith('.webp')) return 'webp';
+  if (name.endsWith('.gif')) return 'gif';
+  return null;
 }
 
 function normalizeWords(input: string): string[] {

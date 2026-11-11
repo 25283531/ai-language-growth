@@ -12,9 +12,16 @@ test('预置 CEFR 课程包含 7 个等级、完整单元与活动', () => {
   const preset = buildCefrPreset();
   assert.equal(preset.levels.length, 7);
   assert.deepEqual(preset.levels.map((level) => level.code), ['pre-A1', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2']);
-  assert.equal(preset.levels.reduce((sum, level) => sum + level.units.length, 0), 35);
-  assert.ok(preset.levels.every((level) => level.units.every((unit) => unit.vocabulary.length === 5)));
-  assert.ok(preset.levels.every((level) => level.units.every((unit) => unit.lessons.length === 17)));
+  assert.equal(preset.levels.reduce((sum, level) => sum + level.units.length, 0), 49);
+  assert.ok(preset.levels.every((level) => level.units.length === 7));
+  assert.ok(preset.levels.every((level) => level.units.slice(0, 5).every((unit) => unit.vocabulary.length === 5)));
+  assert.ok(preset.levels.every((level) => level.units.slice(0, 5).every((unit) => unit.lessons.length === 17)));
+  assert.ok(preset.levels.every((level) => level.units.slice(5).every((unit) => unit.vocabulary.length > 0)));
+  assert.equal(preset.levels.reduce((sum, level) => sum + level.units.reduce((unitSum, unit) => unitSum + unit.lessons.length, 0), 0), 917);
+  assert.ok(preset.levels.every((level) => level.units.slice(5).some((unit) => unit.lessons.some((lesson) => lesson.imageRequirements.some((image) => image.kind === 'scene')))));
+  const firstWordUnit = preset.levels[0]!.units[0]!;
+  assert.equal(firstWordUnit.vocabulary[0]?.image?.kind, 'word');
+  assert.ok(firstWordUnit.lessons.some((lesson) => lesson.imageRequirements.some((image) => image.kind === 'phrase')));
   assert.equal(cefrCurriculumPackageSchema.safeParse(preset).success, true);
 });
 

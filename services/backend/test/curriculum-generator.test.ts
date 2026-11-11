@@ -47,7 +47,7 @@ test('预置 CEFR JSON 可整体读取，也可按级别过滤', () => {
   const a1 = service.preset('a1');
   assert.equal(a1.levels.length, 1);
   assert.equal(a1.levels[0]?.code, 'A1');
-  assert.equal(a1.levels[0]?.units.length, 5);
+  assert.equal(a1.levels[0]?.units.length, 7);
 });
 
 test('级别尚未发布课程时，媒体预热明确返回原因且不搜索/合成', async () => {

@@ -12,6 +12,7 @@
 import type {
   CefrCurriculumLevel,
   CefrCurriculumPackage,
+  CefrImageRequirement,
   CefrLesson,
   CefrUnit,
   CefrVocabularyEntry,
@@ -73,6 +74,132 @@ export const CEFR_PRESET_WORDS: Record<CefrCurriculumLevel, string[]> = {
     'aesthetic', 'arbitrary', 'compelling', 'concise', 'contemplate', 'conventional', 'cumulative', 'deteriorate', 'dilemma', 'discern',
     'disparate', 'elusive', 'exemplify', 'feasible', 'fluctuate', 'hierarchy', 'inevitable', 'infer', 'intricate', 'intrinsic',
     'nuanced', 'obsolete', 'paradox', 'plausible', 'sophisticated',
+  ],
+};
+
+type DailyExpression = {
+  en: string;
+  zh: string;
+  scene: CefrLesson['scenario'];
+  query: string;
+};
+
+/**
+ * 日常用语库：按级别覆盖问候、自我介绍、请求、购物、出行、就医、观点、协商等
+ * 大多数真实生活场景。预置课程会在每个级别的词汇单元之后追加“日常用语”单元。
+ */
+export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression[]> = {
+  'pre-A1': [
+    { en: 'Hello! I am Anna.', zh: '你好！我是安娜。', scene: 'greeting_scene', query: 'children greeting each other illustration' },
+    { en: 'What is your name?', zh: '你叫什么名字？', scene: 'greeting_scene', query: 'children asking name illustration' },
+    { en: 'My name is Ben.', zh: '我叫本。', scene: 'self_intro_scene', query: 'child introducing himself illustration' },
+    { en: 'How old are you?', zh: '你几岁了？', scene: 'self_intro_scene', query: 'children talking about age illustration' },
+    { en: 'I am six.', zh: '我六岁。', scene: 'self_intro_scene', query: 'six year old child illustration' },
+    { en: 'Yes, please.', zh: '好的，请给我。', scene: 'object_shop_scene', query: 'child politely asking illustration' },
+    { en: 'No, thank you.', zh: '不用了，谢谢。', scene: 'object_shop_scene', query: 'child politely declining illustration' },
+    { en: 'Thank you.', zh: '谢谢你。', scene: 'greeting_scene', query: 'child saying thank you illustration' },
+    { en: "You're welcome.", zh: '不客气。', scene: 'greeting_scene', query: 'children being polite illustration' },
+    { en: "I'm sorry.", zh: '对不起。', scene: 'greeting_scene', query: 'child apologizing illustration' },
+    { en: 'Can I have some water?', zh: '我可以喝点水吗？', scene: 'object_shop_scene', query: 'child asking for water illustration' },
+    { en: 'I need help.', zh: '我需要帮助。', scene: 'free_chat_scene', query: 'child asking teacher for help illustration' },
+    { en: 'Good morning!', zh: '早上好！', scene: 'greeting_scene', query: 'morning greeting children illustration' },
+    { en: 'Good night!', zh: '晚安！', scene: 'greeting_scene', query: 'bedtime good night illustration' },
+  ],
+  A1: [
+    { en: 'This is my family.', zh: '这是我的家人。', scene: 'self_intro_scene', query: 'child showing family photo illustration' },
+    { en: 'I have a brother.', zh: '我有一个兄弟。', scene: 'self_intro_scene', query: 'brother and sister illustration' },
+    { en: 'I like apples.', zh: '我喜欢苹果。', scene: 'object_pic_scene', query: 'child eating apple illustration' },
+    { en: 'I want a red ball.', zh: '我想要一个红球。', scene: 'object_shop_scene', query: 'child choosing red ball illustration' },
+    { en: 'I can swim.', zh: '我会游泳。', scene: 'free_chat_scene', query: 'child swimming illustration' },
+    { en: 'Where is the bathroom?', zh: '洗手间在哪里？', scene: 'free_chat_scene', query: 'child asking for bathroom illustration' },
+    { en: 'What time is it?', zh: '现在几点了？', scene: 'free_chat_scene', query: 'child asking time clock illustration' },
+    { en: 'It is sunny today.', zh: '今天天气晴朗。', scene: 'free_chat_scene', query: 'sunny weather children illustration' },
+    { en: 'How much is this?', zh: '这个多少钱？', scene: 'object_shop_scene', query: 'child asking price shop illustration' },
+    { en: 'Turn left at the school.', zh: '在学校那里左转。', scene: 'free_chat_scene', query: 'children following directions illustration' },
+    { en: 'Can you help me?', zh: '你能帮我吗？', scene: 'free_chat_scene', query: 'child asking friend for help illustration' },
+    { en: "I'm hungry.", zh: '我饿了。', scene: 'free_chat_scene', query: 'child feeling hungry illustration' },
+    { en: 'Can I go out and play?', zh: '我可以出去玩吗？', scene: 'free_chat_scene', query: 'child asking to play outside illustration' },
+    { en: 'See you tomorrow.', zh: '明天见。', scene: 'greeting_scene', query: 'children saying goodbye illustration' },
+  ],
+  A2: [
+    { en: 'I went to the park yesterday.', zh: '我昨天去了公园。', scene: 'story_scene', query: 'children playing in park illustration' },
+    { en: 'I am going to visit my grandma.', zh: '我要去看奶奶。', scene: 'story_scene', query: 'child visiting grandmother illustration' },
+    { en: 'Can I have the menu, please?', zh: '请给我菜单好吗？', scene: 'object_shop_scene', query: 'child in restaurant menu illustration' },
+    { en: 'I would like a glass of milk.', zh: '我想要一杯牛奶。', scene: 'object_shop_scene', query: 'child ordering milk restaurant illustration' },
+    { en: 'Where is the train station?', zh: '火车站在哪里？', scene: 'free_chat_scene', query: 'child asking train station illustration' },
+    { en: 'How long does it take?', zh: '要花多长时间？', scene: 'free_chat_scene', query: 'child asking travel time illustration' },
+    { en: "I don't feel well.", zh: '我不舒服。', scene: 'free_chat_scene', query: 'child feeling sick illustration' },
+    { en: 'I have a headache.', zh: '我头疼。', scene: 'free_chat_scene', query: 'child with headache illustration' },
+    { en: 'Could you say that again?', zh: '你能再说一遍吗？', scene: 'free_chat_scene', query: 'child asking repeat illustration' },
+    { en: 'What do you think?', zh: '你觉得怎么样？', scene: 'free_chat_scene', query: 'children sharing opinions illustration' },
+    { en: 'I prefer the blue one.', zh: '我更喜欢蓝色的那个。', scene: 'object_shop_scene', query: 'child choosing blue item illustration' },
+    { en: "Let's meet at six.", zh: '我们六点见吧。', scene: 'greeting_scene', query: 'children meeting at six illustration' },
+    { en: "I'm looking for a jacket.", zh: '我在找一件夹克。', scene: 'object_shop_scene', query: 'child shopping for jacket illustration' },
+    { en: 'Is there a supermarket near here?', zh: '这附近有超市吗？', scene: 'free_chat_scene', query: 'child asking supermarket location illustration' },
+  ],
+  B1: [
+    { en: 'In my opinion, this is a good idea.', zh: '在我看来，这是个好主意。', scene: 'free_chat_scene', query: 'children discussing ideas illustration' },
+    { en: 'I agree with you because it is fair.', zh: '我同意你，因为这样公平。', scene: 'free_chat_scene', query: 'children agreeing discussion illustration' },
+    { en: "I'm not sure about that.", zh: '我不太确定。', scene: 'free_chat_scene', query: 'child uncertain discussion illustration' },
+    { en: 'Have you ever been to a museum?', zh: '你去过博物馆吗？', scene: 'free_chat_scene', query: 'children visiting museum illustration' },
+    { en: 'I used to play football.', zh: '我以前踢足球。', scene: 'story_scene', query: 'child playing football past illustration' },
+    { en: 'If I have time, I will join you.', zh: '如果我有时间，我会加入你们。', scene: 'free_chat_scene', query: 'children making plans illustration' },
+    { en: 'You should try again.', zh: '你应该再试一次。', scene: 'free_chat_scene', query: 'child encouraging friend illustration' },
+    { en: 'What would you do if you were me?', zh: '如果你是我，你会怎么做？', scene: 'free_chat_scene', query: 'children giving advice illustration' },
+    { en: "I'm calling to ask about the course.", zh: '我打电话是想咨询课程。', scene: 'free_chat_scene', query: 'child making phone call illustration' },
+    { en: 'Could you tell me how to get there?', zh: '你能告诉我怎么去那里吗？', scene: 'free_chat_scene', query: 'child asking directions illustration' },
+    { en: 'The reason is that I was busy.', zh: '原因是我当时很忙。', scene: 'free_chat_scene', query: 'child explaining reason illustration' },
+    { en: 'Although it was difficult, I finished it.', zh: '虽然很难，但我完成了。', scene: 'story_scene', query: 'child finishing difficult task illustration' },
+    { en: "I'm looking forward to the trip.", zh: '我很期待这次旅行。', scene: 'free_chat_scene', query: 'child excited about trip illustration' },
+    { en: 'That sounds like a good idea.', zh: '听起来是个好主意。', scene: 'free_chat_scene', query: 'children liking an idea illustration' },
+  ],
+  B2: [
+    { en: 'From my perspective, the benefits are clear.', zh: '从我的角度看，好处很明显。', scene: 'free_chat_scene', query: 'children presenting ideas illustration' },
+    { en: "I'd like to point out that the cost is high.", zh: '我想指出成本很高。', scene: 'free_chat_scene', query: 'child making a point discussion illustration' },
+    { en: 'There is evidence that reading helps.', zh: '有证据表明阅读有帮助。', scene: 'free_chat_scene', query: 'children reading evidence illustration' },
+    { en: 'This may lead to a bigger problem.', zh: '这可能导致更大的问题。', scene: 'free_chat_scene', query: 'children discussing consequences illustration' },
+    { en: 'I see your point, but I disagree.', zh: '我明白你的意思，但我不同意。', scene: 'free_chat_scene', query: 'children debating illustration' },
+    { en: 'To what extent do you agree?', zh: '你在多大程度上同意？', scene: 'free_chat_scene', query: 'classroom discussion illustration' },
+    { en: 'We need to prioritize the most important task.', zh: '我们需要优先处理最重要的任务。', scene: 'free_chat_scene', query: 'children planning priorities illustration' },
+    { en: 'What are the pros and cons?', zh: '利弊是什么？', scene: 'free_chat_scene', query: 'children weighing pros and cons illustration' },
+    { en: "I'd like to propose a different plan.", zh: '我想提出一个不同的计划。', scene: 'free_chat_scene', query: 'child proposing plan illustration' },
+    { en: 'Could you clarify what you mean?', zh: '你能说明一下你的意思吗？', scene: 'free_chat_scene', query: 'child asking clarification illustration' },
+    { en: 'In the long run, it will save money.', zh: '从长远看，这会省钱。', scene: 'free_chat_scene', query: 'children thinking long term illustration' },
+    { en: 'It depends on the weather.', zh: '这取决于天气。', scene: 'free_chat_scene', query: 'children checking weather illustration' },
+    { en: "I'm not entirely convinced.", zh: '我不完全信服。', scene: 'free_chat_scene', query: 'child skeptical discussion illustration' },
+    { en: "Let's reach a compromise.", zh: '我们各退一步吧。', scene: 'free_chat_scene', query: 'children reaching agreement illustration' },
+  ],
+  C1: [
+    { en: 'It could be argued that the policy is effective.', zh: '可以说这项政策是有效的。', scene: 'free_chat_scene', query: 'students debating policy illustration' },
+    { en: 'This raises the question of fairness.', zh: '这引出了公平性的问题。', scene: 'free_chat_scene', query: 'students discussing fairness illustration' },
+    { en: "I'd like to nuance that claim.", zh: '我想对这个说法做一点细微修正。', scene: 'free_chat_scene', query: 'student nuanced argument illustration' },
+    { en: 'The underlying assumption is questionable.', zh: '这个潜在假设值得商榷。', scene: 'free_chat_scene', query: 'student questioning assumption illustration' },
+    { en: 'To put it another way, the plan is risky.', zh: '换句话说，这个计划有风险。', scene: 'free_chat_scene', query: 'student rephrasing idea illustration' },
+    { en: 'This is consistent with the earlier findings.', zh: '这与早先的发现一致。', scene: 'free_chat_scene', query: 'students comparing findings illustration' },
+    { en: 'We should take into account the long-term effects.', zh: '我们应该考虑长期影响。', scene: 'free_chat_scene', query: 'students considering long term effects illustration' },
+    { en: 'I would contend that the evidence is weak.', zh: '我认为证据不足。', scene: 'free_chat_scene', query: 'student evaluating evidence illustration' },
+    { en: 'The evidence is inconclusive.', zh: '证据尚无定论。', scene: 'free_chat_scene', query: 'student reviewing inconclusive evidence illustration' },
+    { en: 'With all due respect, I disagree.', zh: '恕我直言，我不同意。', scene: 'free_chat_scene', query: 'polite disagreement illustration' },
+    { en: 'That said, the idea has merit.', zh: '话虽如此，这个想法有价值。', scene: 'free_chat_scene', query: 'balanced discussion illustration' },
+    { en: 'It is worth noting that the sample is small.', zh: '值得注意的是样本很小。', scene: 'free_chat_scene', query: 'students noting sample size illustration' },
+    { en: "I'm inclined to agree, provided that we test it.", zh: '如果测试过，我倾向于同意。', scene: 'free_chat_scene', query: 'conditional agreement illustration' },
+    { en: 'Let me reframe the issue.', zh: '让我重新表述这个问题。', scene: 'free_chat_scene', query: 'student reframing issue illustration' },
+  ],
+  C2: [
+    { en: 'There is a fine line between confidence and arrogance.', zh: '自信与傲慢之间只有一线之隔。', scene: 'free_chat_scene', query: 'abstract confidence arrogance illustration' },
+    { en: 'That is a rather sweeping generalization.', zh: '那是一个相当笼统的概括。', scene: 'free_chat_scene', query: 'student challenging generalization illustration' },
+    { en: 'I take your point, not least because the data support it.', zh: '我接受你的观点，尤其是因为数据支持它。', scene: 'free_chat_scene', query: 'student conceding with data illustration' },
+    { en: 'The distinction is subtle but important.', zh: '这个区别很细微但很重要。', scene: 'free_chat_scene', query: 'student explaining subtle distinction illustration' },
+    { en: 'One could argue, albeit cautiously, that it works.', zh: '可以谨慎地说，它是有效的。', scene: 'free_chat_scene', query: 'cautious argument illustration' },
+    { en: 'This begs the question of who is responsible.', zh: '这引出了谁该负责的问题。', scene: 'free_chat_scene', query: 'student raising responsibility question illustration' },
+    { en: 'The irony is not lost on me.', zh: '我并非没有察觉其中的讽刺。', scene: 'free_chat_scene', query: 'subtle irony illustration' },
+    { en: 'I would stop short of saying it is perfect.', zh: '我不会说它完美。', scene: 'free_chat_scene', query: 'measured judgment illustration' },
+    { en: 'It would be an overstatement to call it a failure.', zh: '称之为失败言过其实。', scene: 'free_chat_scene', query: 'student qualifying statement illustration' },
+    { en: 'By the same token, we should not ignore the risks.', zh: '同样地，我们也不应忽视风险。', scene: 'free_chat_scene', query: 'balanced risk discussion illustration' },
+    { en: 'That is not to say that the criticism is unfounded.', zh: '这并不是说批评没有根据。', scene: 'free_chat_scene', query: 'nuanced criticism illustration' },
+    { en: 'Insofar as it concerns children, the rule is too strict.', zh: '就涉及儿童而言，这条规则太严了。', scene: 'free_chat_scene', query: 'child policy discussion illustration' },
+    { en: 'The nuance here is easy to miss.', zh: '这里的细微差别很容易被忽略。', scene: 'free_chat_scene', query: 'student highlighting nuance illustration' },
+    { en: 'We may be conflating two different issues.', zh: '我们可能把两个不同的问题混为一谈。', scene: 'free_chat_scene', query: 'student separating two issues illustration' },
   ],
 };
 
@@ -336,12 +463,19 @@ export function buildCefrPreset(): CefrCurriculumPackage {
     title: 'CEFR 儿童英语长期课程（预置）',
     source: 'preset',
     generatedAt: '2026-11-12T00:00:00.000Z',
-    levels: (Object.keys(CEFR_PRESET_WORDS) as CefrCurriculumLevel[]).map((level) => ({
-      code: level,
-      nameZh: CEFR_LEVEL_NAMES[level],
-      canDo: CEFR_CAN_DO[level],
-      units: buildUnits(level, CEFR_PRESET_WORDS[level], 5, level.toLowerCase().replace(/[^a-z0-9]/g, '')),
-    })),
+    levels: (Object.keys(CEFR_PRESET_WORDS) as CefrCurriculumLevel[]).map((level) => {
+      const prefix = level.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const wordUnits = buildUnits(level, CEFR_PRESET_WORDS[level], 5, prefix);
+      return {
+        code: level,
+        nameZh: CEFR_LEVEL_NAMES[level],
+        canDo: CEFR_CAN_DO[level],
+        units: [
+          ...wordUnits,
+          ...buildExpressionUnits(level, CEFR_DAILY_EXPRESSIONS[level], prefix, wordUnits.length),
+        ],
+      };
+    }),
   };
 }
 
@@ -371,6 +505,144 @@ function buildUnits(level: CefrCurriculumLevel, words: string[], unitSize: numbe
   return units;
 }
 
+function buildExpressionUnits(
+  level: CefrCurriculumLevel,
+  expressions: DailyExpression[],
+  prefix: string,
+  startOrder: number,
+): CefrUnit[] {
+  const units: CefrUnit[] = [];
+  const unitSize = 7;
+  for (let offset = 0; offset < expressions.length; offset += unitSize) {
+    const chunk = expressions.slice(offset, offset + unitSize);
+    const unitNo = Math.floor(offset / unitSize) + 1;
+    const code = `${prefix}-d${String(unitNo).padStart(2, '0')}`;
+    const vocabulary = chunk.map((expression, index) => expressionVocabulary(expression, code, index));
+    const patterns = chunk.slice(0, 2).map((expression) => ({ en: expression.en, zh: expression.zh }));
+    units.push({
+      code,
+      title: `${CEFR_LEVEL_NAMES[level]} · 日常用语 ${unitNo}`,
+      order: startOrder + unitNo - 1,
+      objectives: [
+        `能在真实情境中听懂并回应：${chunk.slice(0, 2).map((item) => item.zh).join('、')}`,
+        '能把日常用语和场景图片对应起来',
+        '能在角色对话中主动说出目标表达',
+      ],
+      vocabulary,
+      patterns,
+      lessons: buildExpressionLessons(code, chunk, vocabulary, level),
+    });
+  }
+  return units;
+}
+
+function expressionVocabulary(expression: DailyExpression, unitCode: string, index: number): CefrVocabularyEntry {
+  return {
+    word: expression.en,
+    phonetic: '',
+    meaningZh: expression.zh,
+    syllables: [],
+    difficultPhonemes: difficultPhonemes(expression.en),
+    phrases: [expression.en],
+    exampleSentences: [{ en: expression.en, zh: expression.zh }],
+    image: {
+      key: `img:${unitCode}:expr:${index}`,
+      kind: 'scene',
+      targetText: expression.en,
+      query: expression.query,
+      alt: `${expression.zh} 的情境图片`,
+    },
+  };
+}
+
+function buildExpressionLessons(
+  unitCode: string,
+  expressions: DailyExpression[],
+  vocabulary: CefrVocabularyEntry[],
+  level: CefrCurriculumLevel,
+): CefrLesson[] {
+  const lessons: CefrLesson[] = [];
+  for (const [index, expression] of expressions.entries()) {
+    const image = vocabulary[index]?.image;
+    const sceneImage = image ? [image] : [];
+    lessons.push(makeLesson({
+      id: `${unitCode}:${lessons.length}`,
+      title: `听一听：${expression.zh}`,
+      taskType: 'listening_comprehension',
+      scenario: expression.scene,
+      skillNodeIds: ['LA.LISTEN.instruction'],
+      targetWords: [expression.en],
+      teacherUtteranceZh: '听一听，选出正确的日常用语。',
+      demonstrationText: expression.en,
+      requiresPronunciationAssessment: false,
+      requiresAsr: false,
+      assessment: { acceptedTexts: [expression.en] },
+      difficulty: levelDifficulty(level),
+      imageRequirements: sceneImage,
+    }), makeLesson({
+      id: `${unitCode}:${lessons.length + 1}`,
+      title: `跟着说：${expression.zh}`,
+      taskType: 'word_mimicry',
+      scenario: expression.scene,
+      skillNodeIds: ['LA.SPEAK.imitation'],
+      targetWords: [expression.en],
+      teacherUtteranceZh: '跟着老师慢慢说这句话。',
+      demonstrationText: expression.en,
+      requiresPronunciationAssessment: true,
+      requiresAsr: false,
+      assessment: { acceptedTexts: [expression.en] },
+      difficulty: levelDifficulty(level),
+      imageRequirements: sceneImage,
+    }), makeLesson({
+      id: `${unitCode}:${lessons.length + 2}`,
+      title: `情境表达：${expression.zh}`,
+      taskType: 'situational_dialogue',
+      scenario: expression.scene,
+      skillNodeIds: ['LA.COMM.dialogue'],
+      targetWords: [expression.en],
+      teacherUtteranceZh: `在「${expression.zh}」的情境里，试着这样说。`,
+      demonstrationText: expression.en,
+      requiresPronunciationAssessment: false,
+      requiresAsr: true,
+      assessment: { acceptedTexts: [expression.en] },
+      difficulty: Math.min(5, levelDifficulty(level) + 1),
+      imageRequirements: sceneImage,
+    }));
+  }
+  lessons.push(makeLesson({
+    id: `${unitCode}:${lessons.length}`,
+    title: '日常用语复习：听辨',
+    taskType: 'listening_comprehension',
+    scenario: 'review_scene',
+    skillNodeIds: ['LA.LISTEN.instruction'],
+    targetWords: expressions.map((item) => item.en),
+    teacherUtteranceZh: '我们复习这一组日常用语。听一听，选出正确的表达。',
+    demonstrationText: expressions[0]?.en || '',
+    requiresPronunciationAssessment: false,
+    requiresAsr: false,
+    assessment: { acceptedTexts: expressions.map((item) => item.en) },
+    difficulty: levelDifficulty(level),
+    imageRequirements: vocabulary.slice(0, 7).flatMap((item) => item.image ? [item.image] : []),
+  }));
+  const pattern = expressions[0]?.en || '';
+  lessons.push(makeLesson({
+    id: `${unitCode}:${lessons.length}`,
+    title: '日常用语复习：情境对话',
+    taskType: 'situational_dialogue',
+    scenario: 'free_chat_scene',
+    skillNodeIds: ['LA.COMM.dialogue'],
+    targetWords: [pattern],
+    teacherUtteranceZh: '现在换你来说。请根据情境回应老师。',
+    demonstrationText: pattern,
+    requiresPronunciationAssessment: false,
+    requiresAsr: true,
+    assessment: { acceptedTexts: expressions.map((item) => item.en) },
+    difficulty: Math.min(5, levelDifficulty(level) + 1),
+    imageRequirements: vocabulary[0]?.image ? [vocabulary[0].image] : [],
+  }));
+  return lessons;
+}
+
 function vocabularyFor(word: string, unitCode: string): CefrVocabularyEntry {
   const entry = LEXICON[word.toLowerCase()];
   const example = exampleFor(word);
@@ -384,7 +656,9 @@ function vocabularyFor(word: string, unitCode: string): CefrVocabularyEntry {
     exampleSentences: [{ en: example.en, zh: example.zh }],
     image: {
       key: `img:${unitCode}:${slug(word)}`,
+      kind: 'word',
       targetWord: word,
+      targetText: word,
       query: `${word} children flashcard illustration`,
       alt: `${word} 的儿童教学图片`,
     },
@@ -416,7 +690,7 @@ function buildLessons(
       requiresAsr: false,
       assessment: { acceptedTexts: [word] },
       difficulty: levelDifficulty(level),
-      imageKeys: [item.image?.key || ''],
+      imageRequirements: item.image ? [item.image] : [],
     }), makeLesson({
       id: `${unitCode}:${lessons.length + 1}`,
       title: `跟着说：${word}`,
@@ -430,7 +704,7 @@ function buildLessons(
       requiresAsr: false,
       assessment: { acceptedTexts: [word] },
       difficulty: levelDifficulty(level),
-      imageKeys: [item.image?.key || ''],
+      imageRequirements: item.image ? [item.image] : [],
     }), makeLesson({
       id: `${unitCode}:${lessons.length + 2}`,
       title: `试着说一句：${word}`,
@@ -444,7 +718,10 @@ function buildLessons(
       requiresAsr: true,
       assessment: { acceptedTexts: [example] },
       difficulty: Math.min(5, levelDifficulty(level) + 1),
-      imageKeys: [item.image?.key || ''],
+      imageRequirements: [
+        ...(item.image ? [item.image] : []),
+        ...(index === 0 ? [phraseImageFor(unitCode, word, example, item.meaningZh)] : []),
+      ],
     }));
   }
   const reviewWords = words.slice(0, 6);
@@ -461,7 +738,7 @@ function buildLessons(
     requiresAsr: false,
     assessment: { acceptedTexts: reviewWords },
     difficulty: levelDifficulty(level),
-    imageKeys: vocabulary.slice(0, 6).map((item) => item.image?.key || ''),
+    imageRequirements: vocabulary.slice(0, 6).flatMap((item) => item.image ? [item.image] : []),
   }));
   const pattern = patterns[0]?.en || `This is ${words[0]}.`;
   lessons.push(makeLesson({
@@ -477,7 +754,7 @@ function buildLessons(
     requiresAsr: true,
     assessment: { acceptedTexts: [pattern] },
     difficulty: Math.min(5, levelDifficulty(level) + 1),
-    imageKeys: vocabulary.slice(0, 2).map((item) => item.image?.key || ''),
+    imageRequirements: [sceneImageFor(unitCode, pattern, patterns[0]?.zh || '')],
   }));
   return lessons;
 }
@@ -495,9 +772,10 @@ function makeLesson(input: {
   requiresAsr: boolean;
   assessment: { acceptedTexts?: string[]; acceptedImageIds?: string[]; requiredPhrases?: string[]; openResponse?: boolean };
   difficulty: number;
-  imageKeys: string[];
+  imageRequirements: CefrImageRequirement[];
 }): CefrLesson {
   const speechText = [input.teacherUtteranceZh, input.demonstrationText].filter(Boolean).join(' ');
+  const imageRequirements = [...new Map(input.imageRequirements.map((item) => [item.key, item])).values()];
   return {
     id: input.id,
     title: input.title,
@@ -516,11 +794,33 @@ function makeLesson(input: {
       openResponse: input.assessment.openResponse || false,
     },
     difficulty: input.difficulty,
+    imageRequirements,
     media: {
       speechKey: input.id,
       speechText,
-      imageKeys: [...new Set(input.imageKeys.filter(Boolean))],
+      imageKeys: imageRequirements.map((item) => item.key),
     },
+  };
+}
+
+function phraseImageFor(unitCode: string, word: string, example: string, meaningZh: string): CefrImageRequirement {
+  return {
+    key: `img:${unitCode}:phrase:${slug(word)}`,
+    kind: 'phrase',
+    targetWord: word,
+    targetText: example,
+    query: `${example} children illustration`.slice(0, 300),
+    alt: `${meaningZh || example} 的短句配图`.slice(0, 300),
+  };
+}
+
+function sceneImageFor(unitCode: string, pattern: string, meaningZh: string): CefrImageRequirement {
+  return {
+    key: `img:${unitCode}:scene`,
+    kind: 'scene',
+    targetText: pattern,
+    query: `${pattern} children scene illustration`.slice(0, 300),
+    alt: `${meaningZh || pattern} 的情境配图`.slice(0, 300),
   };
 }
 

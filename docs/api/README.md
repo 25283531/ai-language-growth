@@ -170,7 +170,8 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 | `POST /admin/curriculum/textbook/generate` | `{ title, level, words, unitSize?, useAi?, persist? }` | 词表生成完整 `schemaVersion 2` JSON；默认按单元写入草稿；不生成图片/语音 |
 | `GET /admin/curriculum/preset?level=A1` | 可选 `level` | 返回服务端预置 CEFR 纯 JSON；只读，不触库、不调用模型 |
 | `POST /admin/curriculum/preset/import` | `{ level? }` | 预置课程按单元写入审核队列；不自动发布 |
-| `POST /admin/curriculum/preset/warmup` | `{ level, maxImages?, maxSpeech? }` | 只处理该级别已发布课程；解析/缓存图片并回填，再预生成公共 TTS；`mock` 模式跳过语音 |
+| `POST /admin/curriculum/preset/warmup` | `{ level, maxImages?, maxSpeech? }` | 只处理该级别已发布课程；Openverse + Wikimedia Commons 搜索并缓存最合适的单词/短句/场景图，回填后预生成公共 TTS；返回 `missingImages`，`mock` 模式跳过语音 |
+| `POST /admin/curriculum/images/upload` | multipart：`file`、`key`、`kind`、`targetText`，可选 `targetWord`/`license`/`attribution` | 管理员补传缺失图片；写入 `media_assets` 并挂到已发布活动，返回 `attached` |
 
 完整结构与运维说明见 `docs/curriculum-generation.md`。
 
@@ -181,7 +182,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 3. 学习者教学 API 仍需把已登录用户与 `guardianId` 归属校验接入所有读写路径；当前账户认证接口已具备。
 4. 原型音频上传已实现，但短期保留、自动删除、对象存储和正式访问控制尚未实现。
 5. 本 API 快照与 M0 冻结验收记录尚未建立，不能称为“contracts are locked in M0”。
-6. 管理端 `admin/auth/*`（登录 / 登出 / 会话查询）、`admin/model-routing`、`admin/curriculum/*`（本轮已登记词表生成与预置/预热四接口，其余仍待登记）、`admin/backups/*` 尚未在本快照逐条登记；Android 侧 `/user/*` 等接口同样未登记。以上如实记为已知登记缺口：本文仍保持「M0 冻结快照（原型范围）」定位，不改写为完整 API 手册。
+6. 管理端 `admin/auth/*`（登录 / 登出 / 会话查询）、`admin/model-routing`、`admin/curriculum/*`（本轮已登记词表生成、预置读取/导入、预热、缺失图片上传五接口，其余仍待登记）、`admin/backups/*` 尚未在本快照逐条登记；Android 侧 `/user/*` 等接口同样未登记。以上如实记为已知登记缺口：本文仍保持「M0 冻结快照（原型范围）」定位，不改写为完整 API 手册。
 
 ## 代码来源
 
