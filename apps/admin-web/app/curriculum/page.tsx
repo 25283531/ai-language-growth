@@ -72,7 +72,7 @@ export default function CurriculumPage() {
   const [generationDescription, setGenerationDescription] = useState('');
   const [generatedPackage, setGeneratedPackage] = useState('');
   const [textbook, setTextbook] = useState({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
-  const [draft, setDraft] = useState({ title: '', level: 'pre-A', words: '', textbookId: '', textbookUnitId: '' });
+  const [draft, setDraft] = useState({ title: '', level: 'pre-A', outline: '', objectives: '', words: '', textbookId: '', textbookUnitId: '' });
 
   function headers() { return {}; }
   async function request(path: string, init?: RequestInit) {
@@ -88,6 +88,7 @@ export default function CurriculumPage() {
     ]);
     setTextbooks(books);
     setDrafts(items);
+    setSelectedDrafts((old) => old.filter((id) => items.some((item: Draft) => item.id === id)));
   }
   useEffect(() => { void load().catch((error) => setMessage(error.message)); }, []);
 
@@ -103,7 +104,7 @@ export default function CurriculumPage() {
     setBusy(true);
     try {
       await request('/api/v1/admin/curriculum/drafts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...draft, textbookId: draft.textbookId || undefined, textbookUnitId: draft.textbookUnitId || undefined }) });
-      setDraft({ title: '', level: 'pre-A', words: '', textbookId: '', textbookUnitId: '' });
+      setDraft({ title: '', level: 'pre-A', outline: '', objectives: '', words: '', textbookId: '', textbookUnitId: '' });
       await load(); setMessage('课程草稿已创建。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '创建失败'); } finally { setBusy(false); }
   }
@@ -140,6 +141,8 @@ export default function CurriculumPage() {
           title: draft.title,
           level: draft.level,
           words: draft.words,
+          outline: draft.outline,
+          objectives: draft.objectives,
           description: generationDescription,
           textbook: selectedBook ? {
             publisher: selectedBook.publisher,
@@ -183,6 +186,23 @@ export default function CurriculumPage() {
     } catch (error) { setMessage(error instanceof Error ? error.message : '批量操作失败'); }
     finally { setBusy(false); }
   }
+  async function batchDelete() {
+    if (busy || pendingAction || !canBatchDelete) return;
+    const ids = selectedStatus.map((item) => item.id);
+    if (!window.confirm(`确定删除选中的 ${ids.length} 节已发布课程？课程将归档并停止用于后续学习，孩子的学习历史和审核记录会保留。`)) return;
+    setBusy(true);
+    try {
+      const result = await request('/api/v1/admin/curriculum/drafts/batch-delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ draftIds: ids, confirm: true }),
+      });
+      setSelectedDrafts([]);
+      await load();
+      setMessage(`已删除（归档）${result.count} 节已发布课程，学习历史和审核记录已保留。`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : '批量删除失败'); }
+    finally { setBusy(false); }
+  }
   async function saveContent(item: Draft) {
     setBusy(true);
     try {
@@ -198,6 +218,10 @@ export default function CurriculumPage() {
   const selectedStatus = drafts.filter((item) => selectedDrafts.includes(item.id));
   const canBatchReview = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'under_review');
   const canBatchPublish = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'approved');
+  const canBatchDelete = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'published');
+  const allSelected = drafts.length > 0 && selectedStatus.length === drafts.length;
+  const partiallySelected = selectedStatus.length > 0 && !allSelected;
+  const hasGenerationInput = Boolean(draft.words.trim() || (draft.outline.trim() && draft.objectives.trim()));
 
   return <main className="shell">
     <AdminNav />
@@ -226,33 +250,41 @@ export default function CurriculumPage() {
       <button disabled={busy || !packageFile} onClick={() => void importPackage()}>导入课程包</button>
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
-      <div className="panel-head"><div><p className="eyebrow">AI DRAFT</p><h2>按词表生成课程</h2><p className="muted">每行一个单词。AI 只生成待审核内容，不会直接修改孩子掌握状态。</p></div></div>
+      <div className="panel-head"><div><p className="eyebrow">AI DRAFT</p><h2>按大纲和教学目的补全课程</h2><p className="muted">提交课程大纲与教学目的，词表可选；也支持沿用词表生成。小参数模型整理语言素材，主文本模型补全课程和教学活动，结果须人工审核后发布。</p></div></div>
       <div className="fields">
         <label>课程标题<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
         <label>学习等级<select value={draft.level} onChange={(e) => setDraft({ ...draft, level: e.target.value })}><option>pre-A</option><option>A</option><option>B</option><option>C</option></select></label>
         <label>教材版本<select value={draft.textbookId} onChange={(e) => setDraft({ ...draft, textbookId: e.target.value, textbookUnitId: '' })}><option value="">不绑定教材</option>{textbooks.map((book) => <option key={book.id} value={book.id}>{book.publisher} · {book.publicationYear} · {book.grade} · {book.title || '教材'}</option>)}</select></label>
         <label>教材单元<select value={draft.textbookUnitId} onChange={(e) => setDraft({ ...draft, textbookUnitId: e.target.value })}><option value="">不绑定单元</option>{selectedBook?.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.unitCode} · {unit.title}</option>)}</select></label>
       </div>
-      <label>词表<textarea className="routing-editor" style={{ minHeight: 150 }} value={draft.words} onChange={(e) => setDraft({ ...draft, words: e.target.value })} placeholder={'hello\napple\nbook'} /></label>
-      <button disabled={busy || !draft.title || !draft.words.trim()} onClick={() => void createDraft()}>创建课程草稿</button>
+      <label>课程大纲<textarea className="routing-editor" style={{ minHeight: 120 }} value={draft.outline} onChange={(event) => setDraft({ ...draft, outline: event.target.value })} placeholder="例如：从听懂问候、理解使用场景、跟读模仿，逐步过渡到主动打招呼和简短交流。" /></label>
+      <label>教学目的<textarea className="routing-editor" style={{ minHeight: 90 }} value={draft.objectives} onChange={(event) => setDraft({ ...draft, objectives: event.target.value })} placeholder="例如：孩子能在真实见面场景中听懂并主动使用 hello，而非只会背诵单词。" /></label>
+      <label>参考词表（可选，每行一个）<textarea className="routing-editor" style={{ minHeight: 100 }} value={draft.words} onChange={(e) => setDraft({ ...draft, words: e.target.value })} placeholder={'hello\nhi\ngoodbye'} /></label>
+      <button disabled={busy || !draft.title.trim() || !hasGenerationInput} onClick={() => void createDraft()}>创建待补全草稿</button>
+      <p className="muted">创建后点击队列中的“AI 补全课程”；补全不会自动发布或改变孩子掌握状态。</p>
       <label style={{ marginTop: 16 }}>自然语言课程要求<textarea className="routing-editor" style={{ minHeight: 120 }} value={generationDescription} onChange={(event) => setGenerationDescription(event.target.value)} placeholder="例如：面向零基础儿童，围绕校园用品设计由听辨、模仿到日常对话的七阶段课程；每阶段提供可判断掌握情况的活动。" /></label>
-      <button className="secondary" disabled={busy || !draft.title || !draft.words.trim() || !generationDescription.trim()} onClick={() => void generatePackage()}>生成并下载独立课程包</button>
+      <button className="secondary" disabled={busy || !draft.title.trim() || !hasGenerationInput} onClick={() => void generatePackage()}>生成并下载独立课程包</button>
       {generatedPackage && <a className="doclink" href={`/api/v1/admin/curriculum/generator/packages/${generatedPackage}/download`}>下载刚生成的课程 ZIP</a>}
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
       <div className="panel-head"><div><p className="eyebrow">REVIEW QUEUE</p><h2>审核队列</h2></div></div>
       <div className="row-actions" style={{ marginBottom: 14 }}>
-        <button className="secondary" disabled={!canBatchReview || busy} onClick={() => void batchAction('approve')}>批量审核通过</button>
-        <button className="secondary" disabled={!canBatchReview || busy} onClick={() => void batchAction('reject')}>批量退回</button>
-        <button disabled={!canBatchPublish || busy} onClick={() => void batchAction('publish')}>批量发布</button>
+        <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          <input type="checkbox" aria-label="全选当前列表课程" aria-checked={partiallySelected ? 'mixed' : allSelected} checked={allSelected} ref={(element) => { if (element) element.indeterminate = partiallySelected; }} disabled={!drafts.length || busy || Boolean(pendingAction)} onChange={(event) => setSelectedDrafts(event.target.checked ? drafts.map((item) => item.id) : [])} />
+          全选当前列表
+        </label>
+        <button className="secondary" disabled={!canBatchReview || busy || Boolean(pendingAction)} onClick={() => void batchAction('approve')}>批量审核通过</button>
+        <button className="secondary" disabled={!canBatchReview || busy || Boolean(pendingAction)} onClick={() => void batchAction('reject')}>批量退回</button>
+        <button disabled={!canBatchPublish || busy || Boolean(pendingAction)} onClick={() => void batchAction('publish')}>批量发布</button>
+        <button className="secondary" disabled={!canBatchDelete || busy || Boolean(pendingAction)} onClick={() => void batchDelete()}>批量删除已发布课程</button>
         <span className="status">已选择 {selectedDrafts.length} 节</span>
       </div>
       {drafts.map((item) => <div className="helper" key={item.id}>
-        <label className="switch" style={{ display: 'inline-flex', marginRight: 8 }}><input type="checkbox" checked={selectedDrafts.includes(item.id)} onChange={(event) => setSelectedDrafts((old) => event.target.checked ? [...old, item.id] : old.filter((id) => id !== item.id))} /><span /></label>
+        <label className="switch" style={{ display: 'inline-flex', marginRight: 8 }}><input type="checkbox" aria-label={`选择课程：${item.title}`} disabled={busy || Boolean(pendingAction)} checked={selectedDrafts.includes(item.id)} onChange={(event) => setSelectedDrafts((old) => event.target.checked ? [...old, item.id] : old.filter((id) => id !== item.id))} /><span /></label>
         <strong>{item.title}</strong> · {item.level} · {item.status} · {item.wordList.length} 个词
         {item.generatedContent?.vocabulary && ` · 已生成 ${item.generatedContent.vocabulary.length} 个词条`}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-          {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>生成草稿</button>}
+          {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>AI 补全课程</button>}
           {item.generatedContent && ['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setEditingContent(toEditableContent(item.generatedContent)); }}>编辑课程</button>}
           {['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'submit')}>提交审核</button>}
           {item.status === 'under_review' && <><button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'approve')}>{pendingAction === `${item.id}:approve` ? '处理中…' : '审核通过'}</button><button className="secondary" disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'reject')}>{pendingAction === `${item.id}:reject` ? '处理中…' : '退回修改'}</button></>}

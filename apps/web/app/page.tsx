@@ -153,6 +153,89 @@ function fmtCost(n: number): string {
   return Number.isFinite(n) ? n.toFixed(4) : String(n);
 }
 
+type ClassroomViewProps = {
+  directive: TeachingDirective | null;
+  speech: SpeechPayload | null;
+  topicName: string | null;
+  sessionId: string | null;
+  busy: boolean;
+  onStart: () => void;
+  onReplay: () => void;
+  onSubmit: (text: string) => void;
+  onOpenWorkbench: () => void;
+};
+
+/** 面向儿童的真实课堂入口：先教，再听，再跟读，再进入下一步。 */
+function ClassroomView({
+  directive,
+  speech,
+  topicName,
+  sessionId,
+  busy,
+  onStart,
+  onReplay,
+  onSubmit,
+  onOpenWorkbench,
+}: ClassroomViewProps) {
+  const [step, setStep] = useState(0);
+  const [listening, setListening] = useState(false);
+  const [heard, setHeard] = useState('');
+  const [showHint, setShowHint] = useState(false);
+  const word = directive?.targetWords?.[0] ?? 'hello';
+  const phonetic = word.toLowerCase() === 'hello' ? '/həˈləʊ/' : '跟着老师的声音读一读';
+  const teacherText = directive?.teacherUtterance ?? '小朋友，今天我们来认识一个新单词。先听老师说一遍，然后在心里跟着说一遍。';
+  const example = directive?.demonstrationText ?? 'Hello! Nice to meet you.';
+  const steps = ['认识单词', '听一听', '跟着读', '用一用'];
+
+  function startListening() {
+    const SpeechRecognition = (window as typeof window & { webkitSpeechRecognition?: new () => { lang: string; start: () => void; onresult: (event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void; onend: () => void } }).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setHeard('hello');
+      setListening(false);
+      onSubmit('hello');
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.onresult = (event) => {
+      const text = event.results[0][0].transcript;
+      setHeard(text);
+      onSubmit(text);
+    };
+    recognition.onend = () => setListening(false);
+    setListening(true);
+    recognition.start();
+  }
+
+  return (
+    <main className="classroom-shell">
+      <header className="classroom-header">
+        <div className="classroom-brand"><span className="brand-mark">A</span><div><b>小小英语课堂</b><span>AI 陪你开口说英语</span></div></div>
+        <div className="classroom-header-actions"><span className="lesson-pill">第 1 课 · {topicName ?? '问候语'}</span><button className="text-button" onClick={onOpenWorkbench}>开发者工作台</button></div>
+      </header>
+      <div className="lesson-progress"><div className="progress-label"><span>今天的课堂</span><b>{steps[step]}</b></div><div className="progress-track">{steps.map((item, index) => <button key={item} className={`progress-dot ${index <= step ? 'done' : ''} ${index === step ? 'current' : ''}`} onClick={() => setStep(index)}><span>{index + 1}</span>{item}</button>)}</div></div>
+      {!sessionId ? (
+        <section className="welcome-card">
+          <div className="welcome-illustration" aria-hidden="true">👋</div>
+          <div><p className="eyebrow">READY TO LEARN?</p><h1>你好！准备好和老师<br /><em>一起说英语</em>了吗？</h1><p>今天我们学习最常用的问候语，从第一个单词开始，听、说、用，一步一步学会它。</p><button className="start-class-btn" onClick={onStart} disabled={busy}>开始今天的课堂 <span>→</span></button></div>
+        </section>
+      ) : (
+        <section className="lesson-layout">
+          <div className="lesson-main-card">
+            <div className="lesson-kicker"><span className="live-dot" /> 老师正在教你</div>
+            <div className="word-stage"><div className="word-label">今天的单词</div><div className="hero-word">{word}</div><div className="phonetic">{phonetic}</div><button className="sound-button" onClick={onReplay} disabled={busy}><span>▶</span> 听老师读一遍</button></div>
+            <div className="teacher-bubble"><div className="teacher-avatar">👩🏻‍🏫</div><div><b>老师说</b><p>{teacherText}</p></div></div>
+            <div className="lesson-actions"><button className="primary-lesson-btn" onClick={startListening} disabled={busy || listening}><span>{listening ? '🎙️' : '🎤'}</span>{listening ? '正在听你说…' : '按住说一说'}</button><button className="secondary-lesson-btn" onClick={() => setStep(Math.min(step + 1, steps.length - 1))}>下一步 <span>→</span></button></div>
+            {heard && <div className="heard-result">我听到你说：<b>{heard}</b> · 太棒了，再试一次也可以！</div>}
+          </div>
+          <aside className="lesson-side-card"><div className="side-title"><span>课堂小贴士</span><span className="sparkle">✦</span></div><div className="tip-visual">💬</div><h3>什么时候用 hello？</h3><p>见到别人、和别人打招呼的时候，就可以说 <b>hello</b>。它就像中文里的“你好”。</p><div className="example-card"><span>试着这样说</span><strong>{example}</strong><button onClick={onReplay}>▶ 再听一遍</button></div><button className="hint-button" onClick={() => setShowHint(!showHint)}>{showHint ? '收起发音提示' : '查看发音小窍门'} <span>＋</span></button>{showHint && <div className="pronunciation-hint">先轻轻呼气发 <b>h</b>，再说 <b>he</b>，最后嘴巴咧开说 <b>lo</b>。慢慢来，不着急。</div>}<div className="side-footer">完成这一步后，老师会带你学习短语和句子。</div></aside>
+        </section>
+      )}
+      <footer className="classroom-footer"><span>每一次开口，都是一次进步 ✨</span><span>课堂会话：{sessionId ? '进行中' : '尚未开始'}</span></footer>
+    </main>
+  );
+}
+
 export default function WorkbenchPage() {
   const [learnerId, setLearnerId] = useState<string>('child-m1-demo');
   const [topicId, setTopicId] = useState<string>(TOPICS[0].id);
@@ -189,6 +272,7 @@ export default function WorkbenchPage() {
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [classroomMode, setClassroomMode] = useState(true);
   const isBusy = busy !== null;
 
   const pushLog = useCallback((kind: LogKind, title: string, detail?: string) => {
@@ -301,7 +385,7 @@ export default function WorkbenchPage() {
     }
   };
 
-  const onTurn = async (reuse: boolean) => {
+  const onTurn = async (reuse: boolean, textOverride?: string) => {
     if (!sessionId) {
       pushLog('err', '提交失败', '请先开课，拿到 lessonSessionId');
       return;
@@ -315,7 +399,7 @@ export default function WorkbenchPage() {
       // 关键：完全复用同一个请求体（含同一个 idempotencyKey），用于演示幂等
       body = lastBody;
     } else {
-      body = buildTurnRequestBody(effectiveLearnerId, newIdempotencyKey(), form);
+      body = buildTurnRequestBody(effectiveLearnerId, newIdempotencyKey(), textOverride === undefined ? form : { ...form, text: textOverride });
     }
 
     setBusy('turn');
@@ -412,10 +496,29 @@ export default function WorkbenchPage() {
     abilities?.calibrationNotice ??
     'M1 阈值来自原型示意值，尚未经真实儿童样本校准；状态仅供内部教学决策参考。';
 
+  if (classroomMode) {
+    return (
+      <ClassroomView
+        directive={directive}
+        speech={speech}
+        topicName={topicName}
+        sessionId={sessionId}
+        busy={isBusy}
+        onStart={() => void onStart()}
+        onReplay={() => void onReplaySpeech()}
+        onSubmit={(text) => {
+          setField('text', text);
+          if (sessionId) void onTurn(false, text);
+        }}
+        onOpenWorkbench={() => setClassroomMode(false)}
+      />
+    );
+  }
+
   return (
     <main className="app">
       <header>
-        <nav className="account-nav"><Link href="/account">账户中心</Link><Link href="/login">登录</Link><Link href="/register">注册</Link></nav>
+        <nav className="account-nav"><button className="btn ghost sm" onClick={() => setClassroomMode(true)}>返回学生课堂</button><Link href="/account">账户中心</Link><Link href="/login">登录</Link><Link href="/register">注册</Link></nav>
         <h1>M1 教学实验台 · 成长型 AI 儿童英语语言习得平台</h1>
         <p className="brand-sub">
           教 / 听 / 评估 / 调整 / 记录 五动作闭环验证台 · 教学决策 100% 由后端返回，Web 只渲染 directive 与采集作答 ·

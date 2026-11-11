@@ -7,6 +7,10 @@ import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Bundle
+import android.graphics.Color
+import android.graphics.Typeface
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -37,8 +41,12 @@ class MainActivity : Activity() {
 
     private lateinit var statusText: TextView
     private lateinit var teacherText: TextView
+    private lateinit var wordText: TextView
+    private lateinit var phoneticText: TextView
+    private lateinit var pronunciationText: TextView
     private lateinit var submitButton: Button
     private lateinit var startLessonButton: Button
+    private lateinit var recordButton: Button
 
     private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
@@ -48,6 +56,7 @@ class MainActivity : Activity() {
     private var lessonId: String? = null
     private var teacherAudioRef: String? = null
     private var teacherTtsReservationId: String? = null
+    private var activeDirective: JSONObject? = null
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,69 +64,77 @@ class MainActivity : Activity() {
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 40, 32, 32)
+            setPadding(28, 28, 28, 32)
+            setBackgroundColor(Color.rgb(255, 250, 241))
         }
-
-        fun matchWidth() = LinearLayout.LayoutParams(
+        fun params(top: Int = 14) = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = 16 }
-
-        panel.addView(
-            TextView(this).apply {
-                text = getString(R.string.app_name)
-                textSize = 20f
-            },
-            matchWidth(),
-        )
-        panel.addView(
-            TextView(this).apply {
-                text = "后端：${getString(R.string.backend_base_url)}"
-                textSize = 13f
-            },
-            matchWidth(),
-        )
-
-        statusText = TextView(this).apply { text = "就绪"; textSize = 15f }
-        panel.addView(statusText, matchWidth())
-
-        startLessonButton = button("开始课堂") { startLesson() }
-        panel.addView(startLessonButton, matchWidth())
-        panel.addView(button("开始录音") { startRecording() }, matchWidth())
-        panel.addView(button("停止录音") { stopRecording() }, matchWidth())
-        panel.addView(button("播放录音") { playRecording() }, matchWidth())
-        panel.addView(button("播放老师语音") { playTeacherAudio() }, matchWidth())
-        panel.addView(button("请老师慢一点") { sendSpeechControl(slower = true) }, matchWidth())
-        panel.addView(button("重播老师语音") { sendSpeechControl(repeat = true) }, matchWidth())
-        submitButton = button("提交作答") { submitAnswer() }
-        submitButton.isEnabled = false
-        panel.addView(submitButton, matchWidth())
-
-        panel.addView(
-            TextView(this).apply {
-                text = "后端 directive.teacherUtterance："
-                textSize = 15f
-            },
-            matchWidth(),
-        )
-        teacherText = TextView(this).apply {
-            text = "（等待提交）"
-            textSize = 18f
+        ).apply { topMargin = top }
+        fun text(value: String, size: Float, color: Int = Color.rgb(39, 51, 76)) = TextView(this).apply {
+            this.text = value
+            textSize = size
+            setTextColor(color)
         }
-        panel.addView(teacherText, matchWidth())
+
+        panel.addView(text("小小英语课堂", 22f).apply { setTypeface(null, Typeface.BOLD) }, params(0))
+        panel.addView(text("听一听 · 跟着说 · 在情境中用起来", 13f, Color.rgb(120, 126, 141)), params(4))
+        statusText = text("还没有开始课堂", 13f, Color.rgb(83, 105, 206))
+        panel.addView(statusText, params(18))
+
+        panel.addView(text("今天的课堂", 13f, Color.rgb(120, 126, 141)), params(24))
+        wordText = text("hello", 72f, Color.rgb(64, 89, 200)).apply {
+            gravity = Gravity.CENTER
+            setTypeface(null, Typeface.BOLD)
+        }
+        panel.addView(wordText, params(4))
+        phoneticText = text("/həˈləʊ/", 22f, Color.rgb(125, 132, 147)).apply { gravity = Gravity.CENTER }
+        panel.addView(phoneticText, params(0))
+        pronunciationText = text("听到老师示范后，在心里跟着说一遍。", 14f, Color.rgb(85, 95, 114)).apply {
+            gravity = Gravity.CENTER
+        }
+        panel.addView(pronunciationText, params(18))
+
+        teacherText = text("小朋友，今天我们学习问候语。先听一听老师怎么说。", 17f).apply {
+            setPadding(18, 18, 18, 18)
+            setBackgroundColor(Color.rgb(248, 248, 255))
+        }
+        panel.addView(teacherText, params(22))
+
+        startLessonButton = button("开始今天的课堂") { startLesson() }
+        panel.addView(startLessonButton, params(20))
+        val replayButton = button("▶  听老师读一遍") { playTeacherAudio() }
+        panel.addView(replayButton, params(10))
+        recordButton = button("🎤  按住说一说") { toggleRecording() }
+        recordButton.isEnabled = false
+        panel.addView(recordButton, params(10))
+        submitButton = button("提交我的练习") { submitAnswer() }
+        submitButton.isEnabled = false
+        panel.addView(submitButton, params(10))
+
+        val supportRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val slowButton = button("请老师慢一点") { sendSpeechControl(slower = true) }
+        val repeatButton = button("再听一次") { sendSpeechControl(repeat = true) }
+        supportRow.addView(slowButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        supportRow.addView(repeatButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        panel.addView(supportRow, params(8))
+        panel.addView(text("老师会根据你的回应，决定下一步是继续跟读、拆开练习，还是带你在句子里使用。", 12f, Color.rgb(145, 148, 158)), params(20))
 
         setContentView(ScrollView(this).apply { addView(panel) })
-
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_RECORD_AUDIO)
         }
     }
 
-    private fun button(label: String, onClick: () -> Unit): Button =
-        Button(this).apply {
-            text = label
-            setOnClickListener { onClick() }
-        }
+    private fun button(label: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = label
+        isAllCaps = false
+        setOnClickListener { onClick() }
+    }
+
+    private fun toggleRecording() {
+        if (recorder == null) startRecording() else stopRecording()
+    }
 
     // ---------------- 录音 / 播放 ----------------
 
@@ -141,7 +158,9 @@ class MainActivity : Activity() {
                 start()
             }
             recordingStartedAtMs = System.currentTimeMillis()
-            setStatus("录音中 → ${file.name}")
+            recordButton.text = "■  停止录音"
+            submitButton.isEnabled = false
+            setStatus("正在听你说…")
         } catch (e: Exception) {
             releaseRecorder()
             setStatus("录音启动失败：${e.message}")
@@ -159,11 +178,14 @@ class MainActivity : Activity() {
             audioDurationMs = (System.currentTimeMillis() - (recordingStartedAtMs ?: System.currentTimeMillis()))
                 .coerceAtLeast(1_000)
             recordingStartedAtMs = null
-            setStatus("录音已停止：${audioFile?.absolutePath}")
+            recordButton.text = "🎤  再说一次"
+            submitButton.isEnabled = true
+            setStatus("听到了，可以提交给老师")
         } catch (e: RuntimeException) {
             setStatus("录音停止异常（可能时长过短）：${e.message}")
         } finally {
             recordingStartedAtMs = null
+            recordButton.text = "🎤  再说一次"
             releaseRecorder()
         }
     }
@@ -224,6 +246,7 @@ class MainActivity : Activity() {
         val turnIndex: Int,
         val error: String?,
         val audioRef: String? = null,
+        val directive: JSONObject? = null,
     )
 
     private fun submitAnswer() {
@@ -264,10 +287,13 @@ class MainActivity : Activity() {
                 if (result.error != null) {
                     setStatus("提交失败：${result.error}")
                 } else {
-                    setStatus("提交成功，turnIndex=${result.turnIndex}")
-                    teacherText.text = result.teacherUtterance
-                        ?: "（响应中没有 directive.teacherUtterance）"
+                    setStatus("老师收到你的回答了")
+                    teacherText.text = result.teacherUtterance ?: "老师正在准备下一步练习。"
                     teacherAudioRef = result.audioRef
+                    activeDirective = result.directive
+                    renderDirective(result.directive)
+                    submitButton.isEnabled = false
+                    if (!teacherAudioRef.isNullOrBlank()) playTeacherAudio()
                 }
             }
         }
@@ -287,6 +313,8 @@ class MainActivity : Activity() {
                 } else {
                     teacherText.text = result.teacherUtterance ?: "（没有返回老师话术）"
                     teacherAudioRef = result.audioRef
+                    activeDirective = result.directive
+                    renderDirective(result.directive)
                     setStatus("已更新老师语音")
                 }
             }
@@ -348,7 +376,7 @@ class MainActivity : Activity() {
                 val speech = json.optJSONObject("speech")
                 val speechRef = speech?.optString("audioRef")?.takeIf { it.isNotEmpty() }
                     ?.let { resolveAudioRef(it) }
-                TurnResult(utterance, json.optInt("turnIndex", -1), null, speechRef)
+                TurnResult(utterance, json.optInt("turnIndex", -1), null, speechRef, directive)
             }
         } catch (e: Exception) {
             TurnResult(null, -1, e.message ?: e.javaClass.simpleName)
@@ -357,11 +385,44 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun renderDirective(directive: JSONObject?) {
+        if (directive == null) return
+        activeDirective = directive
+        directive.optString("teacherUtterance").takeIf { it.isNotBlank() }?.let {
+            teacherText.text = it
+        }
+
+        val targetWords = directive.optJSONArray("targetWords")
+        val target = targetWords?.optString(0)?.takeIf { it.isNotBlank() }
+        val demonstration = directive.optString("demonstrationText").takeIf { it.isNotBlank() }
+        val displayWord = target ?: demonstration
+        if (!displayWord.isNullOrBlank()) wordText.text = displayWord
+
+        val units = directive.optJSONArray("pronunciationUnits")
+        val unitLabels = (0 until (units?.length() ?: 0)).mapNotNull { index ->
+            units?.optJSONObject(index)?.optString("text")?.takeIf { it.isNotBlank() }
+        }
+        pronunciationText.text = when {
+            unitLabels.isNotEmpty() -> "发音小助手：${unitLabels.joinToString(" · ")}"
+            !demonstration.isNullOrBlank() -> "先听老师示范，再试着说一说。"
+            else -> "跟着老师的提示完成这一小步。"
+        }
+        val expectedResponse = directive.optString("expectedResponse")
+        recordButton.isEnabled = expectedResponse in setOf("repeat", "speak", "answer")
+        submitButton.isEnabled = false
+        statusText.text = when (expectedResponse) {
+            "listen" -> "请先听老师讲解"
+            "tap_image" -> "请根据老师的提示选择"
+            else -> "准备好后，按下按钮录音"
+        }
+    }
+
     private data class LessonStartResult(
         val lessonSessionId: String?,
         val teacherUtterance: String?,
         val audioRef: String?,
         val error: String?,
+        val directive: JSONObject? = null,
     )
 
     private fun startLesson() {
@@ -379,6 +440,8 @@ class MainActivity : Activity() {
                 teacherAudioRef = result.audioRef
                 submitButton.isEnabled = true
                 teacherText.text = result.teacherUtterance ?: "（等待老师话术）"
+                activeDirective = result.directive
+                renderDirective(result.directive)
                 setStatus("课堂已开始：${result.lessonSessionId}")
             }
         }
@@ -407,11 +470,13 @@ class MainActivity : Activity() {
             } else {
                 val json = JSONObject(text)
                 val speech = json.optJSONObject("speech")
+                val directive = json.optJSONObject("directive")
                 LessonStartResult(
                     json.optString("lessonSessionId").takeIf { it.isNotEmpty() },
-                    json.optJSONObject("directive")?.optString("teacherUtterance"),
+                    directive?.optString("teacherUtterance"),
                     speech?.optString("audioRef")?.takeIf { it.isNotEmpty() }?.let { resolveAudioRef(it) },
                     null,
+                    directive,
                 )
             }
         } catch (e: Exception) {

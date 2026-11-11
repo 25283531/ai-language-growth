@@ -267,6 +267,74 @@ table.data tr:last-child td { border-bottom: none; }
 
 .footer-note { color: var(--sub); font-size: 11.5px; margin-top: 16px; line-height: 1.7; }
 
+.classroom-shell { min-height: 100vh; padding: 0 5vw 30px; background: radial-gradient(ellipse at 78% 18%, #fff2d9 0, transparent 28%), #fffaf1; color: #27334c; }
+.classroom-header { max-width: 1180px; margin: 0 auto; height: 78px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #efe8da; }
+.classroom-brand { display: flex; gap: 11px; align-items: center; }
+.brand-mark { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: #5d75dc; color: white; font-weight: 900; font-size: 22px; box-shadow: 0 6px 14px #5d75dc35; }
+.classroom-brand div { display: grid; line-height: 1.35; }
+.classroom-brand b { font-size: 16px; }
+.classroom-brand span { color: #8b91a0; font-size: 11px; }
+.classroom-header-actions { display: flex; align-items: center; gap: 20px; }
+.lesson-pill { background: #fff; border: 1px solid #eee5d5; border-radius: 99px; padding: 8px 13px; font-size: 12px; color: #666f81; }
+.text-button { border: 0; background: transparent; color: #9095a2; cursor: pointer; font: inherit; font-size: 12px; }
+.lesson-progress { max-width: 900px; margin: 28px auto 20px; }
+.progress-label { display: flex; justify-content: space-between; color: #8f93a0; font-size: 12px; margin-bottom: 11px; }
+.progress-label b { color: #596ed0; }
+.progress-track { display: grid; grid-template-columns: repeat(4, 1fr); position: relative; }
+.progress-track:before { content: ""; position: absolute; height: 2px; background: #e8e8ec; top: 14px; left: 12%; right: 12%; }
+.progress-dot { position: relative; background: transparent; border: 0; display: flex; align-items: center; flex-direction: column; gap: 6px; color: #a6a9b2; font: inherit; font-size: 11px; cursor: pointer; }
+.progress-dot span { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; background: #ebecef; color: #838998; font-weight: 800; z-index: 1; }
+.progress-dot.done span { background: #dfe5ff; color: #5068d2; }
+.progress-dot.current span { background: #5d75dc; color: white; box-shadow: 0 0 0 5px #e7eaff; }
+.progress-dot.current { color: #475fc5; font-weight: 700; }
+.lesson-layout { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(270px, .85fr); gap: 20px; align-items: stretch; }
+.lesson-main-card, .lesson-side-card { background: #fff; border: 1px solid #f0e9dd; border-radius: 24px; box-shadow: 0 14px 42px #5c4c2610; }
+.lesson-main-card { padding: 25px clamp(22px, 4vw, 48px) 30px; }
+.lesson-kicker { color: #747b89; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+.live-dot { width: 8px; height: 8px; background: #56bd91; border-radius: 50%; box-shadow: 0 0 0 4px #e7f8ef; }
+.word-stage { min-height: 275px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px 0; }
+.word-label { color: #9297a2; font-size: 12px; letter-spacing: .08em; }
+.hero-word { color: #4059c8; font-size: clamp(72px, 11vw, 112px); line-height: 1.08; font-weight: 800; letter-spacing: -.055em; text-shadow: 0 5px 0 #e8ebff; margin-top: 5px; }
+.phonetic { font-size: 21px; color: #7d8493; letter-spacing: .08em; margin: 5px 0 15px; }
+.sound-button { border: 1px solid #dce2ff; background: #f5f6ff; color: #5268cf; padding: 10px 17px; border-radius: 99px; cursor: pointer; font: inherit; font-weight: 700; font-size: 13px; }
+.sound-button span { display: inline-grid; place-items: center; background: #6479dc; color: white; border-radius: 50%; width: 22px; height: 22px; font-size: 9px; margin-right: 7px; }
+.sound-button:disabled { opacity: .55; cursor: wait; }
+.teacher-bubble { display: flex; gap: 13px; align-items: flex-start; padding: 16px; background: #f8f8ff; border-radius: 16px; border: 1px solid #eceeff; }
+.teacher-avatar { display: grid; place-items: center; flex: 0 0 42px; height: 42px; border-radius: 14px; background: #fff0d9; font-size: 22px; }
+.teacher-bubble b { font-size: 12px; color: #586bc8; }
+.teacher-bubble p { margin: 4px 0 0; color: #555f72; font-size: 14px; line-height: 1.75; }
+.lesson-actions { display: flex; gap: 10px; margin-top: 18px; }
+.primary-lesson-btn, .secondary-lesson-btn, .start-class-btn { border: 0; border-radius: 13px; padding: 13px 18px; cursor: pointer; font: inherit; font-weight: 750; }
+.primary-lesson-btn { flex: 1; background: #5d75dc; color: white; box-shadow: 0 7px 16px #5d75dc35; }
+.primary-lesson-btn span { margin-right: 8px; }
+.primary-lesson-btn:disabled { opacity: .65; }
+.secondary-lesson-btn { background: #f2f3f8; color: #5d6576; }
+.heard-result { margin-top: 12px; border-radius: 10px; background: #effaf3; padding: 10px 12px; color: #4b7a5d; font-size: 13px; }
+.lesson-side-card { padding: 24px; background: linear-gradient(160deg, #fff 70%, #fff9ee); }
+.side-title { display: flex; justify-content: space-between; font-size: 12px; font-weight: 750; color: #7b8190; }
+.sparkle { color: #f0b44c; font-size: 18px; }
+.tip-visual { width: 58px; height: 58px; margin-top: 22px; border-radius: 18px; display: grid; place-items: center; background: #fff0d9; font-size: 28px; }
+.lesson-side-card h3 { margin: 15px 0 7px; font-size: 19px; }
+.lesson-side-card > p { margin: 0; color: #777e8d; font-size: 13px; line-height: 1.8; }
+.lesson-side-card > p b { color: #5369ce; }
+.example-card { margin-top: 19px; background: #f8f8ff; border: 1px solid #eceeff; border-radius: 14px; padding: 13px; display: grid; gap: 6px; }
+.example-card span { color: #9297a2; font-size: 11px; }
+.example-card strong { color: #414e9f; font-size: 15px; }
+.example-card button { justify-self: start; border: 0; padding: 0; background: transparent; color: #6678cf; cursor: pointer; font: inherit; font-size: 11px; }
+.hint-button { width: 100%; margin-top: 14px; background: transparent; border: 0; border-bottom: 1px solid #eee; padding: 11px 0; display: flex; justify-content: space-between; color: #5d6ec4; font: inherit; font-size: 12px; cursor: pointer; }
+.pronunciation-hint { padding: 10px 12px; margin-top: 9px; border-radius: 10px; background: #fff8e9; color: #7e7055; font-size: 12px; line-height: 1.75; }
+.side-footer { margin-top: 14px; color: #a0a3ac; font-size: 11px; line-height: 1.65; }
+.welcome-card { max-width: 920px; min-height: 390px; margin: 38px auto; display: grid; grid-template-columns: .8fr 1.2fr; gap: 35px; align-items: center; padding: clamp(24px, 5vw, 58px); border-radius: 28px; background: #fff; border: 1px solid #f0e9dd; box-shadow: 0 14px 42px #5c4c2610; }
+.welcome-illustration { display: grid; place-items: center; min-height: 240px; border-radius: 25px; background: radial-gradient(circle at 52% 45%, #fff 0 18%, transparent 19%), linear-gradient(140deg, #e6eaff, #fff0d9); font-size: 90px; }
+.welcome-card .eyebrow { color: #7886d0; letter-spacing: .14em; font-size: 10px; font-weight: 800; }
+.welcome-card h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.26; }
+.welcome-card h1 em { color: #586fd4; font-style: normal; }
+.welcome-card p:not(.eyebrow) { max-width: 430px; color: #7c8290; line-height: 1.8; font-size: 14px; }
+.start-class-btn { margin-top: 10px; background: #5d75dc; color: white; box-shadow: 0 8px 18px #5d75dc35; }
+.start-class-btn span { margin-left: 14px; }
+.classroom-footer { max-width: 1080px; margin: 22px auto 0; display: flex; justify-content: space-between; color: #a0a3ac; font-size: 11px; }
+@media(max-width: 760px) { .classroom-shell { padding: 0 16px 24px; } .classroom-header { height: 68px; } .classroom-header-actions { gap: 8px; } .lesson-pill { display: none; } .lesson-progress { margin-top: 22px; } .lesson-layout { grid-template-columns: 1fr; } .lesson-main-card { padding: 21px 19px 24px; } .word-stage { min-height: 230px; } .lesson-side-card { padding: 20px; } .welcome-card { grid-template-columns: 1fr; gap: 18px; margin: 24px auto; padding: 24px; } .welcome-illustration { min-height: 150px; font-size: 65px; } .welcome-card h1 { font-size: 30px; } .classroom-footer { gap: 8px; flex-direction: column; } }
+
 .account-page { max-width:760px; margin:0 auto; padding:28px 18px 56px; }
 .account-page header { margin:30px 0 22px; }
 .account-page h1 { font-size:26px; margin:0 0 5px; }
