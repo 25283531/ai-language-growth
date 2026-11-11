@@ -47,6 +47,7 @@ import type {
   PronunciationRequest,
   PronunciationResponse,
   RoutingDecision,
+  TtsCacheScope,
   TtsRequest,
   TtsResponse,
 } from '@alg/shared-contracts';
@@ -68,19 +69,85 @@ export interface GatewayCallResult<T> {
   latencyMs: number;
 }
 
+/** 缓存键版本。升位即让旧格式索引整体逻辑失效，无需物理删除。 */
+const TTS_KEY_VERSION = 'tts-v3-course';
+/** PRIVATE_DYNAMIC 资产的短 TTL（毫秒），到期后索引与音频都视为 miss。 */
+const PRIVATE_TTS_TTL_MS = 24 * 60 * 60 * 1000;
+
+type TtsCacheScopeName = NonNullable<TtsCacheScope['scope']>;
+
+/** 归一化后的完整缓存作用域（字段已补齐、scope 已解析）。 */
+interface ResolvedTtsCacheScope {
+  scope: TtsCacheScopeName;
+  topicId: string;
+  contentId: string;
+  contentVersion: string;
+  learnerId?: string;
+  lessonSessionId?: string;
+  providerModelFamily?: string;
+}
+
+/**
+ * 归一化后的 TTS 请求：voice / voiceIdentity / cacheScope 的默认值都已补齐。
+ * 与 TtsRequest 求交保证它仍可原样传给供应商适配器。
+ */
+type NormalizedTtsRequest = TtsRequest & {
+  voice: {
+    teacherSpeed: number;
+    voiceStyle: string;
+    pauseAfterSentenceMs: number;
+    pronunciationMode: string;
+  };
+  voiceIdentity: string;
+  cacheScope: ResolvedTtsCacheScope;
+};
+
+/** 写入缓存索引 / media_assets 的归属与版本身份。 */
+interface TtsScopeIdentity {
+  keyVersion: string;
+  scope: TtsCacheScopeName;
+  topicId: string;
+  contentId: string;
+  contentVersion: string;
+  ownerLearnerId: string | null;
+  expiresAt: string | null;
+  audioSha256: string | null;
+  textHash: string;
+}
+
+/** 内存缓存条目；与磁盘索引字段保持一致以便相互回填。 */
+interface TtsCacheEntry extends TtsScopeIdentity {
+  audioRef: string;
+  characters: number;
+  text: string;
+  teacherSpeed: number;
+  voiceIdentity: string;
+  outcome: GatewayCallResult<TtsResponse>;
+}
+
+/**
+ * 语速量化 —— 课程级跨用户复用的前置条件（主理人拍板）。
+ *
+ * teacherSpeed 由 learner.speakingRate × 6 个 method 因子算出，是连续值；
+ * 若直接进缓存键，两个学习者几乎不可能落在同一数值上，「同一课程、不同用户
+ * 复用」就永远命中不了。按 0.05 步长归一化到有限档位并 clamp 到 [0.25, 1.0]
+ * （0.47→0.45、0.62→0.60、0.65→0.65），同一量化档位的请求即可共享同一份
+ * 已合成的音频。细粒度的个性化差异不再触发重新合成（那会破坏复用），只在需要
+ * 时由客户端 playbackRate 微调；量化值同时用于 TTS 请求、缓存键与对外返回的
+ * speech.teacherSpeed，保证三者一致。
+ */
+export function quantizeTeacherSpeed(raw: number): number {
+  if (!Number.isFinite(raw)) return 0.65;
+  const clamped = Math.min(1.0, Math.max(0.25, raw));
+  return Number((Math.round(clamped / 0.05) * 0.05).toFixed(2));
+}
+
 @Injectable()
 export class AiGatewayService implements AiGateway, OnModuleInit {
   private readonly logger = new Logger(AiGatewayService.name);
   private readonly registry: AdapterRegistry;
-  /** TTS 音频缓存：语音内容 + 参数 → 音频引用。 */
-  private readonly ttsCache = new Map<string, {
-    audioRef: string;
-    characters: number;
-    text: string;
-    teacherSpeed: number;
-    voiceIdentity: string;
-    outcome: GatewayCallResult<TtsResponse>;
-  }>();
+  /** TTS 音频缓存：结构化课程级缓存键 → 音频引用与归属身份。 */
+  private readonly ttsCache = new Map<string, TtsCacheEntry>();
   /** Coalesce simultaneous requests for the same utterance within this process. */
   private readonly ttsInFlight = new Map<string, Promise<GatewayCallResult<TtsResponse>>>();
   private readonly providerTimeouts = new Map<string, number>();
@@ -280,7 +347,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   }
 
   private async resolveTts(
-    normalizedRequest: TtsRequest & { voice: { teacherSpeed: number }; voiceIdentity: string },
+    normalizedRequest: NormalizedTtsRequest,
     decision: RoutingDecision,
     cacheKey: string,
   ): Promise<GatewayCallResult<TtsResponse>> {
@@ -303,16 +370,27 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     // 若因 degraded 而不缓存，Mock 模式下重复播放会永远重新计费。
     // 不可播放的 mock:// 引用只在内存复用，不会写入持久索引。
     if (outcome.result.audioRef && !outcome.result.cached) {
+      const audioSha256 = await this.audioSha256(outcome.result.audioRef);
+      const identity = this.ttsScopeIdentity(normalizedRequest, audioSha256);
       this.ttsCache.set(cacheKey, {
         audioRef: outcome.result.audioRef,
         characters: outcome.result.characters,
         text: normalizedRequest.text,
         teacherSpeed: normalizedRequest.voice.teacherSpeed,
         voiceIdentity: normalizedRequest.voiceIdentity,
+        keyVersion: identity.keyVersion,
+        scope: identity.scope,
+        topicId: identity.topicId,
+        contentId: identity.contentId,
+        contentVersion: identity.contentVersion,
+        ownerLearnerId: identity.ownerLearnerId,
+        expiresAt: identity.expiresAt,
+        audioSha256: identity.audioSha256,
+        textHash: identity.textHash,
         outcome: { ...outcome, result: { ...outcome.result } },
       });
       if (this.ttsCache.size > 1000) this.ttsCache.delete(this.ttsCache.keys().next().value!);
-      await this.storePersistentTtsCache(cacheKey, normalizedRequest, outcome).catch((error) =>
+      await this.storePersistentTtsCache(cacheKey, normalizedRequest, outcome, identity).catch((error) =>
         this.logger.warn(`TTS 持久化缓存索引写入失败：${(error as Error).message}`),
       );
     }
@@ -322,29 +400,56 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   /**
    * 只读缓存探测：供「播放前先检查服务端缓存资源」使用。
    * 绝不触发供应商 TTS；命中时返回与 synthesize 相同的音频描述。
+   *
+   * PRIVATE_DYNAMIC 资产按 owner 过滤：请求必须带请求方 learnerId，且只能命中
+   * 归属于该 learner 的资产（键中已含 learnerId，这里再显式校验归属，双保险）。
    */
   async peekTtsCache(request: TtsRequest): Promise<TtsResponse | null> {
     const normalized = this.normalizeTtsRequest(request);
     const hit = await this.findTtsCache(this.ttsCacheKey(normalized), normalized);
     if (!hit) return null;
+    // 显式 owner 过滤：PRIVATE 资产只能命中归属同一 learner 的请求（无 owner 时同为 null）。
+    // PRIVATE 键本身已含 learnerId，这里是第二道防线。
+    if (hit.scope === 'PRIVATE_DYNAMIC'
+      && (hit.ownerLearnerId ?? null) !== (normalized.cacheScope.learnerId ?? null)) {
+      return null;
+    }
     return { ...hit.outcome.result, cached: true, characters: 0, latencyMs: 0 };
   }
 
-  private normalizeTtsRequest(request: TtsRequest) {
+  private normalizeTtsRequest(request: TtsRequest): NormalizedTtsRequest {
+    const s = request.cacheScope;
     return {
       ...request,
       voice: {
-        teacherSpeed: request.voice.teacherSpeed ?? 0.65,
+        // 量化语速：有限档位才能让不同学习者命中同一课程级缓存（见 quantizeTeacherSpeed）。
+        teacherSpeed: quantizeTeacherSpeed(request.voice.teacherSpeed ?? 0.65),
         voiceStyle: request.voice.voiceStyle ?? 'gentle',
         pauseAfterSentenceMs: request.voice.pauseAfterSentenceMs ?? 1000,
         pronunciationMode: request.voice.pronunciationMode ?? 'slow_clear',
       },
       voiceIdentity: request.voiceIdentity ?? 'teacher_default',
-    } as TtsRequest & { voice: { teacherSpeed: number; voiceStyle: string; pauseAfterSentenceMs: number; pronunciationMode: string }; voiceIdentity: string };
+      cacheScope: {
+        scope: s?.scope ?? 'PRIVATE_DYNAMIC',
+        topicId: s?.topicId ?? '',
+        contentId: s?.contentId ?? '',
+        contentVersion: s?.contentVersion ?? '',
+        ...(s?.learnerId ? { learnerId: s.learnerId } : {}),
+        ...(s?.lessonSessionId ? { lessonSessionId: s.lessonSessionId } : {}),
+        ...(s?.providerModelFamily ? { providerModelFamily: s.providerModelFamily } : {}),
+      },
+    } as NormalizedTtsRequest;
   }
 
-  private async findTtsCache(cacheKey: string, request: TtsRequest) {
+  private async findTtsCache(cacheKey: string, request: NormalizedTtsRequest) {
     let cached = this.ttsCache.get(cacheKey);
+    if (cached) {
+      // 身份/归属校验：keyVersion、scope、topicId、contentVersion、owner、textHash
+      // 任一不匹配都视为 miss，不允许旧形状或跨 learner 的 PRIVATE 资产命中。
+      if (!this.ttsIdentityMatches(cached, request) || (cached.expiresAt !== null && Date.parse(cached.expiresAt) <= Date.now())) {
+        cached = undefined;
+      }
+    }
     if (cached) {
       // 本地媒体引用必须指向仍存在的文件；mock/provider-hosted 引用无需本地文件。
       if (cached.audioRef.startsWith('/api/v1/media/audio/')) {
@@ -352,6 +457,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         try {
           if (!audioFile || audioFile.includes('..')) throw new Error('invalid audio reference');
           await access(join(resolveAudioDir(), audioFile));
+          if (cached.audioSha256 && cached.audioSha256 !== await this.audioSha256(cached.audioRef)) {
+            throw new Error('audio bytes changed');
+          }
         } catch {
           this.ttsCache.delete(cacheKey);
           cached = undefined;
@@ -378,55 +486,127 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   }
 
   /**
-   * TTS 缓存键。
-   * 只包含决定音频内容的参数：文本、抽象语速、音色、发音模式、停顿。
-   * 不含供应商或模型标识 —— 换模型不应让缓存失效导致重复计费。
+   * 课程级 TTS 缓存键（结构化 + sha256，供索引用）。
+   *
+   * 键 = (keyVersion, scope, topicId, contentId, contentVersion, voiceParamsHash,
+   *       voiceProfileVersion, modelFamily, textHash)：
+   *  - voiceParamsHash 只取影响声学的参数（量化后的 teacherSpeed / voiceStyle /
+   *    pronunciationMode），绝不含 pauseAfterSentenceMs —— 它不写入任何请求体、
+   *    不改变声学结果，拼进键只会制造重复计费与 audioRef 漂移。
+   *  - textHash 保证「文本一定进键」：PUBLIC 分支 contentVersion 是发布内容哈希，
+   *    已隐含文本；PRIVATE 分支文本是动态的，必须显式加文本指纹，否则同一课堂
+   *    不同回合（相同 contentVersion + learnerId + 音色档位）会互相串音。
+   *  - scope 默认 fail-closed 到 PRIVATE_DYNAMIC。
+   *  - PUBLIC_CURRICULUM / PRONUNCIATION 绝不带 learnerId / lessonSessionId，
+   *    否则会破坏「同一课程、不同用户、不同时间」复用；PRIVATE_DYNAMIC 必带二者。
+   *  - 键中绝不含 userId、timestamp、idempotencyKey。
    */
-  private ttsCacheKey(request: TtsRequest): string {
-    return JSON.stringify([
-      'tts-v2', process.env.TTS_VOICE_PROFILE_VERSION ?? '1',
-      request.text, request.voice.teacherSpeed, request.voice.voiceStyle,
-      request.voice.pronunciationMode, request.voice.pauseAfterSentenceMs,
-      request.voiceIdentity,
-    ]);
+  private ttsCacheKey(request: NormalizedTtsRequest): string {
+    const s = request.cacheScope;
+    const voiceParamsHash = createHash('sha256').update(JSON.stringify([
+      request.voice.teacherSpeed,
+      request.voice.voiceStyle,
+      request.voice.pronunciationMode,
+    ])).digest('hex');
+    const keyMaterial = {
+      keyVersion: TTS_KEY_VERSION,
+      scope: s.scope,
+      topicId: s.topicId,
+      contentId: s.contentId,
+      contentVersion: s.contentVersion,
+      voiceParamsHash,
+      voiceProfileVersion: process.env.TTS_VOICE_PROFILE_VERSION ?? '1',
+      modelFamily: s.providerModelFamily ?? '',
+      textHash: createHash('sha256').update(request.text).digest('hex'),
+      ...(s.scope === 'PRIVATE_DYNAMIC'
+        ? { learnerId: s.learnerId ?? '', lessonSessionId: s.lessonSessionId ?? '' }
+        : {}),
+    };
+    return createHash('sha256').update(JSON.stringify(keyMaterial)).digest('hex');
+  }
+
+  /** 音频文件字节的 sha256；provider-hosted / mock 引用没有本地字节，返回 null。 */
+  private async audioSha256(audioRef: string): Promise<string | null> {
+    const match = /^\/api\/v1\/media\/audio\/([a-f0-9]{24}\.(?:mp3|wav|m4a))$/i.exec(audioRef);
+    if (!match) return null;
+    try {
+      const bytes = await readFile(join(resolveAudioDir(), match[1]!));
+      return createHash('sha256').update(bytes).digest('hex');
+    } catch {
+      return null;
+    }
+  }
+
+  /** 写入索引 / media_assets 的归属身份（PUBLIC 无 owner 无 TTL；PRIVATE 短 TTL）。 */
+  private ttsScopeIdentity(request: NormalizedTtsRequest, audioSha256: string | null): TtsScopeIdentity {
+    const s = request.cacheScope;
+    const isPrivate = s.scope === 'PRIVATE_DYNAMIC';
+    return {
+      keyVersion: TTS_KEY_VERSION,
+      scope: s.scope,
+      topicId: s.topicId,
+      contentId: s.contentId,
+      contentVersion: s.contentVersion,
+      ownerLearnerId: isPrivate ? (s.learnerId ?? null) : null,
+      expiresAt: isPrivate ? new Date(Date.now() + PRIVATE_TTS_TTL_MS).toISOString() : null,
+      audioSha256,
+      textHash: createHash('sha256').update(request.text).digest('hex'),
+    };
+  }
+
+  /** 缓存条目的身份/归属/有效期校验；旧格式索引（无 keyVersion）一律不匹配。 */
+  private ttsIdentityMatches(entry: Partial<TtsScopeIdentity>, request: NormalizedTtsRequest): boolean {
+    const expected = this.ttsScopeIdentity(request, null);
+    return entry.keyVersion === expected.keyVersion
+      && entry.scope === expected.scope
+      && entry.topicId === expected.topicId
+      && entry.contentId === expected.contentId
+      && entry.contentVersion === expected.contentVersion
+      && (entry.ownerLearnerId ?? null) === expected.ownerLearnerId
+      && entry.textHash === expected.textHash
+      && (!entry.expiresAt || Date.parse(entry.expiresAt) > Date.now());
   }
 
   private async loadPersistentTtsCache(
     cacheKey: string,
-    request: TtsRequest,
-  ): Promise<{
-    audioRef: string;
-    characters: number;
-    text: string;
-    teacherSpeed: number;
-    voiceIdentity: string;
-    outcome: GatewayCallResult<TtsResponse>;
-  } | undefined> {
+    request: NormalizedTtsRequest,
+  ): Promise<TtsCacheEntry | undefined> {
     const file = this.ttsCacheIndexPath(cacheKey);
     try {
-      const teacherSpeed = request.voice.teacherSpeed ?? 0.65;
-      const voiceIdentity = request.voiceIdentity ?? 'teacher_default';
-      const entry = JSON.parse(await readFile(file, 'utf8')) as {
+      const teacherSpeed = request.voice.teacherSpeed;
+      const voiceIdentity = request.voiceIdentity;
+      const entry = JSON.parse(await readFile(file, 'utf8')) as Partial<TtsScopeIdentity> & {
         audioRef?: unknown;
         characters?: unknown;
-        text?: unknown;
         teacherSpeed?: unknown;
         voiceIdentity?: unknown;
-        textHash?: string;
         outcome?: GatewayCallResult<TtsResponse>;
       };
+      // 旧格式索引或 keyVersion/scope/topicId/contentVersion/owner/textHash 不匹配 → miss。
+      if (!this.ttsIdentityMatches(entry, request)) return undefined;
       if (typeof entry.audioRef !== 'string' || !/^\/api\/v1\/media\/audio\/[a-f0-9]{24}\.(mp3|wav|m4a)$/i.test(entry.audioRef)) return undefined;
-      if (entry.textHash !== createHash('sha256').update(request.text).digest('hex') || Number(entry.teacherSpeed) !== teacherSpeed || entry.voiceIdentity !== voiceIdentity) return undefined;
+      if (Number(entry.teacherSpeed) !== teacherSpeed || entry.voiceIdentity !== voiceIdentity) return undefined;
       if (!entry.outcome?.result || entry.outcome.result.audioRef !== entry.audioRef || typeof entry.outcome.result.providerAlias !== 'string' || entry.outcome.result.providerAlias.startsWith('mock')) return undefined;
       const audioFile = entry.audioRef.split('/').pop();
       if (!audioFile || audioFile.includes('..')) return undefined;
       await access(join(resolveAudioDir(), audioFile));
-      const cached = {
+      // 音频字节 sha256 校验：文件被替换 / 截断 / 乱码时拒绝对外下发。
+      if (entry.audioSha256 && entry.audioSha256 !== await this.audioSha256(entry.audioRef)) return undefined;
+      const cached: TtsCacheEntry = {
         audioRef: entry.audioRef,
         characters: typeof entry.characters === 'number' ? entry.characters : 0,
         text: request.text,
         teacherSpeed,
         voiceIdentity,
+        keyVersion: TTS_KEY_VERSION,
+        scope: entry.scope!,
+        topicId: entry.topicId!,
+        contentId: entry.contentId!,
+        contentVersion: entry.contentVersion!,
+        ownerLearnerId: entry.ownerLearnerId ?? null,
+        expiresAt: entry.expiresAt ?? null,
+        audioSha256: entry.audioSha256 ?? null,
+        textHash: entry.textHash!,
         outcome: entry.outcome,
       };
       this.ttsCache.set(cacheKey, cached);
@@ -437,7 +617,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     }
   }
 
-  private async storePersistentTtsCache(cacheKey: string, request: TtsRequest, outcome: GatewayCallResult<TtsResponse>): Promise<void> {
+  private async storePersistentTtsCache(
+    cacheKey: string,
+    request: NormalizedTtsRequest,
+    outcome: GatewayCallResult<TtsResponse>,
+    identity: TtsScopeIdentity,
+  ): Promise<void> {
     const result = outcome.result;
     if (!/^\/api\/v1\/media\/audio\/[a-f0-9]{24}\.(mp3|wav|m4a)$/i.test(result.audioRef)) return;
     const directory = resolveAudioDir();
@@ -446,9 +631,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const target = this.ttsCacheIndexPath(cacheKey);
     const temporary = `${target}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
     try {
+      // 只读索引：绝不保存明文教学内容（仅文本摘要），并写入身份/归属/有效期/音频字节摘要。
       await writeFile(temporary, JSON.stringify({
+        ...identity,
         audioRef: result.audioRef, characters: result.characters,
-        textHash: createHash('sha256').update(request.text).digest('hex'),
         teacherSpeed: request.voice.teacherSpeed, voiceIdentity: request.voiceIdentity,
         outcome,
       }), 'utf8');
@@ -458,28 +644,40 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     if (audioFile && !audioFile.includes('..')) {
       const extension = audioFile.split('.').pop() || null;
       const checksum = audioFile.split('.')[0] || null;
+      // scope / ownerLearnerId / expiresAt 由并行 worker 加到 media_assets。
+      // 用变量承接 data 可绕开 Prisma 生成类型对新增列的 excess-property 检查，
+      // 同时保留运行时写入；列尚未迁移时由 .catch 兜底，不影响缓存命中。
+      const ownership = {
+        scope: identity.scope,
+        ownerLearnerId: identity.ownerLearnerId,
+        expiresAt: identity.expiresAt ? new Date(identity.expiresAt) : null,
+      };
+      const createData = {
+        id: `tts-${checksum}`,
+        kind: 'audio',
+        ref: result.audioRef,
+        voiceIdentity: request.voiceIdentity,
+        teacherSpeed: request.voice.teacherSpeed,
+        checksum,
+        cacheExtension: extension,
+        cacheStatus: 'cached',
+        sourceProvider: result.providerAlias,
+        ...ownership,
+      };
+      const updateData = {
+        ref: result.audioRef,
+        voiceIdentity: request.voiceIdentity,
+        teacherSpeed: request.voice.teacherSpeed,
+        checksum,
+        cacheExtension: extension,
+        cacheStatus: 'cached',
+        sourceProvider: result.providerAlias,
+        ...ownership,
+      };
       await this.prisma.media_assets.upsert({
         where: { id: `tts-${checksum}` },
-        create: {
-          id: `tts-${checksum}`,
-          kind: 'audio',
-          ref: result.audioRef,
-          voiceIdentity: request.voiceIdentity,
-          teacherSpeed: request.voice.teacherSpeed,
-          checksum,
-          cacheExtension: extension,
-          cacheStatus: 'cached',
-          sourceProvider: result.providerAlias,
-        },
-        update: {
-          ref: result.audioRef,
-          voiceIdentity: request.voiceIdentity,
-          teacherSpeed: request.voice.teacherSpeed,
-          checksum,
-          cacheExtension: extension,
-          cacheStatus: 'cached',
-          sourceProvider: result.providerAlias,
-        },
+        create: createData,
+        update: updateData,
       }).catch(() => undefined);
     }
   }

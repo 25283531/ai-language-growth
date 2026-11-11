@@ -62,7 +62,7 @@ const BASELINE_PATH_LITERALS = [
 /** 正式课堂 + 教师语音链路新增的必需端点，一项都不能少。 */
 const CLASSROOM_PATH_LITERALS = [
   '"/api/v1/media/audio/"',
-  '"/media/audio/uploads"',
+  // 儿童录音改为随回合内联提交，上传端点已停用（410），不再要求客户端保留该路径。
   '"/speech/cache/lookup"',
   '"/speech/quota/release"',
   '"/speech/quota/reserve"',

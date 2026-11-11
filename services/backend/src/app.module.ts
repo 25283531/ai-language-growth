@@ -42,6 +42,7 @@ import { BackupService } from './backup/backup.service';
 import { GrowthMentorService } from './agents/growth-mentor.service';
 import { MemoryManagerService } from './agents/memory-manager.service';
 import { PersonalityEngineService } from './agents/personality-engine.service';
+import { PronunciationCoachService } from './agents/pronunciation-coach.service';
 
 @Module({
   imports: [ConfigModule, QueueModule],
@@ -83,6 +84,7 @@ import { PersonalityEngineService } from './agents/personality-engine.service';
     GrowthMentorService,
     MemoryManagerService,
     PersonalityEngineService,
+    PronunciationCoachService,
     {
       provide: ModelRouterImpl,
       useFactory: (prisma: PrismaService) => {

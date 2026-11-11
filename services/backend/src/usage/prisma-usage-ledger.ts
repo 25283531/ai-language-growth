@@ -93,17 +93,11 @@ export class PrismaUsageLedger implements UsageLedger {
     let unpricedCalls = 0;
     for (const row of rows) {
       costCny += row.estimatedCostCny;
-      const quantities: Record<string, number> = {
-        input_token: row.inputTokens,
-        output_token: row.outputTokens,
-        per_character: row.ttsCharacters,
-        per_second: row.asrSeconds,
-        per_call: row.pronunciationCalls,
-      };
+      const availableTypes = new Set(row.model?.prices.map((price) => price.priceType) ?? []);
+      const quantities = meteredQuantities(row, availableTypes);
       const usedTypes = Object.entries(quantities)
         .filter(([, quantity]) => quantity > 0)
         .map(([priceType]) => priceType);
-      const availableTypes = new Set(row.model?.prices.map((price) => price.priceType) ?? []);
       if (
         row.level !== 'L0' &&
         usedTypes.length &&
@@ -139,20 +133,41 @@ export class PrismaUsageLedger implements UsageLedger {
   }
 }
 
+function meteredQuantities(
+  input: {
+    inputTokens: number;
+    outputTokens: number;
+    ttsCharacters: number;
+    asrSeconds: number;
+    pronunciationCalls: number;
+  },
+  availablePriceTypes?: Set<string>,
+): Record<string, number> {
+  const quantities: Record<string, number> = {
+    input_token: input.inputTokens,
+    output_token: input.outputTokens,
+    per_second: input.asrSeconds,
+    per_call: input.pronunciationCalls,
+  };
+  if (input.ttsCharacters > 0) {
+    // 新价格用“元/千字符”；只有没有新价格时才回退到历史“元/字符”。
+    const useThousand = availablePriceTypes
+      ? availablePriceTypes.has('per_1000_chars') || !availablePriceTypes.has('per_character')
+      : true;
+    if (useThousand) quantities.per_1000_chars = input.ttsCharacters / 1000;
+    else quantities.per_character = input.ttsCharacters;
+  }
+  return quantities;
+}
+
 function estimateCost(
   record: UsageRecord,
   prices: Array<{ priceType: string; unitPrice: number }>,
 ): number {
-  const quantities: Record<string, number> = {
-    input_token: record.inputTokens,
-    output_token: record.outputTokens,
-    per_character: record.ttsCharacters,
-    per_second: record.asrSeconds,
-    per_call: record.pronunciationCalls,
-  };
+  const priceByType = new Map(prices.map((price) => [price.priceType, price.unitPrice]));
+  const quantities = meteredQuantities(record, new Set(priceByType.keys()));
   const used = Object.entries(quantities).filter(([, quantity]) => quantity > 0);
   if (!used.length) return record.estimatedCostCny;
-  const priceByType = new Map(prices.map((price) => [price.priceType, price.unitPrice]));
   if (used.some(([priceType]) => !priceByType.has(priceType))) return 0;
   return used.reduce(
     (total, [priceType, quantity]) => total + quantity * priceByType.get(priceType)!,

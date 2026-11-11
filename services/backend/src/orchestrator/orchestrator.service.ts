@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Teacher Orchestrator —— 教师编排器。
  *
  * 依据：D-009「四种角色由同一 LLM 的不同模式承担，职责在系统内部独立」；
@@ -15,6 +15,7 @@
  *  - 掌握状态由规则引擎根据证据计算，不由模型声称（约束三）。
  */
 import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import {
   advanceMethodLadder,
   initialMethodLadderState,
@@ -35,15 +36,15 @@ import type {
   TurnResponse,
 } from '@alg/shared-contracts';
 import { resolveEvidenceTargets } from '@alg/skill-graph';
-import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
+import { AiGatewayService, quantizeTeacherSpeed } from '../ai-gateway/ai-gateway.service';
 import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PlannerService } from '../planner/planner.service';
 import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
 import { PrismaService } from '../prisma/prisma.service';
 import { GrowthMentorService } from '../agents/growth-mentor.service';
-import { splitTeachingSpeech } from '../speech/tts-segments';
 import { MemoryManagerService } from '../agents/memory-manager.service';
 import { PersonalityEngineService } from '../agents/personality-engine.service';
+import { PronunciationCoachService } from '../agents/pronunciation-coach.service';
 
 /**
  * 离线兜底的固定课程内容（D-015 降级链最后一步）。
@@ -88,6 +89,48 @@ interface SessionRuntimeState {
   consecutiveSuccesses: Record<string, number>;
 }
 
+/** buildDirective 顺带产出的课程资源身份，供 synthesize 透传给网关缓存键。 */
+interface DirectiveScopeSeed {
+  /** activityId（即课程内容逻辑 id，发布态为 `${unit.id}:${index}`） */
+  contentId: string;
+  /** sha256(JSON.stringify(learning_items.content))；发布内容变更即让旧音频失效 */
+  contentVersion: string;
+  /** 示范文本是否由孩子本轮错误 / 方法阶梯动态导出；动态示范一律 PRIVATE。 */
+  dynamicDemonstration: boolean;
+}
+
+/** synthesize 的 scope 入参；由 4 个调用点按各自上下文拼装。 */
+interface SpeechScopeContext {
+  topicId: string;
+  contentId: string;
+  contentVersion: string;
+  learnerId: string;
+  lessonSessionId: string;
+  /** 是否满足严格 PUBLIC_CURRICULUM 判定；false 一律 fail-closed 到 PRIVATE_DYNAMIC */
+  publicCurriculum: boolean;
+}
+
+/**
+ * 课程级作用域判定（默认 fail-closed 到 PRIVATE_DYNAMIC）。
+ *
+ * 依据软件工坊评审定稿：teacherUtterance 横跨 PUBLIC/PRIVATE，须按「构造路径是否
+ * 读到学习者数据」二分。下列任一成立即为 PRIVATE_DYNAMIC：
+ *  - teacherUtterance 被 previousTopicName / answer.text 等动态来源覆盖；
+ *  - 文本含 demonstrationText（由 errorUnits 导出，可能携带孩子错误）；
+ *  - 构造路径读到 learnerId / 孩子输入 / 学习者历史并进入合成文本。
+ * 仅当文本完全来自发布态课程内容（teacherUtteranceZh）、无示范文本、无动态覆盖时，
+ * 才允许标记 PUBLIC_CURRICULUM，使「同一课程、不同用户、不同时间」复用该资源。
+ */
+export function resolvePublicCurriculum(input: {
+  teacherUtteranceFromPublishedContent: boolean;
+  dynamicTeacherUtterance: boolean;
+  dynamicDemonstration: boolean;
+}): boolean {
+  return input.teacherUtteranceFromPublishedContent
+    && !input.dynamicTeacherUtterance
+    && !input.dynamicDemonstration;
+}
+
 @Injectable()
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
@@ -103,6 +146,7 @@ export class OrchestratorService {
     @Inject(GrowthMentorService) private readonly growthMentor: GrowthMentorService,
     @Inject(MemoryManagerService) private readonly memoryManager: MemoryManagerService,
     @Inject(PersonalityEngineService) private readonly personalityEngine: PersonalityEngineService,
+    @Inject(PronunciationCoachService) private readonly pronunciationCoach: PronunciationCoachService,
   ) {}
 
   /** 开课。 */
@@ -178,7 +222,7 @@ export class OrchestratorService {
     startState.currentActivityId = step.activity.id;
     startState.currentReviewScheduleId = step.reviewScheduleId;
 
-    const directive = await this.buildDirective({
+    const { directive, scopeSeed } = await this.buildDirective({
       activityId: step.activity.id,
       learnerId: input.learnerId,
       sessionId: session.id,
@@ -186,6 +230,8 @@ export class OrchestratorService {
       errorUnits: [],
       isReview: step.isReview,
     });
+    // previousTopicName 把 teacherUtterance 变成「学习者上次主题」的动态文本 → PRIVATE。
+    const dynamicTeacherUtterance = Boolean(previousTopicId);
     if (previousTopicId) {
       const previousTopicName = topicNameOf(previousTopicId);
       directive.teacherUtterance = step.isReview
@@ -193,7 +239,17 @@ export class OrchestratorService {
         : `欢迎回来。上次我们一起练习了「${previousTopicName}」，今天继续学习。`;
     }
 
-    const speech = await this.synthesize(directive);
+    const speech = await this.synthesize(directive, undefined, {
+      ...scopeSeed,
+      topicId,
+      learnerId: input.learnerId,
+      lessonSessionId: session.id,
+      publicCurriculum: resolvePublicCurriculum({
+        teacherUtteranceFromPublishedContent: !step.isReview,
+        dynamicTeacherUtterance,
+        dynamicDemonstration: scopeSeed.dynamicDemonstration,
+      }),
+    });
     await this.prisma.lesson_sessions.update({
       where: { id: session.id },
       data: {
@@ -364,12 +420,28 @@ export class OrchestratorService {
     }
 
     // —— 第三步：按需评估 ——
+    // 提示判定：只要本轮处在「失败后换方法」或非初始方法，就算提示下完成。
+    // 示范/纠错后的成功可以形成 forming，但绝不能记成独立样本（R2/R6）。
+    const promptedAttempt = state.methodLadder.consecutiveFailures > 0
+      || state.methodLadder.current !== 'method_slow_clear';
     const assessment = await this.assess({
       response: input.response,
       activity: currentActivity,
       learnerId: input.learnerId,
       lessonSessionId: input.lessonSessionId,
+      prompted: promptedAttempt,
     });
+    // 发音不通过时，把结构化错误交给低成本文本模型生成一句可模仿的纠正；
+    // 只影响下一轮教师话语，不改变评分、证据或掌握状态。
+    const coaching = assessment.performedPronunciationAssessment && !assessment.passed && currentActivity
+      ? await this.pronunciationCoach.createCorrection({
+          learnerId: input.learnerId,
+          lessonSessionId: input.lessonSessionId,
+          targetText: currentActivity.targetWords[0] ?? '',
+          score: assessment.score,
+          errorUnits: assessment.errorUnits,
+        })
+      : null;
     const passiveActivityCompleted = isPassiveActivity(currentActivity!.taskType) &&
       !input.response.text?.trim() &&
       !input.response.audioRef &&
@@ -476,13 +548,15 @@ export class OrchestratorService {
     const outputErrorUnits = state.currentActivityId ? [] : assessment.errorUnits;
 
     // —— 第六步：生成下一步语音 ——
-    const directive = await this.buildDirective({
+    const outputCoachingText = activityCompleted ? null : coaching?.displayText ?? null;
+    const { directive, scopeSeed } = await this.buildDirective({
       activityId: outputActivityId,
       learnerId: input.learnerId,
       sessionId: input.lessonSessionId,
       methodState: state.methodLadder,
       errorUnits: outputErrorUnits,
       isReview: outputIsReview,
+      coachingText: outputCoachingText,
     });
 
     // 普通提问/闲聊已在评估前单独处理；学习回合不额外调用对话模型。
@@ -498,7 +572,20 @@ export class OrchestratorService {
       ),
     });
 
-    const speech = await this.synthesize(directive, routingDecision);
+    const speech = await this.synthesize(directive, routingDecision, {
+      ...scopeSeed,
+      topicId: session.topicId,
+      learnerId: input.learnerId,
+      lessonSessionId: input.lessonSessionId,
+      // 发音纠正语会拼进 teacherUtterance，本轮必须 PRIVATE；
+      // 教科书的固定示范文本可以跨用户复用；失败后按 errorUnits 生成的示范
+      // 已在 scopeSeed.dynamicDemonstration 中标记为动态，仍走 PRIVATE。
+      publicCurriculum: resolvePublicCurriculum({
+        teacherUtteranceFromPublishedContent: !outputIsReview,
+        dynamicTeacherUtterance: Boolean(outputCoachingText),
+        dynamicDemonstration: scopeSeed.dynamicDemonstration,
+      }),
+    });
 
     // —— 记录用量 ——
     await this.router.recordUsage(
@@ -604,7 +691,8 @@ export class OrchestratorService {
         turnIndex: state.turnCount - 1,
         idempotencyKey: input.idempotencyKey,
         intent,
-        input: input.response as unknown as object,
+        // 儿童录音只在本次请求内转发给 ASR/发音评估；数据库绝不保存音频字节或 ref。
+        input: persistedLearnerResponse(input.response) as unknown as object,
         output: result as unknown as object,
         latencyMs: Date.now() - started,
       },
@@ -624,6 +712,7 @@ export class OrchestratorService {
   private async handlePlaybackRequest(input: {
     session: {
       id: string;
+      topicId: string;
       currentDirective: unknown;
       currentSpeech: unknown;
     };
@@ -648,7 +737,16 @@ export class OrchestratorService {
       speech.cached = true;
     } else {
       directive.voice.teacherSpeed = Math.max(0.25, Math.round((directive.voice.teacherSpeed - 0.15) * 100) / 100);
-      const synthesized = await this.synthesize(directive, routingDecision);
+      // 慢速重播沿用上一轮持久化的课程作用域身份；缺失时 fail-closed 到 PRIVATE_DYNAMIC。
+      const persistedScope = speech.scope;
+      const synthesized = await this.synthesize(directive, routingDecision, {
+        topicId: input.session.topicId,
+        contentId: persistedScope?.contentId ?? '',
+        contentVersion: persistedScope?.contentVersion ?? '',
+        learnerId: input.learnerId,
+        lessonSessionId: input.session.id,
+        publicCurriculum: persistedScope?.kind === 'PUBLIC_CURRICULUM',
+      });
       speech = synthesized.speech;
       ttsCharacters = synthesized.characters;
       routingDecision = {
@@ -740,7 +838,8 @@ export class OrchestratorService {
         turnIndex,
         idempotencyKey: input.idempotencyKey,
         intent: input.intent,
-        input: input.response as unknown as object,
+        // 儿童录音只在本次请求内转发给 ASR/发音评估；数据库绝不保存音频字节或 ref。
+        input: persistedLearnerResponse(input.response) as unknown as object,
         output: result as unknown as object,
         latencyMs: Date.now() - started,
       },
@@ -752,6 +851,7 @@ export class OrchestratorService {
   private async handleConversationalTurn(input: {
     session: {
       id: string;
+      topicId: string;
       currentDirective: unknown;
       currentSpeech: unknown;
     };
@@ -764,7 +864,7 @@ export class OrchestratorService {
     isReview: boolean;
   }): Promise<TurnResponse> {
     const started = Date.now();
-    const directive = await this.buildDirective({
+    const { directive, scopeSeed } = await this.buildDirective({
       activityId: input.activityId,
       learnerId: input.learnerId,
       sessionId: input.session.id,
@@ -778,13 +878,20 @@ export class OrchestratorService {
       lessonSessionId: input.session.id,
       intent: input.intent,
     });
+    // answer.text 是孩子原话的应答，进入合成文本后一律 PRIVATE。
     directive.teacherUtterance = `${answer.text} ${directive.teacherUtterance}`.trim();
 
     const routingDecision = await this.router.route({
       serviceKind: 'tts',
       taskRoute: 'tts.dynamic_teaching',
     });
-    const speech = await this.synthesize(directive, routingDecision);
+    const speech = await this.synthesize(directive, routingDecision, {
+      ...scopeSeed,
+      topicId: input.session.topicId,
+      learnerId: input.learnerId,
+      lessonSessionId: input.session.id,
+      publicCurriculum: false,
+    });
     await this.router.recordUsage(
       usageRecord({
         id: `usage-conversation-tts-${input.session.id}-${input.state.turnCount}`,
@@ -865,7 +972,8 @@ export class OrchestratorService {
         turnIndex,
         idempotencyKey: input.idempotencyKey,
         intent: input.intent,
-        input: input.response as unknown as object,
+        // 儿童录音只在本次请求内转发给 ASR/发音评估；数据库绝不保存音频字节或 ref。
+        input: persistedLearnerResponse(input.response) as unknown as object,
         output: result as unknown as object,
         latencyMs: Date.now() - started,
       },
@@ -1384,6 +1492,8 @@ export class OrchestratorService {
     } | null;
     learnerId: string;
     lessonSessionId: string;
+    /** 本轮是否经过示范/提示/纠错才完成；由课堂方法阶梯传入，决定证据能否算独立样本。 */
+    prompted?: boolean;
   }): Promise<{
     performedPronunciationAssessment: boolean;
     performedAsr: boolean;
@@ -1400,6 +1510,7 @@ export class OrchestratorService {
       kind: 'syllable' | 'phoneme' | 'word' | 'pitch' | 'rhythm';
       detail: string | null;
     }> = [];
+    const prompted = input.prompted === true;
 
     if (!input.activity) {
       return {
@@ -1465,8 +1576,8 @@ export class OrchestratorService {
         score: result.score,
         passed,
         errorUnits,
-        prompted: false,
-        independent: passed,
+        prompted,
+        independent: passed && !prompted,
         thresholdVersion: threshold?.version ?? null,
       };
     }
@@ -1517,8 +1628,8 @@ export class OrchestratorService {
         score: null,
         passed: evaluated && passed,
         errorUnits: emptyUnits,
-        prompted: false,
-        independent: evaluated && passed,
+        prompted,
+        independent: evaluated && passed && !prompted,
         thresholdVersion: threshold?.version ?? null,
       };
     }
@@ -1552,8 +1663,8 @@ export class OrchestratorService {
         score: acceptedImageIds.length > 0 ? (passed ? 100 : 0) : null,
         passed,
         errorUnits: emptyUnits,
-        prompted: false,
-        independent: passed,
+        prompted,
+        independent: passed && !prompted,
         thresholdVersion: threshold?.version ?? null,
       };
     }
@@ -1598,8 +1709,8 @@ export class OrchestratorService {
         score: configured ? (passed ? 100 : 0) : null,
         passed,
         errorUnits: emptyUnits,
-        prompted: false,
-        independent: passed,
+        prompted,
+        independent: passed && !prompted,
         thresholdVersion: threshold?.version ?? null,
       };
     }
@@ -1720,7 +1831,9 @@ export class OrchestratorService {
     methodState: MethodLadderState;
     errorUnits: Array<{ unit: string; kind: string; detail: string | null }>;
     isReview: boolean;
-  }): Promise<TeachingDirective> {
+    /** 发音纠正模型生成的一句引导；为空时使用发布态教师话语。 */
+    coachingText?: string | null;
+  }): Promise<{ directive: TeachingDirective; scopeSeed: DirectiveScopeSeed }> {
     const item = await this.prisma.learning_items.findUnique({
       where: { id: input.activityId },
     });
@@ -1731,6 +1844,14 @@ export class OrchestratorService {
       targetWords: string[];
       demonstrationText: string | null;
       teacherUtteranceZh: string;
+    };
+    // 课程资源身份：contentId 用运行时稳定可得的 activityId；contentVersion 由
+    // 已读出的 row.content 直接哈希，发布内容变更即可让旧课程音频整体失效。
+    const scopeSeed: DirectiveScopeSeed = {
+      contentId: input.activityId,
+      contentVersion: createHash('sha256').update(JSON.stringify(item?.content ?? input.activityId)).digest('hex'),
+      // 先保守视为动态，等 resolveDemonstration 算出文本后再判断是否等于发布态示范。
+      dynamicDemonstration: true,
     };
 
     const [teacherProfile, interactionMemories] = await Promise.all([
@@ -1765,17 +1886,20 @@ export class OrchestratorService {
       ? demo.focusUnits.map((u) => ({ text: u, kind: 'syllable' as const, isFocus: true }))
       : syllables.map((s) => ({ text: s, kind: 'syllable' as const, isFocus: false }));
     const expectedResponse = expectedResponseOf(activity.taskType);
+    const baseTeacherUtterance = input.isReview
+      ? expectedResponse === 'tap_image'
+        ? '我们来做一次复习。请回想之前学过的内容，选择对应的图片。'
+        : '我们来做一次复习。请回想之前学过的内容，试着自己回答。'
+      : activity.teacherUtteranceZh;
 
-    return {
+    const directive: TeachingDirective = {
       targetSkillNodeId: activity.skillNodeIds[0] ?? 'LA.LISTEN.greeting_core',
       taskType: activity.taskType as TeachingDirective['taskType'],
       isReview: input.isReview,
       scenario: activity.scenario as TeachingDirective['scenario'],
-      teacherUtterance: input.isReview
-        ? expectedResponse === 'tap_image'
-          ? '我们来做一次复习。请回想之前学过的内容，选择对应的图片。'
-          : '我们来做一次复习。请回想之前学过的内容，试着自己回答。'
-        : activity.teacherUtteranceZh,
+      teacherUtterance: input.coachingText
+        ? `${input.coachingText} ${baseTeacherUtterance}`
+        : baseTeacherUtterance,
       demonstrationText: input.isReview ? null : demo.demonstrationText,
       pronunciationUnits: input.isReview ? [] : pronunciationUnits,
       expectedResponse: input.isReview && expectedResponse !== 'tap_image' ? 'speak' : expectedResponse,
@@ -1807,6 +1931,13 @@ export class OrchestratorService {
         '始终保护儿童安全，不嘲笑、不施压，诚实说明自己是 AI 老师。',
       ].join('；'),
     };
+    // 只有示范文本与发布态内容逐字一致、且没有本轮错误强制聚焦时，才允许 PUBLIC。
+    // 方法阶梯（慢速/拆音节）改变示范时，即使没有 errorUnits，也属于本轮动态示范。
+    const publishedDemonstration = activity.demonstrationText?.trim() || null;
+    scopeSeed.dynamicDemonstration = input.errorUnits.length > 0
+      || !publishedDemonstration
+      || demo.demonstrationText?.trim() !== publishedDemonstration;
+    return { directive, scopeSeed };
   }
 
   /**
@@ -1850,6 +1981,7 @@ export class OrchestratorService {
   private async synthesize(
     directive: TeachingDirective,
     decision?: Awaited<ReturnType<ModelRouterImpl['route']>>,
+    scope?: SpeechScopeContext,
   ): Promise<{
     speech: TurnResponse['speech'];
     characters: number;
@@ -1868,50 +2000,84 @@ export class OrchestratorService {
       (await this.router.route({ serviceKind: 'tts', taskRoute: 'tts.dynamic_teaching' }));
 
     /**
-     * 固定内容与动态引导分开合成，并以稳定短片段作为缓存键。
-     *
-     * 这样「hello」这类固定单词、固定短句和文章段落可以在所有课堂之间
-     * 复用同一份服务端音频；长文章按标点切成 <=120 码点的片段，既避开
-     * 供应商单次文本上限，也让未变化段落不必重新合成。
+     * 一轮教师话语 = 一次 TTS 请求、一个连贯音频文件（回到 05dd2c7^ 的形状）。
+     * 不再按 <=120 码点切分逐段合成 —— 那会造成段首音高重置、跨句语调丢失，
+     * 损伤 6-9 岁儿童的英语语感；tts-segments.ts 工具函数保留给将来长文语义切分。
+     * speech.segments 仅保留 1 项（向下兼容客户端），audioRef === segments[0].audioRef。
      */
-    const segments: string[] = [directive.teacherUtterance, directive.demonstrationText]
-      .filter((value): value is string => Boolean(value))
-      .flatMap((value) => splitTeachingSpeech(value, 120));
+    const text = [directive.teacherUtterance, directive.demonstrationText]
+      .filter(Boolean)
+      .join(' ');
 
-    const outcomes = [];
-    for (const text of segments) {
-      outcomes.push(await this.gateway.ttsWithResult(
-        { text, voice: directive.voice, voiceIdentity: 'teacher_default' },
-        routingDecision,
-      ));
-    }
-    const first = outcomes[0];
+    // 语速量化：让不同学习者/教法阶梯收敛到 0.05 档位，命中同一课程级缓存
+    // （详见 quantizeTeacherSpeed）。量化值同时用于 TTS 请求与对外返回。
+    const teacherSpeed = quantizeTeacherSpeed(directive.voice.teacherSpeed);
+
+    // 课程级作用域：默认 fail-closed 到 PRIVATE_DYNAMIC。PUBLIC 分支绝不携带
+    // learnerId / lessonSessionId（否则破坏跨用户、跨时间复用）；PRIVATE 分支必带。
+    const scopeName: 'PUBLIC_CURRICULUM' | 'PRIVATE_DYNAMIC' = scope?.publicCurriculum
+      ? 'PUBLIC_CURRICULUM'
+      : 'PRIVATE_DYNAMIC';
+
+    // 固定课程语音使用统一的“课程音色档”：不把某个孩子的人格语气/纠正方式
+    // 带进公共音频，否则同一句话会因 learner 的 tone 不同而无法跨用户复用。
+    // 语速仍保留 0.05 量化档，兼顾慢速学习者；客户端可再做 playbackRate 微调。
+    const voice = scopeName === 'PUBLIC_CURRICULUM'
+      ? {
+          ...directive.voice,
+          teacherSpeed,
+          voiceStyle: 'gentle' as const,
+          pauseAfterSentenceMs: 1000,
+          pronunciationMode: 'slow_clear' as const,
+        }
+      : { ...directive.voice, teacherSpeed };
+    const cacheScope = {
+      scope: scopeName,
+      topicId: scope?.topicId ?? '',
+      contentId: scope?.contentId ?? '',
+      contentVersion: scope?.contentVersion ?? '',
+      providerModelFamily: routingDecision.modelAlias,
+      ...(scopeName === 'PRIVATE_DYNAMIC'
+        ? { learnerId: scope?.learnerId ?? '', lessonSessionId: scope?.lessonSessionId ?? '' }
+        : {}),
+    };
+
+    const outcome = await this.gateway.ttsWithResult(
+      { text, voice, voiceIdentity: 'teacher_default', cacheScope },
+      routingDecision,
+    );
 
     return {
       speech: {
-        audioRef: first?.result.audioRef ?? null,
-        cached: outcomes.length > 0 && outcomes.every((item) => item.result.cached),
-        teacherSpeed: directive.voice.teacherSpeed,
-        speedMode: first?.result.speedMode,
-        playbackRate: first?.result.playbackRate,
-        voiceStyle: directive.voice.voiceStyle,
-        pauseAfterSentenceMs: directive.voice.pauseAfterSentenceMs,
-        pronunciationMode: directive.voice.pronunciationMode,
-        segments: outcomes.map((item) => ({
-          audioRef: item.result.audioRef,
-          cached: item.result.cached,
-          ...(item.result.speedMode ? { speedMode: item.result.speedMode } : {}),
-          ...(typeof item.result.playbackRate === 'number' ? { playbackRate: item.result.playbackRate } : {}),
-        })),
+        audioRef: outcome.result.audioRef,
+        cached: outcome.result.cached,
+        teacherSpeed,
+        speedMode: outcome.result.speedMode,
+        playbackRate: outcome.result.playbackRate,
+        voiceStyle: voice.voiceStyle,
+        pauseAfterSentenceMs: voice.pauseAfterSentenceMs,
+        pronunciationMode: voice.pronunciationMode,
+        segments: [{
+          audioRef: outcome.result.audioRef,
+          cached: outcome.result.cached,
+          ...(outcome.result.speedMode ? { speedMode: outcome.result.speedMode } : {}),
+          ...(typeof outcome.result.playbackRate === 'number' ? { playbackRate: outcome.result.playbackRate } : {}),
+        }],
+        scope: {
+          kind: scopeName,
+          topicId: cacheScope.topicId,
+          contentId: cacheScope.contentId,
+          contentVersion: cacheScope.contentVersion,
+        },
       },
-      characters: outcomes.reduce((total, item) => total + item.result.characters, 0),
+      characters: outcome.result.characters,
       meta: {
-        degraded: outcomes.some((item) => item.degraded),
-        reasons: [...new Set(outcomes.flatMap((item) => item.reasons))],
-        effectiveLevel: first?.effectiveLevel ?? routingDecision.level,
-        providerAlias: first?.providerAlias ?? routingDecision.providerAlias,
-        modelAlias: first?.result.modelAlias ?? routingDecision.modelAlias,
-        latencyMs: outcomes.reduce((total, item) => total + item.latencyMs, 0),
+        degraded: outcome.degraded,
+        reasons: outcome.reasons,
+        effectiveLevel: outcome.effectiveLevel,
+        providerAlias: outcome.providerAlias,
+        modelAlias: outcome.result.modelAlias,
+        latencyMs: outcome.latencyMs,
       },
     };
   }
@@ -1933,6 +2099,22 @@ export class OrchestratorService {
   }
 }
 
+
+/**
+ * 写入 interaction_events 前剥离儿童音频。
+ *
+ * 音频只允许作为本次请求的 data URI 传给 ASR/发音评估；数据库只保留
+ * “本轮有没有语音”这一事实，供审计与幂等排查，绝不保留音频字节或 ref。
+ */
+function persistedLearnerResponse(response: LearnerResponse): Record<string, unknown> {
+  return {
+    ...response,
+    audioRef: null,
+    audioBase64: null,
+    audioContentType: null,
+    audioProvided: Boolean(response.audioRef || response.audioBase64),
+  };
+}
 
 /**
  * 构造用量记录。

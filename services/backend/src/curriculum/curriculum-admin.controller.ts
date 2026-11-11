@@ -627,7 +627,10 @@ export class CurriculumAdminController {
         timeoutMs: 30000,
       }, decision);
       const parsed = generatedLessonSchema.safeParse(parseJsonObject(result.content));
-      if (!parsed.success) throw new Error('主模型输出缺少有效的词汇、目标或活动');
+      if (!parsed.success) {
+        const limitIssue = parsed.error.issues.find((issue) => issue.code === z.ZodIssueCode.custom);
+        throw new Error(limitIssue?.message ?? '主模型输出缺少有效的词汇、目标或活动');
+      }
       const allowedSkills = new Set(skillNodes.map((node) => node.id));
       const activitiesValid = parsed.data.activities.every((activity, index) => {
         const normalized = teachingActivitySchema.safeParse({
@@ -853,6 +856,15 @@ export class CurriculumAdminController {
         `第 ${invalidActivities.join('、')} 个活动缺少明确评估规则；配置 acceptedTexts、requiredPhrases、acceptedImageIds、语音评估，或将确属被动听读的活动设为纯听读`,
       );
     }
+    // 发布是内容写入 learning_items 的最后一道门：无论生成还是包导入链路，
+    // 整轮教师话语超限都在这里明确拒绝，避免已发布课程在运行时单次合成直接抛错。
+    for (const [index, activity] of content.activities.entries()) {
+      const message = teacherSpeechLimitMessage(
+        `第 ${index + 1} 个活动`,
+        teacherSpeechText(activity.teacherUtteranceZh ?? '', activity.demonstrationText ?? ''),
+      );
+      if (message) throw new BadRequestException(message);
+    }
     const skillIds = [...new Set(content.activities.flatMap((activity) => activity.skillNodeIds ?? []))];
     if (!skillIds.length) throw new BadRequestException('课程活动没有绑定能力节点，不能发布');
     // Course packages store stable skill codes. Resolve by code so publication
@@ -977,8 +989,8 @@ const generatedLessonSchema = z.object({
     taskType: z.string().min(1),
     scenario: z.string().min(1),
     targetWords: z.array(z.string().trim().min(1).max(100)).min(1).max(30),
-    teacherUtteranceZh: z.string().trim().min(1).max(2000),
-    demonstrationText: z.string().max(5000),
+    teacherUtteranceZh: z.string().trim().min(1).max(500),
+    demonstrationText: z.string().max(500),
     skillNodeIds: z.array(z.string().trim().min(1).max(120)).min(1).max(30),
     requiresPronunciationAssessment: z.boolean(),
     requiresAsr: z.boolean(),
@@ -991,6 +1003,18 @@ const generatedLessonSchema = z.object({
     difficulty: z.number().int().min(1).max(5),
   })).min(1).max(100),
   images: z.array(generatedImageSchema).max(100).default([]),
+}).superRefine((lesson, ctx) => {
+  // 整轮教师话语在 orchestrator.synthesize 中由两段 join 后一次性合成，
+  // 签名型 TTS 适配器单次上限 150 汉字 / 500 字符，超限必须显式拒绝、绝不静默截断。
+  lesson.activities.forEach((activity, index) => {
+    const message = teacherSpeechLimitMessage(
+      `第 ${index + 1} 个活动`,
+      teacherSpeechText(activity.teacherUtteranceZh, activity.demonstrationText),
+    );
+    if (message) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['activities', index] });
+    }
+  });
 });
 
 function levelToStage(level: string): number {
@@ -1011,6 +1035,28 @@ function curriculumSkillNodeFor(taskType: string): string {
     free_response: 'LA.COMM.free_talk',
   };
   return nodeByTask[taskType] ?? 'LA.VOCAB.receptive';
+}
+
+/** 与 orchestrator.synthesize 一致的整轮合成文本（两段 join，单次 TTS）。 */
+function teacherSpeechText(teacherUtteranceZh: string, demonstrationText: string): string {
+  return [teacherUtteranceZh, demonstrationText].filter(Boolean).join(' ');
+}
+
+/**
+ * 发布审核硬拦：整轮教师话语必须同时满足 ≤150 汉字且 ≤500 字符（按码点计）。
+ *
+ * 口径与 packages/ai-provider-sdk/src/signed-tts.ts 一致（汉字/全角标点计入 150 限额，
+ * 总字符计入 500 限额）。服务端是「整轮单次合成、不静默截断」，超限必须明确拒绝，
+ * 否则已发布长课程会在合成时直接抛错。返回提示文案，null 表示通过。
+ */
+function teacherSpeechLimitMessage(label: string, text: string): string | null {
+  const codePoints = Array.from(text);
+  const cjkCount = codePoints.filter((ch) => /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch)).length;
+  if (cjkCount > 150 || codePoints.length > 500) {
+    return `${label}整轮教师话语超出单次 TTS 合成上限（汉字/全角=${cjkCount}/150，字符=${codePoints.length}/500）；` +
+      '请缩短 teacherUtteranceZh / demonstrationText 后重新生成，长文章留待支持长文本的语音供应商。';
+  }
+  return null;
 }
 
 function hasPublishableAssessment(activity: GeneratedLesson['activities'][number]): boolean {

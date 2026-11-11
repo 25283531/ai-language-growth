@@ -24,6 +24,7 @@ import {
   resolveAudioDir,
   type HttpServiceOptions,
 } from './http';
+import { audioFingerprint } from './audio-fingerprint';
 
 /** 签名型协议特有的配置项，全部由 .env 注入。 */
 export interface SignedTtsOptions extends HttpServiceOptions {
@@ -282,38 +283,35 @@ export class SignedJsonTtsAdapter implements TtsAdapter {
       throw new Error(`adapter ${this.alias} 返回的音频容器与配置的编码不一致 (${codec})`);
     }
 
-    const fingerprint = createHash('sha256')
-      .update(
-        [
-          request.text,
-          speed,
-          voice,
-          codec,
-          this.options.modelAlias ?? '',
-          // 协议/动作/服务/区域纳入指纹：换供应商或换音色档位后，
-          // 相同文本不会错误命中上一家留下的缓存文件。
-          this.options.action ?? '',
-          this.options.service ?? '',
-          this.options.version ?? '',
-          this.options.region ?? '',
-          baseUrl,
-          this.options.sampleRate ?? 16000,
-          this.options.primaryLanguage ?? 2,
-          this.options.volume ?? 0,
-          this.options.modelType ?? 1,
-          JSON.stringify(this.options.extraBody ?? {}),
-          request.voice.voiceStyle,
-          request.voice.pronunciationMode,
-          request.voice.pauseAfterSentenceMs,
-        ].join('|'),
-      )
-      .digest('hex')
-      .slice(0, 24);
+    // 文件名指纹统一走共享纯函数：纳入课程作用域/音色版本/模型族、补齐
+    // voiceStyle/pronunciationMode、移除 pauseAfterSentenceMs。协议/动作/服务/
+    // 区域等仍作为适配器特有维度纳入：换供应商或换音色档位后，相同文本不会
+    // 错误命中上一家留下的缓存文件；不同课程同文本也必得不同指纹。
+    const fingerprint = audioFingerprint(request, {
+      speed,
+      voice,
+      modelAlias: this.options.modelAlias ?? '',
+      extra: [
+        codec,
+        this.options.action ?? '',
+        this.options.service ?? '',
+        this.options.version ?? '',
+        this.options.region ?? '',
+        baseUrl,
+        this.options.sampleRate ?? 16000,
+        this.options.primaryLanguage ?? 2,
+        this.options.volume ?? 0,
+        this.options.modelType ?? 1,
+        JSON.stringify(this.options.extraBody ?? {}),
+      ],
+    });
 
     const dir = this.options.audioDir ?? resolveAudioDir();
     mkdirSync(dir, { recursive: true });
     const fileName = `${fingerprint}.${codec}`;
     const fullPath = join(dir, fileName);
+    // 保留 existsSync 跳过写盘：由于指纹现在含 scope 与 voiceProfileVersion，
+    // 升版本会自然生成新文件，不再静默复用旧音频。
     if (!existsSync(fullPath)) writeFileSync(fullPath, bytes);
 
     return {

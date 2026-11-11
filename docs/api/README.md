@@ -11,8 +11,8 @@
 - 输入验证由 Zod schema 执行；不合法输入通常返回 HTTP 400，结构为 Nest `message`（可能是字符串或对象）、`error`、`statusCode`。不同 controller 的异常包装尚未完全统一。
 - 教学领域 ID 使用 JSON 字符串；日期时间使用 ISO-8601。
 - **当前除管理 API 外均无身份认证和监护人归属检查。** 管理 API 由部署管理员会话保护；不得将管理员登录视为儿童数据权限系统。未完成 guardian auth 前仅可在隔离开发/CI 环境使用。
-- 语音 `audioRef` 是协议引用。Android 原型通过 `POST /media/audio/uploads` 上传
-  `.m4a` 字节后使用服务端引用；该端点仅为原型缓存，尚未接入对象存储和自动过期。
+- 语音 `audioRef` 是协议引用。固定课程 TTS 由服务端生成并缓存；儿童录音不再上传到服务端：Android 在本地保留录音供回放，提交回合时以 `learnerResponse.audioBase64` 随请求发送，服务端仅在本次请求内转 `data:` URI 给 ASR/发音适配器，不写磁盘。
+- `POST /media/audio/uploads` 已停用，返回 `410 AUDIO_UPLOAD_DISABLED`。
 - 能力阈值状态为未校准的内部教学信号，不是掌握承诺。
 
 ## 教学与学习者
@@ -46,12 +46,12 @@
 
 SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，不通过 API 返回密码。开发环境未配置 SMTP 时会把重置链接写入后端日志；生产环境必须配置完整 SMTP 信息，否则找回邮件无法发送。生产环境登录 Cookie 带 `Secure` 标记。
 
-`response` 字段来自 `learnerResponseSchema`：`text?: string|null`、`audioRef?: string|null`、`audioDurationMs?: integer|null`（0–120000）、`selectedImageId?: string|null`、`requestedSlower?: boolean`、`requestedRepeat?: boolean`、`freeUtterance?: string|null`。schema 为缺省项提供默认值。
+`response` 字段来自 `learnerResponseSchema`：`text?: string|null`、`audioRef?: string|null`、`audioBase64?: string|null`（≤20,000,000 字符，二选一）、`audioContentType?: string|null`、`audioDurationMs?: integer|null`（0–120000）、`selectedImageId?: string|null`、`requestedSlower?: boolean`、`requestedRepeat?: boolean`、`freeUtterance?: string|null`。schema 为缺省项提供默认值。服务端只在请求内使用音频，写 `interaction_events` 前剥除音频字段。
 
 ### 教学响应子结构
 
 - `directive`：目标技能、任务类型、场景、老师话术、示范文本、逐音节/音素单元、期望回应、目标词、抽象语音参数、方法阶梯、连续失败计数与人格提示。
-- `speech`：`audioRef`、`cached`、`teacherSpeed`、`voiceStyle`、`pauseAfterSentenceMs`、`pronunciationMode`。重复请求复用已存引用；慢速请求重新生成。
+- `speech`：`audioRef`、`cached`、`teacherSpeed`、`voiceStyle`、`pauseAfterSentenceMs`、`pronunciationMode`、`segments[]`（整轮单次合成，通常只有 1 项）、可选 `scope`（本轮音频的课程级缓存作用域）。重复请求复用已存引用；慢速请求重新生成。
 - `assessment`：是否调用 ASR/发音评测、分数、是否通过、错音单元、提示/独立标记与阈值版本。
 - `evidence` 与 `stateChanges`：可审计学习证据和规则引擎状态变化。
 - `routing`：任务路由、等级、策略、回退标记、供应商别名、升级信号、延迟及 token/字符/时长/评测调用数与估算费用。
@@ -61,14 +61,15 @@ SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，
 
 | Method / path | 请求 | 成功响应 / 行为 | 认证 |
 | --- | --- | --- | --- |
-| `POST /speech/synthesize` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode? }` | Gateway TTS 结果，内容缓存可避免重复计费 | 无 |
+| `POST /speech/synthesize` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | Gateway TTS 结果，课程级缓存可避免重复计费；`scope` 仅接受内容身份，服务端按 `PRIVATE_DYNAMIC` 处理，不信任客户端声明的归属 | Bearer + `X-Learner-Id` + 额度租约 |
+| `POST /speech/cache/lookup` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | 只读查服务端缓存，不触发供应商、不需租约；命中返回可播放 `speech`，未命中返回 `{ cached:false, speech:null }` | Bearer + `X-Learner-Id` |
 | `POST /speech/recognize` | `{ audioRef, highQuality? }` | ASR 转写结果；ASR 不等于发音准确度评估 | 无 |
 | `POST /speech/evaluate` | `{ audioRef, targetText, granularity?: word\|syllable\|phoneme }` | 发音评测结果 | 无 |
 | `GET /usage/summary?learnerId=...&lessonSessionId=...` | 可选筛选 | 持久化用量与 `pricingStatus: unpriced`；`costCny=0` 表示未计价，不代表免费 | 无 |
 | `GET /health` | 无 | 状态、Gateway 模式、未校准标记、时间戳 | 无 |
 | `GET /config/audit` | 无 | 脱敏供应商配置摘要；`NODE_ENV=production` 时 404 | 仅开发环境门槛，不是认证 |
-| `GET /media/audio/{file}` | 内容指纹文件名 | 流式返回本地 TTS 文件，扩展名白名单检查 | 无 |
-| `POST /media/audio/uploads` | 原始音频字节（`audio/mp4`、`audio/wav`、`audio/mpeg`，最大 10 MB） | 返回内容指纹 `audioRef`，供 ASR/发音评测读取 | 原型无认证 |
+| `GET /media/audio/{file}` | 内容指纹文件名 + Bearer + `X-Learner-Id` + 额度租约 | 流式返回本地 TTS 文件；扩展名白名单 + `media_assets` 归属校验：`PUBLIC_CURRICULUM` / 旧资产按租约可读，`PRIVATE_DYNAMIC` / `PRIVATE_UPLOAD` 仅归属学习者可读，过期按 404 | 学习者归属 + 租约 |
+| `POST /media/audio/uploads` | 已停用 | 返回 `410 AUDIO_UPLOAD_DISABLED`；录音改为 `POST /lessons/:id/turn` 的 `learnerResponse.audioBase64`（最大 20,000,000 字符），服务端不落盘 | — |
 
 ### 端侧语音额度租约
 
@@ -84,11 +85,18 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 租约默认有效 180 秒，服务端数据库是额度权威来源。Android 端在额度不足时不发起供应商请求；服务端对带有
 `X-Learner-Id` 与 `X-Speech-Quota-Reservation` 是正式客户端访问语音媒体的必填请求头：
 
-- ASR 录音上传必须同时携带两者；正式 Android 客户端在发送音频前先预留额度，服务端在落盘前再次校验租约，租约无效或额度耗尽时不会保存上传内容。
+- ASR/发音请求必须同时携带两者；正式 Android 客户端在提交音频前先预留额度，服务端在调用供应商前再次校验租约，租约无效或额度耗尽时不会转发音频。
 - 云端 TTS 音频下载也必须同时携带两者；Android 播放器先预留 TTS 额度，再用带请求头的下载请求读取音频，播放结束后按实际时长结算，失败则释放租约。
 - ASR / 发音评测接口复用同一租约校验。客户端不得只依赖本地计时器。
 
 端侧直连供应商时，供应商短期凭证也必须绑定同一租约；长期 API Key/AppSecret 不得放入 APK。课程缓存和旧 Web 原型的无租约读取只作为过渡兼容路径，正式客户端不使用该路径。
+
+### TTS 缓存作用域（D-014 / D-026）
+
+- 一轮教师话语整轮单次合成，`segments` 通常只有 1 项，`audioRef === segments[0].audioRef`；不做固定字数 / 单词 / 短句的逐段合成，避免韵律顿挫。
+- `PUBLIC_CURRICULUM`：仅发布态课程内容且无动态覆盖时启用，允许同一课程跨用户、跨时间复用；键中不含 `learnerId` / `lessonSessionId`。
+- `PRIVATE_DYNAMIC`：默认 fail-closed；键中含学习者与课堂标识，音频文件与媒体资产按归属隔离，按 24 小时 TTL 失效。
+- 缓存键包含 `contentVersion`、`voiceParamsHash`、`voiceProfileVersion`、`modelFamily`；发布内容、音色档案或模型族变更时旧音频不再命中。`pauseAfterSentenceMs` 属播放端行为，不进缓存键。
 
 ### 会员管理
 

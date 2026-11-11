@@ -5,7 +5,7 @@ import { AdminNav } from './admin-nav';
 import { AdminApiError, adminFetch } from './admin-auth';
 
 type ServiceKind = 'llm' | 'tts' | 'asr' | 'pronunciation' | 'embedding';
-type PriceType = 'input_token' | 'output_token' | 'per_character' | 'per_second' | 'per_call';
+type PriceType = 'input_token' | 'output_token' | 'per_1000_chars' | 'per_character' | 'per_second' | 'per_call';
 type ModelPrice = { modelAlias: string; priceType: PriceType; unitPrice: number };
 type Preset = {
   id: string;
@@ -80,7 +80,7 @@ const priceFields: Record<ServiceKind, Array<{ type: PriceType; label: string }>
     { type: 'input_token', label: '输入 Token 单价（元/Token）' },
     { type: 'output_token', label: '输出 Token 单价（元/Token）' },
   ],
-  tts: [{ type: 'per_character', label: '合成字符单价（元/字符）' }],
+  tts: [{ type: 'per_1000_chars', label: '合成字符单价（元/千字符）' }],
   asr: [{ type: 'per_second', label: '识别时长单价（元/秒）' }],
   pronunciation: [{ type: 'per_call', label: '单次评测单价（元/次）' }],
   embedding: [{ type: 'input_token', label: '输入 Token 单价（元/Token）' }],
@@ -353,7 +353,11 @@ export default function AdminPage() {
     );
     const rows: ModelPrice[] = Array.isArray(body) ? body as ModelPrice[] : [];
     if (signal?.aborted || !mountedRef.current) return;
-    setPricing(Object.fromEntries(rows.map((row) => [row.priceType, String(row.unitPrice)])));
+    // 历史 per_character 价格换算成“元/千字符”展示，避免切换口径后丢失已有配置。
+    const normalized = rows.map((row) => row.priceType === 'per_character' && active === 'tts'
+      ? { ...row, priceType: 'per_1000_chars' as const, unitPrice: row.unitPrice * 1000 }
+      : row);
+    setPricing(Object.fromEntries(normalized.map((row) => [row.priceType, String(row.unitPrice)])));
     setBackgroundError('');
   }
 

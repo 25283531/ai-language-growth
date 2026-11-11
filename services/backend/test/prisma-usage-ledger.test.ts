@@ -77,6 +77,44 @@ describe('PrismaUsageLedger', () => {
     assert.ok(Math.abs(Number(inserted?.estimatedCostCny) - 0.0018) < 1e-9);
   });
 
+  it('prices TTS by 1000 characters and keeps the legacy per-character unit working', async () => {
+    const current = { inserted: undefined as Record<string, unknown> | undefined };
+    const legacy = { inserted: undefined as Record<string, unknown> | undefined };
+    const makePrisma = (priceType: string, unitPrice: number, sink: typeof current) => ({
+      ai_models: {
+        findFirst: async () => ({ id: 'tts-model', prices: [{ priceType, unitPrice }] }),
+      },
+      ai_usage_logs: {
+        create: async ({ data }: { data: Record<string, unknown> }) => { sink.inserted = data; },
+      },
+    }) as unknown as PrismaService;
+
+    const usage = {
+      id: 'usage-tts',
+      learnerId: 'learner-1',
+      lessonSessionId: 'session-1',
+      serviceKind: 'tts' as const,
+      taskRoute: 'tts.dynamic_teaching',
+      level: 'L1' as const,
+      providerAlias: 'configured_tts',
+      modelAlias: 'tts-model',
+      inputTokens: 0,
+      outputTokens: 0,
+      ttsCharacters: 1500,
+      asrSeconds: 0,
+      pronunciationCalls: 0,
+      estimatedCostCny: 0,
+      latencyMs: 10,
+      createdAt: '2026-11-11T00:00:00.000Z',
+    };
+
+    await new PrismaUsageLedger(makePrisma('per_1000_chars', 0.05, current)).add(usage);
+    assert.ok(Math.abs(Number(current.inserted?.estimatedCostCny) - 0.075) < 1e-9);
+
+    await new PrismaUsageLedger(makePrisma('per_character', 0.00015, legacy)).add(usage);
+    assert.ok(Math.abs(Number(legacy.inserted?.estimatedCostCny) - 0.225) < 1e-9);
+  });
+
   it('builds persistent cost totals grouped by service and level', async () => {
     const prisma = {
       ai_usage_logs: {

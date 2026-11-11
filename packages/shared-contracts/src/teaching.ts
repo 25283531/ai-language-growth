@@ -106,8 +106,11 @@ export type TeachingDirective = z.infer<typeof teachingDirectiveSchema>;
 export const learnerResponseSchema = z.object({
   /** 文本回应（点选、作答、自由表达） */
   text: z.string().nullable().default(null),
-  /** 语音回应（base64 / 上传后的对象引用） */
+  /** 语音回应：仅用于服务端本次转写/评测的临时 data URI；不得持久化到数据库。 */
   audioRef: z.string().nullable().default(null),
+  /** 手机端录音内联上传（服务端只在本次请求内转发给 ASR/发音评估，不落盘、不保留）。 */
+  audioBase64: z.string().min(1).max(20_000_000).nullable().default(null),
+  audioContentType: z.enum(['audio/mp4', 'audio/wav', 'audio/mpeg']).nullable().default(null),
   audioDurationMs: z.number().int().min(0).max(120000).nullable().default(null),
   /** 孩子选择的图片 id（点选任务） */
   selectedImageId: z.string().nullable().default(null),
@@ -245,6 +248,21 @@ export const turnRequestSchema = z.object({
 
 export type TurnRequest = z.infer<typeof turnRequestSchema>;
 
+/**
+ * 本轮语音实际采用的缓存作用域（additive，供灰度与可观测使用）。
+ *
+ * 单文件方案下 `audioRef` 即完整音频；`scope` 只是对服务端缓存归属的声明，
+ * 旧客户端 JSONObject / TS 会忽略未知键，不需要为此改播放逻辑。
+ */
+export const speechScopeSchema = z.object({
+  kind: z.enum(['PUBLIC_CURRICULUM', 'PRIVATE_DYNAMIC', 'PRONUNCIATION']),
+  topicId: z.string(),
+  contentId: z.string(),
+  contentVersion: z.string(),
+});
+
+export type SpeechScope = z.infer<typeof speechScopeSchema>;
+
 /** `/lessons/{id}/turn` 响应体。 */
 export const turnResponseSchema = z.object({
   lessonSessionId: z.string(),
@@ -269,6 +287,8 @@ export const turnResponseSchema = z.object({
     voiceStyle: z.string(),
     pauseAfterSentenceMs: z.number().int(),
     pronunciationMode: z.string(),
+    /** 本轮语音采用的课程级缓存作用域；additive，旧客户端忽略即可。 */
+    scope: speechScopeSchema.optional(),
   }),
   /** 评估 */
   assessment: turnAssessmentSchema,
