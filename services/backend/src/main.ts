@@ -5,7 +5,7 @@
  * 本进程是唯一决定「孩子下一步学什么」的地方。
  */
 import 'reflect-metadata';
-import { Logger, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { timingSafeEqual } from 'node:crypto';
 import { json, raw } from 'express';
@@ -14,8 +14,6 @@ import type { Request } from 'express';
 import { AppModule } from './app.module';
 import { assertLiveProviderConfig } from '@alg/ai-provider-sdk';
 import { loadConfig } from './config/config.module';
-import { SpeechQuotaService } from './usage/speech-quota.service';
-import { AuthService, extractBearerToken } from './auth/auth.service';
 import { AdminAuthService } from './auth/admin-auth.service';
 
 async function bootstrap(): Promise<void> {
@@ -40,11 +38,9 @@ async function bootstrap(): Promise<void> {
     ],
   });
 
-  // JSON body 体积上限：M1 语音以引用方式传递，不内联大 base64
-  app.use(json({ limit: '2mb' }));
+  // 儿童录音以一次性 audioBase64 随课堂回合提交；提高 JSON 上限但服务端不落盘。
+  app.use(json({ limit: '8mb' }));
   app.use('/api/v1/admin/backups/restore', raw({ type: 'application/octet-stream', limit: '512mb' }));
-  const speechQuota = app.get(SpeechQuotaService);
-  const auth = app.get(AuthService);
   const adminAuth = app.get(AdminAuthService);
   app.use('/api/v1/admin', (request: Request, response: Response, next: NextFunction) => {
     if (request.method === 'POST' && request.path === '/curriculum/internal/model') {
@@ -75,34 +71,6 @@ async function bootstrap(): Promise<void> {
       response.status(status).json({ message: error instanceof Error ? error.message : '管理后台未授权' });
     }
   });
-  app.use('/api/v1/media/audio/uploads', async (request: Request, response: Response, next: NextFunction) => {
-    const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
-    const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
-    if (!reservationId || !learnerId) {
-      response.status(400).json({ message: '音频请求缺少额度租约或学习者标识' });
-      return;
-    }
-    try {
-      await auth.assertLearnerOwnership(
-        extractBearerToken(request.headers.authorization, request.headers.cookie),
-        learnerId,
-      );
-      await speechQuota.assertReservation({ reservationId, learnerId, serviceKind: 'asr' });
-      next();
-    } catch (error) {
-      const status = error instanceof UnauthorizedException
-        ? 401
-        : error instanceof ForbiddenException
-          ? 403
-          : 429;
-      response.status(status).json({ message: '语音额度租约无效或已超额，已阻止音频上传' });
-    }
-  });
-  // Android 原型将录音字节直接 POST 到该路径；只对上传路由启用原始字节解析。
-  app.use('/api/v1/media/audio/uploads', raw({
-    type: ['audio/*', 'application/octet-stream'],
-    limit: '10mb',
-  }));
 
   await app.listen(config.port, '0.0.0.0');
 

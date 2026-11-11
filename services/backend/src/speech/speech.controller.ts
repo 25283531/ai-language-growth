@@ -8,6 +8,7 @@
  * GET  /api/v1/health               健康检查
  */
 import { Body, Controller, Get, HttpException, Inject, Post, Query, Req } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { ModelRouterImpl } from '@alg/model-router';
@@ -15,6 +16,18 @@ import { resolveLiveServices, resolveTtsProtocol } from '@alg/ai-provider-sdk';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
 import { AuthService, extractBearerToken } from '../auth/auth.service';
+
+/**
+ * 直连 synthesize / cache/lookup 的可选课程作用域。
+ * 仅接受内容身份；作用域一律由服务端 fail-closed 到 PRIVATE_DYNAMIC，
+ * owner 一律取请求方 X-Learner-Id，绝不信任客户端声明的 scope / learnerId。
+ */
+const speechScopeSchema = z.object({
+  topicId: z.string().optional(),
+  contentId: z.string().optional(),
+  contentVersion: z.string().optional(),
+  lessonSessionId: z.string().optional(),
+}).optional();
 
 const synthesizeSchema = z.object({
   text: z.string().min(1).max(500),
@@ -24,6 +37,8 @@ const synthesizeSchema = z.object({
   pronunciationMode: z
     .enum(['natural', 'slow_clear', 'syllable_by_syllable'])
     .default('slow_clear'),
+  /** 可选课程作用域；缺省或不带时按无会话上下文 fail-closed 处理。 */
+  scope: speechScopeSchema,
 });
 
 const recognizeSchema = z.object({
@@ -52,7 +67,10 @@ export class SpeechController {
     if (!parsed.success) {
       throw new HttpException({ message: '参数不合法', detail: parsed.error.flatten() }, 400);
     }
+    // 无会话上下文时不查任何课堂会话，绝不因「派生不出 courseScope」而 400：
+    // 一律 fail-closed 到 PRIVATE_DYNAMIC，用请求方 learnerId 作 owner。
     await this.assertClientReservation(request, 'tts');
+    const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
     const decision = await this.router.route({
       serviceKind: 'tts',
       taskRoute: 'tts.dynamic_teaching',
@@ -67,6 +85,7 @@ export class SpeechController {
           pronunciationMode: parsed.data.pronunciationMode,
         },
         voiceIdentity: 'teacher_default',
+        cacheScope: this.privateCacheScope(parsed.data.text, learnerId, parsed.data.scope),
       },
       decision,
     );
@@ -101,6 +120,9 @@ export class SpeechController {
         pronunciationMode: parsed.data.pronunciationMode,
       },
       voiceIdentity: 'teacher_default',
+      // 与 synthesize 用同一套派生规则，保证命中同一键；owner 取本人 X-Learner-Id，
+      // 网关按 owner 过滤，跨 learner 的 PRIVATE 资产一律不命中。
+      cacheScope: this.privateCacheScope(parsed.data.text, learnerId, parsed.data.scope),
     });
     return { cached: Boolean(speech), speech };
   }
@@ -141,6 +163,26 @@ export class SpeechController {
       },
       decision,
     );
+  }
+
+  /**
+   * 直连语音请求的缓存作用域：无会话上下文时 fail-closed 到 PRIVATE_DYNAMIC，
+   * owner 用请求方 learnerId；contentVersion 缺省时以文本哈希兜底，保证
+   * 不同文本不会误命中同一份音频，相同文本 + 同一 learner 必定命中同一键。
+   */
+  private privateCacheScope(
+    text: string,
+    learnerId: string,
+    scope?: { topicId?: string; contentId?: string; contentVersion?: string; lessonSessionId?: string },
+  ) {
+    return {
+      scope: 'PRIVATE_DYNAMIC' as const,
+      topicId: scope?.topicId ?? '',
+      contentId: scope?.contentId ?? '',
+      contentVersion: scope?.contentVersion ?? createHash('sha256').update(text).digest('hex'),
+      learnerId,
+      ...(scope?.lessonSessionId ? { lessonSessionId: scope.lessonSessionId } : {}),
+    };
   }
 
   private async assertClientReservation(

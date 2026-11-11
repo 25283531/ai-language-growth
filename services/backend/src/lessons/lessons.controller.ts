@@ -55,6 +55,17 @@ export class LessonsController {
       throw new HttpException({ message: '请求参数不合法', detail: parsed.error.flatten() }, 400);
     }
     await this.auth.assertLearnerOwnership(extractBearerToken(authorization, cookie), parsed.data.learnerId);
+    // 手机端录音只在本请求内以 data URI 传给 ASR/发音评估，服务端不落盘。
+    // 兼容旧客户端的 audioRef，但新客户端应优先使用 audioBase64。
+    if (parsed.data.response.audioBase64) {
+      if (parsed.data.response.audioRef) {
+        throw new HttpException('audioRef 与 audioBase64 只能二选一', 400);
+      }
+      const contentType = parsed.data.response.audioContentType ?? 'audio/mp4';
+      parsed.data.response.audioRef = `data:${contentType};base64,${parsed.data.response.audioBase64}`;
+      parsed.data.response.audioBase64 = null;
+      parsed.data.response.audioContentType = null;
+    }
     if (parsed.data.response.audioRef) {
       const reservationId = String(reservationHeader ?? '').trim();
       if (!reservationId) throw new HttpException('语音课堂提交缺少 ASR 额度租约', 400);

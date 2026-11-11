@@ -47,6 +47,15 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+      # 最低质量门禁（打包前）：JVM 单测无需设备，lint 为静态检查。
+      # 任一失败即中止 job，后续 Assemble APK / Upload APK 都不会执行（失败时不上传 APK）。
+      # 占位说明：仓库当前尚无 Android 测试源码，testDebugUnitTest 会空跑通过，
+      # 保留该任务作为占位门禁，待补 instrumented / Robolectric 用例后自动生效；
+      # lint 若命中存量代码问题而失败，属门禁暴露的既有问题，本次不改 Android 源码。
+      - name: Quality gate - JVM unit tests
+        run: gradle --no-daemon -p apps/android testDebugUnitTest
+      - name: Quality gate - lint
+        run: gradle --no-daemon -p apps/android lintDebug
       - name: Prepare release signing
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' }}
         env:
@@ -74,6 +83,8 @@ jobs:
             gradle --no-daemon -PappVersionName="$APP_VERSION_NAME" -PappVersionCode="$APP_VERSION_CODE" assembleDebug
           fi
       - name: Upload APK
+        # 仅在前面所有步骤（含质量门禁与 assemble）都成功时上传；门禁失败不产出 APK 产物。
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: android-client-${{ github.event.inputs.build_type || 'debug' }}-${{ github.event.inputs.version_name || '0.0.3' }}

@@ -1,0 +1,11 @@
+<resources>
+    <!-- API 27+ 才支持浅色导航栏；低版本保留暖奶油色导航栏即可。 -->
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#E8623C</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#FFF8F0</item>
+        <item name="android:navigationBarColor">#FFF8F0</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

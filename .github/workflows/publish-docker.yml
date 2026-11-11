@@ -1,7 +1,13 @@
 name: Publish application Docker images
 
+# P0 发布门禁：publish 与 CI 是两条独立 workflow（ci.yml 的 name 为 "CI"），
+# needs 只能引用本文件内的 job，无法跨 workflow 依赖 CI 的 build-and-test；
+# 因此选用 workflow_run 触发：仅在 CI 于 main 上跑完且 conclusion == success 时发布，
+# 避免 CI 变红仍推送 latest。workflow_dispatch 仅作人工紧急发版的逃生舱。
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -11,6 +17,8 @@ permissions:
 
 jobs:
   publish:
+    # CI 失败 / 取消时不推镜像；手动 dispatch 保留人工放行通道。
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -27,7 +35,11 @@ jobs:
             dockerfile: apps/web/Dockerfile
             build_args: NEXT_PUBLIC_API_BASE=/api/v1
     steps:
+      # workflow_run 默认检出默认分支最新提交，而非被 CI 验收的那个 commit；
+      # 显式检出 head_sha，保证镜像内容与下面打上的 sha-* tag 一致（可绑定 digest / 可回滚）。
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -38,9 +50,12 @@ jobs:
         id: meta
         with:
           images: ${{ matrix.image }}
+          # 保留 latest，同时打完整 commit SHA，便于把已验收镜像绑定到具体提交并回滚。
+          # 不用 type=sha：它在 workflow_run 下基于 github.sha（默认分支最新），
+          # 而非被 CI 验收的 workflow_run.head_sha；手动 dispatch 时回退到 github.sha。
           tags: |
             type=raw,value=latest
-            type=sha
+            type=raw,value=sha-${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: docker/build-push-action@v6
         with:
           context: .

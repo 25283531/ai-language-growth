@@ -7,8 +7,8 @@
  * LLM 走 protocol.ts 里的 HttpLlmAdapter（/chat/completions）。
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shared-contracts';
 import {
   DEFAULT_CAPABILITIES,
@@ -18,6 +18,49 @@ import {
   type ProviderPricing,
   type TtsAdapter,
 } from './protocol';
+import { audioFingerprint } from './audio-fingerprint';
+
+/**
+ * 儿童 ASR 上传录音的独立子目录（相对 resolveAudioDir()）。
+ * 与公共 TTS 音频分目录存放，避免私有录音混入公共课程语音资源目录。
+ * MediaController 的 uploads/GET 路由使用同名值，改动需两边同步。
+ */
+export const UPLOADS_SUBDIR = 'uploads';
+
+/** 学习者专属上传子目录名：只暴露不可逆短哈希，不把 learnerId 写进路径。 */
+export function uploadOwnerSlug(learnerId: string): string {
+  return createHash('sha256').update(learnerId).digest('hex').slice(0, 16);
+}
+
+/** 某个学习者的私有录音目录（uploads/<ownerSlug>）。 */
+export function resolveUploadDir(learnerId: string): string {
+  return join(resolveAudioDir(), UPLOADS_SUBDIR, uploadOwnerSlug(learnerId));
+}
+
+/**
+ * 按 24-hex 文件名定位音频：先公共 TTS 主目录，再按学习者子目录逐个查找。
+ * 文件名已由白名单校验、不含路径分隔符，因此不存在目录穿越。
+ */
+export function locateAudioFile(fileName: string): string | null {
+  if (!/^[a-f0-9]{24}\.[a-z0-9]+$/i.test(fileName)) return null;
+  const dir = resolveAudioDir();
+  const primary = join(dir, fileName);
+  if (existsSync(primary)) return primary;
+  const uploads = join(dir, UPLOADS_SUBDIR);
+  if (!existsSync(uploads)) return null;
+  for (const entry of readdirSync(uploads, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = join(uploads, entry.name, fileName);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** 判断路径是否落在 uploads/ 私有子目录内（供媒体路由做归属分流）。 */
+export function isUploadedAudioPath(filePath: string): boolean {
+  const rel = relative(join(resolveAudioDir(), UPLOADS_SUBDIR), filePath);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
 
 export interface HttpServiceOptions extends AdapterFactoryOptions {
   providerPresetId?: string;
@@ -213,25 +256,24 @@ export class HttpTtsAdapter implements TtsAdapter {
       throw new Error(`adapter ${this.alias} 返回的不是可播放音频容器 (head=${bytes.subarray(0, 4).toString('hex')})`);
     }
 
-    const fingerprint = createHash('sha256')
-      .update(
-        [
-          request.text,
-          speed,
-          voice,
-          modelAlias ?? '',
-          request.voice.voiceStyle,
-          request.voice.pronunciationMode,
-          request.voice.pauseAfterSentenceMs,
-        ].join('|'),
-      )
-      .digest('hex')
-      .slice(0, 24);
+    // 文件名指纹统一走共享纯函数：纳入课程作用域、音色版本、模型族，补齐
+    // voiceStyle/pronunciationMode，并移除 pauseAfterSentenceMs（它不写进 TTS
+    // 请求体、客户端也不读，只会制造声学相同却文件名不同的重复计费与 audioRef 漂移）。
+    // 不同课程相同文本得到不同指纹；同一课程不同用户/时间得到相同指纹。
+    const fingerprint = audioFingerprint(request, {
+      speed,
+      voice,
+      modelAlias: modelAlias ?? '',
+      // 协议形态/端点也影响实际请求体：换供应商不应错误命中上一家留下的文件。
+      extra: [provider, baseUrl],
+    });
 
     const dir = this.options.audioDir ?? resolveAudioDir();
     mkdirSync(dir, { recursive: true });
     const fileName = `${fingerprint}.${isWav ? 'wav' : 'mp3'}`;
     const fullPath = join(dir, fileName);
+    // 保留 existsSync 跳过写盘：由于指纹现在含 scope 与 voiceProfileVersion，
+    // 升版本会自然生成新文件，不再静默复用旧音频。
     if (!existsSync(fullPath)) writeFileSync(fullPath, bytes);
 
     return {
@@ -265,8 +307,10 @@ export async function loadAudio(
   //    避免为了供应商上传再次经过需要额度租约的公网媒体路由。
   const mediaPath = /\/api\/v1\/media\/audio\/([a-f0-9]{24}\.(?:mp3|m4a|wav|ogg|opus|aac))$/i.exec(audioRef);
   if (mediaPath?.[1]) {
-    const filePath = join(resolveAudioDir(), mediaPath[1]);
-    if (!existsSync(filePath)) throw new Error(`音频文件不存在: ${filePath}`);
+    // 公共 TTS 音频在主目录，儿童 ASR 上传录音在 uploads/<ownerSlug>/ 下；
+    // 两者共用同一 audioRef 形态，由 locateAudioFile 按存在性定位。
+    const filePath = locateAudioFile(mediaPath[1]);
+    if (!filePath) throw new Error(`音频文件不存在: ${mediaPath[1]}`);
     const lower = filePath.toLowerCase();
     const mime = lower.endsWith('.mp3')
       ? 'audio/mpeg'

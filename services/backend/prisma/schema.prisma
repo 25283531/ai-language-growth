@@ -605,6 +605,12 @@ model media_assets {
   cacheStatus    String   @default("pending") // pending | cached | failed
   cacheError     String?
     cacheAttemptedAt DateTime?
+  // 资产可见性作用域。NULL 表示旧数据，按 PRIVATE 处理（fail-closed）：
+  // PUBLIC_CURRICULUM / PRONUNCIATION 为课程公共语音资源（owner 与 TTL 均为 null）；
+  // PRIVATE_DYNAMIC / PRIVATE_UPLOAD 必须绑定 ownerLearnerId 与短 TTL。
+  scope          String?
+  ownerLearnerId String?
+  expiresAt      DateTime?
   createdAt      DateTime @default(now())
 
   @@index([checksum])

@@ -120,7 +120,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 if (parts.isEmpty()) {
                     val resolved = mutableListOf<AudioPart>()
                     for (text in fallbackTexts) {
-                        val body = voiceBody(directive, text)
+                        val body = voiceBody(directive, text, speech)
                         // 先检查服务端缓存资源，命中即复用，不产生供应商 TTS 调用。
                         val lookup = withContext(Dispatchers.IO) {
                             http(base, "/speech/cache/lookup", "POST", body, token, learnerHeaders)
@@ -207,32 +207,20 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         return raw.toFloat()
     }
 
-    /** 与服务端 splitTeachingSpeech 一致：按标点优先切成稳定短片段，缓存键保持对齐。 */
-    private fun speechTexts(directive: JSONObject): List<String> = listOf("teacherUtterance", "demonstrationText")
-        .map { directive.optString(it).takeUnless { value -> value == "null" }.orEmpty().trim() }
-        .filter { it.isNotBlank() }
-        .flatMap { splitSpeech(it) }
-
-    private fun splitSpeech(text: String, limit: Int = 120): List<String> {
-        val chars = text.trim().toList()
-        val result = mutableListOf<String>()
-        var cursor = 0
-        while (cursor < chars.size) {
-            var end = minOf(limit, chars.size)
-            if (end < chars.size) {
-                for (i in end - 1 downTo limit / 2) {
-                    if (chars[i].isWhitespace() || chars[i] in "!.?。！？；;") { end = i + 1; break }
-                }
-            }
-            result += chars.subList(cursor, end).joinToString("")
-            cursor = end
-        }
-        return result
+    /** 与服务端 join(' ') 对齐：teacherUtterance 与 demonstrationText 合成整轮一段文本，不再按字数切段。 */
+    private fun speechTexts(directive: JSONObject): List<String> {
+        val text = listOf("teacherUtterance", "demonstrationText")
+            .map { directive.optString(it).takeUnless { value -> value == "null" }.orEmpty().trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+        return if (text.isBlank()) emptyList() else listOf(text)
     }
 
-    private fun voiceBody(directive: JSONObject, text: String): JSONObject {
-        require(text.length <= 500) { "本轮老师文本超过语音接口上限，请先阅读课堂文字" }
+    private fun voiceBody(directive: JSONObject, text: String, speech: JSONObject?): JSONObject {
+        require(text.codePointCount(0, text.length) <= 500) { "本轮老师文本超过语音接口上限，请先阅读课堂文字" }
         val body = JSONObject().put("text", text)
+        // 原样透传服务端 speech.scope（课程级缓存归属）；缺失时不臆造，由服务端 fail-closed 到 PRIVATE。
+        speech?.optJSONObject("scope")?.let { body.put("scope", it) }
         val voice = directive.optJSONObject("voice")
         listOf("teacherSpeed", "voiceStyle", "pauseAfterSentenceMs", "pronunciationMode").forEach { key ->
             if (voice != null && voice.has(key) && !voice.isNull(key)) body.put(key, voice.get(key))

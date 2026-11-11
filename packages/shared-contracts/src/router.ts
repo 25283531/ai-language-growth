@@ -118,6 +118,32 @@ export const llmResponseSchema = z.object({
 
 export type LlmResponse = z.infer<typeof llmResponseSchema>;
 
+/**
+ * TTS 缓存作用域 —— 课程级语音资源的复用边界（D-014 / D-026）。
+ *
+ * 服务端按 (keyVersion, scope, topicId, contentId, contentVersion,
+ * voiceParamsHash, voiceProfileVersion, modelFamily) 构造结构化缓存键：
+ *  - PUBLIC_CURRICULUM：发布期固化 + 人工审核 + 无 PII，键中不含 learnerId /
+ *    lessonSessionId，允许「同一课程、不同用户、不同时间」复用同一份已审核音频；
+ *  - PRIVATE_DYNAMIC：默认 fail-closed，键中必带 learnerId / lessonSessionId，
+ *    绝不把孩子姓名、原话、错误或学习历史写进可跨用户复用的音频；
+ *  - PRONUNCIATION：单词 / 音素 citation-form 示范，独立命名空间。
+ *
+ * 该对象带 default，使 `z.input` 中 cacheScope 保持可选、现有调用点无需改动；
+ * 缺省时网关一律按 PRIVATE_DYNAMIC 处理（fail-closed）。
+ */
+export const ttsCacheScopeSchema = z.object({
+  scope: z.enum(['PUBLIC_CURRICULUM', 'PRIVATE_DYNAMIC', 'PRONUNCIATION']).default('PRIVATE_DYNAMIC'),
+  topicId: z.string().default(''),
+  contentId: z.string().default(''),
+  contentVersion: z.string().default(''),
+  learnerId: z.string().optional(),
+  lessonSessionId: z.string().optional(),
+  providerModelFamily: z.string().optional(),
+});
+
+export type TtsCacheScope = z.input<typeof ttsCacheScopeSchema>;
+
 /** TTS 统一调用协议。只接受抽象语速，不接受厂商原始 speed（D-014）。 */
 export const ttsRequestSchema = z.object({
   // 单次合成有字数上限；在契约层就拦下超长文本，避免静默截断教学话术
@@ -126,6 +152,13 @@ export const ttsRequestSchema = z.object({
   /** 统一音色标识，切换供应商时保持一致 */
   voiceIdentity: z.string().default('teacher_default'),
   timeoutMs: z.number().int().min(100).default(12000),
+  /** 课程级缓存作用域；缺省时由网关 fail-closed 到 PRIVATE_DYNAMIC。 */
+  cacheScope: ttsCacheScopeSchema.default({
+    scope: 'PRIVATE_DYNAMIC',
+    topicId: '',
+    contentId: '',
+    contentVersion: '',
+  }),
 });
 
 export type TtsRequest = z.input<typeof ttsRequestSchema>;

@@ -1,9 +1,10 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } from './protocol';
 import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shared-contracts';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
+import { audioFingerprint } from './audio-fingerprint';
 
 export interface IflytekSpeechOptions {
   alias: string;
@@ -182,11 +183,29 @@ export class IflytekTtsAdapter implements TtsAdapter {
       return { ...(encodedAudio ? { bytes: Buffer.from(encodedAudio, 'base64'), seq } : {}), ...(done ? { done: true } : {}) };
     }));
     if (bytes.length < 128) throw new Error('讯飞 TTS 返回的音频数据为空或过短');
-    const fingerprint = createHash('sha256').update([request.text, speed, this.config.modelAlias ?? '', this.config.options?.voice ?? request.voiceIdentity].join('|')).digest('hex').slice(0, 24);
+    // 文件名指纹统一走共享纯函数：纳入课程作用域/音色版本/模型族、补齐
+    // voiceStyle/pronunciationMode、移除 pauseAfterSentenceMs。不同课程同文本
+    // 必得不同指纹；同一课程不同用户/时间得到相同指纹。
+    const fingerprint = audioFingerprint(request, {
+      speed,
+      voice: this.config.options?.voice ?? request.voiceIdentity,
+      modelAlias: this.config.modelAlias ?? '',
+      // 超拟人/普通两套请求体结构不同，且 oral 参数会改变声学，纳入指纹。
+      extra: [
+        this.config.baseUrl,
+        isSuperSmart,
+        this.config.options?.oralLevel ?? 'mid',
+        this.config.options?.sparkAssist ?? 1,
+        this.config.options?.remain ?? 0,
+        this.config.options?.stopSplit ?? 0,
+      ],
+    });
     const dir = resolveAudioDir();
     mkdirSync(dir, { recursive: true });
     const fileName = `${fingerprint}.mp3`;
     const path = join(dir, fileName);
+    // 保留 existsSync 跳过写盘：由于指纹现在含 scope 与 voiceProfileVersion，
+    // 升版本会自然生成新文件，不再静默复用旧音频。
     if (!existsSync(path)) writeFileSync(path, bytes);
     return { audioRef: `${resolveAudioUrlPrefix()}/${fileName}`, characters: [...request.text].length, latencyMs: Date.now() - started, providerAlias: this.alias, modelAlias: this.config.modelAlias ?? 'iflytek-tts', cached: false };
   }

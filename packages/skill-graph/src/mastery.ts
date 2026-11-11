@@ -146,44 +146,50 @@ export function evaluateMastery(input: MasteryEvaluationInput): MasteryEvaluatio
     );
   }
 
-  // R4：transferred 需要 ≥2 个不同场景独立成功 + 跨天无提示回忆
+  // R4：transferred 需要 ≥2 个不同场景独立成功 + 跨天无提示回忆。
+  //
+  // 跨天间隔必须从「第 N 个不同场景首次成立」开始计算，而不是从历史第一条
+  // 证据开始。否则一个几周前就有旧证据的学习者，今天只要在新场景回忆一次，
+  // 就会仅凭旧证据的时间差被误判为 transferred。
+  const scenarioFirstAt = new Map<string, number>();
+  for (const item of masterCandidates) {
+    const at = new Date(item.occurredAt).getTime();
+    if (!Number.isFinite(at)) continue;
+    const previous = scenarioFirstAt.get(item.scenario);
+    if (previous === undefined || at < previous) scenarioFirstAt.set(item.scenario, at);
+  }
+  const scenarioReadyTimes = Array.from(scenarioFirstAt.values()).sort((a, b) => a - b);
+  const transferReadyAt = scenarioReadyTimes.length >= threshold.minScenariosTransferred
+    ? scenarioReadyTimes[threshold.minScenariosTransferred - 1]!
+    : null;
   const transferScenarios = new Set(masterCandidates.map((e) => e.scenario));
   const recalls = successful
     .filter(isUnpromptedRecall)
     .filter((e) => canPromote(e))
     .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+  const transferRecall = transferReadyAt === null
+    ? undefined
+    : recalls.find((item) => {
+        const recallAt = new Date(item.occurredAt).getTime();
+        return Number.isFinite(recallAt)
+          && recallAt - transferReadyAt >= threshold.minIntervalTransferredMs;
+      });
 
-  if (
-    transferScenarios.size >= threshold.minScenariosTransferred &&
-    recalls.length > 0
-  ) {
-    const firstCandidate = masterCandidates[0];
-    const firstIndependentAt = firstCandidate ? firstCandidate.occurredAt : null;
-    const lastRecall = recalls[recalls.length - 1];
-    const lastRecallAt = lastRecall ? lastRecall.occurredAt : null;
-    const gapMs =
-      firstIndependentAt === null || lastRecallAt === null
-        ? 0
-        : new Date(lastRecallAt).getTime() - new Date(firstIndependentAt).getTime();
-
-    if (gapMs >= threshold.minIntervalTransferredMs) {
-      candidate = 'transferred';
-      evidenceIds = [
-        ...masterCandidates.map((e) => e.id),
-        ...recalls.map((e) => e.id),
-      ];
-      rationale.push(
-        `R4：${transferScenarios.size} 个不同场景独立使用 + 跨天 ${Math.round(
-          gapMs / 86400000,
-        )} 天无提示回忆，进入 transferred`,
-      );
-    } else {
-      rationale.push(
-        `R4：场景数 ${transferScenarios.size} 达标，但跨天间隔 ${Math.round(
-          gapMs / 3600000,
-        )} 小时 < ${threshold.minIntervalTransferredMs / 3600000} 小时，暂不进入 transferred`,
-      );
-    }
+  if (transferReadyAt !== null && transferRecall) {
+    candidate = 'transferred';
+    evidenceIds = [
+      ...masterCandidates.map((e) => e.id),
+      transferRecall.id,
+    ];
+    rationale.push(
+      `R4：${transferScenarios.size} 个不同场景独立使用；第 ${threshold.minScenariosTransferred} 个场景成立后 ` +
+        `${Math.round((new Date(transferRecall.occurredAt).getTime() - transferReadyAt) / 86400000)} 天出现无提示回忆，进入 transferred`,
+    );
+  } else if (transferReadyAt !== null) {
+    rationale.push(
+      `R4：场景数 ${transferScenarios.size} 达标，但尚未出现「第 ${threshold.minScenariosTransferred} 个场景成立后 ` +
+        `${threshold.minIntervalTransferredMs / 3600000} 小时」的无提示回忆，暂不进入 transferred`,
+    );
   } else {
     rationale.push(
       `R4：独立场景 ${transferScenarios.size} < ${threshold.minScenariosTransferred}，或无跨天无提示回忆`,
@@ -191,13 +197,53 @@ export function evaluateMastery(input: MasteryEvaluationInput): MasteryEvaluatio
   }
 
   // —— R6：回归封顶 ——
-  // 跌破 mastered 后，同场景独立成功上限为 forming；
-  // 须补齐 ≥2 个不同场景且含 ≥1 次跨天无提示回忆才能回到 mastered。
-  if (currentState === 'mastered' && candidate === 'mastered') {
-    if (independentScenarios.length < 2) {
+  // 只有「最近一次失败晚于最近一次独立成功」才算跌破；不能因为历史证据
+  // 集中在单一场景就把一个没有回归的 mastered 学习者降级。
+  // 回归后：同场景独立成功上限为 forming；须补齐 ≥ N 个不同场景，且在第 N 个
+  // 场景成立后出现 ≥1 次跨天无提示回忆，才允许回到 mastered/transferred。
+  const orderedIndependent = [...masterCandidates]
+    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+  const masteryEstablished = orderedIndependent[threshold.minSamplesMastered - 1];
+  const latestFailure = [...input.evidence]
+    .filter((item) => !item.succeeded)
+    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    .at(-1);
+  // 只有失败发生在「首次达到 mastered 所需独立样本」之后，才算回归；
+  // 失败后哪怕很快又成功一次，只要还没补齐多场景 + 跨天回忆，也不能立刻恢复。
+  const regressed = Boolean(latestFailure && masteryEstablished) && (
+    new Date(latestFailure!.occurredAt).getTime() > new Date(masteryEstablished!.occurredAt).getTime()
+  );
+
+  if (regressed && MASTERY_RANK[currentState] >= MASTERY_RANK.mastered) {
+    const failureAt = new Date(latestFailure!.occurredAt).getTime();
+    const postFailure = masterCandidates.filter(
+      (item) => new Date(item.occurredAt).getTime() > failureAt,
+    );
+    const postFailureFirstAt = new Map<string, number>();
+    for (const item of postFailure) {
+      const at = new Date(item.occurredAt).getTime();
+      if (!Number.isFinite(at)) continue;
+      const previous = postFailureFirstAt.get(item.scenario);
+      if (previous === undefined || at < previous) postFailureFirstAt.set(item.scenario, at);
+    }
+    const postFailureReadyTimes = Array.from(postFailureFirstAt.values()).sort((a, b) => a - b);
+    const postFailureReadyAt = postFailureReadyTimes.length >= threshold.minScenariosTransferred
+      ? postFailureReadyTimes[threshold.minScenariosTransferred - 1]!
+      : null;
+    const postFailureRecall = postFailureReadyAt === null
+      ? undefined
+      : recalls.find((item) => {
+          const recallAt = new Date(item.occurredAt).getTime();
+          return recallAt > failureAt
+            && recallAt - postFailureReadyAt >= threshold.minIntervalTransferredMs;
+        });
+
+    if (!postFailureRecall) {
       candidate = 'forming';
+      evidenceIds = postFailure.map((item) => item.id);
       rationale.push(
-        'R6：证据集中在单一场景，独立成功不足以维持 mastered，回落至 forming',
+        `R6：最近一次失败后仅有 ${postFailureFirstAt.size} 个场景的独立成功，` +
+          '且缺少跨天无提示回忆，封顶为 forming',
       );
     }
   }

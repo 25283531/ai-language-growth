@@ -46,6 +46,8 @@ const benchmarkInput = z.object({
 const priceTypeSchema = z.enum([
   'input_token',
   'output_token',
+  // TTS 推荐按千字符报价；保留 per_character 兼容历史配置。
+  'per_1000_chars',
   'per_character',
   'per_second',
   'per_call',
@@ -57,7 +59,7 @@ const pricesInput = z.object({
   prices: z.array(z.object({
     priceType: priceTypeSchema,
     unitPrice: z.number().finite().min(0).max(1_000_000),
-  })).max(5),
+  })).max(6),
 });
 
 export type ProviderConfigInput = z.input<typeof configInput>;

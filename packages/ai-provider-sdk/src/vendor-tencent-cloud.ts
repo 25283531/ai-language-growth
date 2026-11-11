@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shared-contracts';
 import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } from './protocol';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
+import { audioFingerprint } from './audio-fingerprint';
 
 export interface TencentCloudSpeechOptions {
   alias: string;
@@ -82,25 +83,40 @@ export class TencentCloudTtsAdapter implements TtsAdapter {
   async invoke(request: TtsRequest): Promise<TtsResponse> {
     const started = Date.now();
     const codec = String(this.config.options?.codec ?? 'mp3');
+    const voiceType = Number(this.config.options?.voiceType ?? 101001);
+    const speed = Math.max(-2, Math.min(2, Math.round(((request.voice.teacherSpeed ?? 0.65) - 0.65) * 2)));
+    const sampleRate = Number(this.config.options?.sampleRate ?? 16000);
+    const primaryLanguage = Number(this.config.options?.primaryLanguage ?? 1);
+    const volume = Number(this.config.options?.volume ?? 0);
     const result = await callTencent(this.config, 'TextToVoice', '2019-08-23', {
       Text: request.text,
       SessionId: `alg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      VoiceType: Number(this.config.options?.voiceType ?? 101001),
+      VoiceType: voiceType,
       Codec: codec,
-      SampleRate: Number(this.config.options?.sampleRate ?? 16000),
-      PrimaryLanguage: Number(this.config.options?.primaryLanguage ?? 1),
-      Speed: Math.max(-2, Math.min(2, Math.round(((request.voice.teacherSpeed ?? 0.65) - 0.65) * 2))),
-      Volume: Number(this.config.options?.volume ?? 0),
+      SampleRate: sampleRate,
+      PrimaryLanguage: primaryLanguage,
+      Speed: speed,
+      Volume: volume,
     }, request.timeoutMs ?? 15000);
     const audio = String(result.Audio ?? '');
     if (!audio) throw new Error('腾讯云 TTS 未返回音频');
     const bytes = Buffer.from(audio, 'base64');
     if (bytes.length < 128) throw new Error('腾讯云 TTS 返回音频过短');
-    const fingerprint = createHash('sha256').update([request.text, request.voice.teacherSpeed, request.voiceIdentity, this.config.modelAlias ?? ''].join('|')).digest('hex').slice(0, 24);
+    // 文件名指纹统一走共享纯函数：纳入课程作用域/音色版本/模型族、补齐
+    // voiceStyle/pronunciationMode、移除 pauseAfterSentenceMs。不同课程同文本
+    // 必得不同指纹；同一课程不同用户/时间得到相同指纹。
+    const fingerprint = audioFingerprint(request, {
+      speed,
+      voice: voiceType,
+      modelAlias: this.config.modelAlias ?? '',
+      extra: [codec, sampleRate, primaryLanguage, volume, request.voiceIdentity, this.config.baseUrl],
+    });
     const dir = resolveAudioDir();
     mkdirSync(dir, { recursive: true });
     const fileName = `${fingerprint}.${codec}`;
     const path = join(dir, fileName);
+    // 保留 existsSync 跳过写盘：由于指纹现在含 scope 与 voiceProfileVersion，
+    // 升版本会自然生成新文件，不再静默复用旧音频。
     if (!existsSync(path)) writeFileSync(path, bytes);
     return {
       audioRef: `${resolveAudioUrlPrefix()}/${fileName}`,

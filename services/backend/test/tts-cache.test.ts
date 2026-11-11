@@ -105,7 +105,7 @@ describe('服务端 TTS 缓存', () => {
     assert.equal(hit?.audioRef, 'https://media.example/tts/audio.mp3');
   });
 
-  it('语速或文本变化使用不同缓存键，音色版本变化可整体失效', async () => {
+  it('语速、音色或文本变化使用不同缓存键', async () => {
     const { gateway, calls } = makeGateway();
     await gateway.ttsWithResult({ text: 'hello', voice, voiceIdentity: 'teacher_default' }, decision);
     await gateway.ttsWithResult({ text: 'hello', voice: { ...voice, teacherSpeed: 0.5 }, voiceIdentity: 'teacher_default' }, decision);
@@ -136,7 +136,7 @@ describe('服务端 TTS 缓存', () => {
   });
 });
 
-describe('固定文章分段', () => {
+describe('长文语义切分工具（非课堂合成路径）', () => {
   it('长文章无损切分，每段不超过供应商单次上限', () => {
     const article = Array.from({ length: 30 }, (_, i) => `This is sentence number ${i + 1} about a little cat. `).join('');
     const chunks = splitTeachingSpeech(article, 120);
@@ -151,7 +151,7 @@ describe('固定文章分段', () => {
     assert.equal(chunks.join(''), text.trim());
   });
 
-  it('短词与短句保持单段，可直接命中跨课堂复用缓存', () => {
+  it('短词与短句保持单段（工具函数；课堂合成不切分）', () => {
     assert.deepEqual(splitTeachingSpeech('hello', 120), ['hello']);
     assert.deepEqual(splitTeachingSpeech('Good morning!', 120), ['Good morning!']);
   });

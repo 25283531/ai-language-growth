@@ -16,6 +16,11 @@ env:
   DATABASE_URL: postgresql://alg_ci:alg_ci@127.0.0.1:5432/alg_ci?schema=public
   # 不调用任何外部服务；教学逻辑与模型选择都在后端 mock 模式内完成。
   AI_GATEWAY_MODE: mock
+  # 绝对路径：resolveAudioDir() 默认按 cwd 解析，仓库根与 services/backend 曾各写一份
+  # split-brain 音频缓存。固定在 runner 临时目录（ubuntu-latest 保证可写、job 结束即销毁），
+  # 让单测 / mock API / integration 各步骤共用同一目录。
+  # 这里用固定值而非 ${{ runner.temp }}：workflow 级 env 不允许使用 runner context。
+  AI_AUDIO_DIR: /tmp/alg-ci-audio-cache
 
 jobs:
   build-and-test:
@@ -102,6 +107,9 @@ jobs:
         #
         # 注意：m1-api.integration.test.ts 依赖真实 Postgres + 起好的 mock API，
         # 必须留在下面的 "M1 API flow" 步骤，不要加进本清单。
+        #
+        # TTS 课程级作用域 / 隐私隔离 / 韵律契约 / 发音教练回归（全离线，不调用供应商）。
+        # 这些文件与 tts-cache.test.ts 同批维护；任一缺失会被下面的 run 命令直接报错。
         run: |
           npx tsx --tsconfig services/backend/tsconfig.json --test \
             services/backend/test/review-policy.test.ts \
@@ -112,6 +120,11 @@ jobs:
             services/backend/test/planner-track-band.test.ts \
             services/backend/test/ai-gateway-budget.test.ts \
             services/backend/test/tts-cache.test.ts \
+            services/backend/test/tts-scope.test.ts \
+            services/backend/test/tts-privacy.test.ts \
+            services/backend/test/prosody-contract.test.ts \
+            services/backend/test/tts-public-scope.test.ts \
+            services/backend/test/pronunciation-coach.test.ts \
             services/backend/test/admin-console-static-guard.test.ts \
             services/backend/test/web-client-auth-guard.test.ts \
             services/backend/test/queue-runtime.test.ts \
