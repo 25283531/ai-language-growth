@@ -110,6 +110,33 @@ describe('掌握状态机 R1-R7', () => {
     assert.equal(r.state, 'transferred');
   });
 
+  it('R4：旧证据不能替新场景补足 24 小时间隔', () => {
+    const r = evaluateMastery({
+      currentState: 'not_exposed',
+      evidence: [
+        ev({ id: 'old', scenario: 'object_pic_scene', occurredAt: '2026-09-01T02:00:00.000Z' }),
+        ev({ id: 'new-a', scenario: 'greeting_scene', occurredAt: '2026-11-06T02:00:00.000Z' }),
+        ev({ id: 'new-b', scenario: 'free_chat_scene', occurredAt: '2026-11-06T12:00:00.000Z' }),
+      ],
+      threshold: THRESHOLD,
+    });
+    assert.notEqual(r.state, 'transferred', '第二个场景成立后不足 24 小时，旧证据不得参与跨天计算');
+  });
+
+  it('R4：第 N 个场景成立后跨天回忆才计入 transferred', () => {
+    const r = evaluateMastery({
+      currentState: 'not_exposed',
+      evidence: [
+        ev({ id: 'e1', scenario: 'object_pic_scene', occurredAt: '2026-11-05T02:00:00.000Z' }),
+        ev({ id: 'e2', scenario: 'greeting_scene', occurredAt: '2026-11-06T02:00:00.000Z' }),
+        ev({ id: 'e3', scenario: 'free_chat_scene', occurredAt: '2026-11-06T20:00:00.000Z' }),
+        ev({ id: 'e4', scenario: 'object_pic_scene', occurredAt: '2026-11-07T03:00:00.000Z' }),
+      ],
+      threshold: THRESHOLD,
+    });
+    assert.equal(r.state, 'transferred');
+  });
+
   it('R5：LLM 自我声称不得单独构成晋级依据', () => {
     const r = evaluateMastery({
       currentState: 'not_exposed',
@@ -122,7 +149,7 @@ describe('掌握状态机 R1-R7', () => {
     assert.equal(r.state, 'not_exposed');
   });
 
-  it('R6：证据集中在单一场景时回落至 forming', () => {
+  it('R6：没有回归时，单一场景的历史证据不得把 mastered 降级', () => {
     const r = evaluateMastery({
       currentState: 'mastered',
       evidence: [
@@ -131,7 +158,37 @@ describe('掌握状态机 R1-R7', () => {
       ],
       threshold: THRESHOLD,
     });
+    assert.equal(r.state, 'mastered');
+  });
+
+  it('R6：最近一次失败后，同场景成功只能封顶在 forming', () => {
+    const r = evaluateMastery({
+      currentState: 'mastered',
+      evidence: [
+        ev({ id: 'e1' }),
+        ev({ id: 'e2', occurredAt: '2026-11-07T02:01:00.000Z' }),
+        ev({ id: 'fail', occurredAt: '2026-11-07T03:00:00.000Z', succeeded: false, independent: false }),
+        ev({ id: 'retry', occurredAt: '2026-11-07T04:00:00.000Z' }),
+      ],
+      threshold: THRESHOLD,
+    });
     assert.equal(r.state, 'forming');
+  });
+
+  it('R6：回归后补齐两个场景 + 跨天无提示回忆才恢复 mastered/transferred', () => {
+    const r = evaluateMastery({
+      currentState: 'mastered',
+      evidence: [
+        ev({ id: 'e1', scenario: 'object_pic_scene', occurredAt: '2026-11-05T02:00:00.000Z' }),
+        ev({ id: 'e2', scenario: 'greeting_scene', occurredAt: '2026-11-06T02:00:00.000Z' }),
+        ev({ id: 'fail', scenario: 'greeting_scene', occurredAt: '2026-11-07T02:00:00.000Z', succeeded: false, independent: false }),
+        ev({ id: 'retry-a', scenario: 'object_pic_scene', occurredAt: '2026-11-07T03:00:00.000Z' }),
+        ev({ id: 'retry-b', scenario: 'greeting_scene', occurredAt: '2026-11-07T04:00:00.000Z' }),
+        ev({ id: 'recall', scenario: 'free_chat_scene', occurredAt: '2026-11-08T05:00:00.000Z' }),
+      ],
+      threshold: THRESHOLD,
+    });
+    assert.equal(r.state, 'transferred');
   });
 
   it('R7：不做自动遗忘衰减，证据不足时维持原状态', () => {
