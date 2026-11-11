@@ -31,6 +31,8 @@ import { RoutingConfigController } from './routing/routing-config.controller';
 import { RoutingConfigService } from './routing/routing-config.service';
 import { MembershipAdminController } from './membership/membership-admin.controller';
 import { CurriculumAdminController } from './curriculum/curriculum-admin.controller';
+import { CurriculumGeneratorService } from './curriculum/curriculum-generator.service';
+import { CurriculumWarmupService } from './curriculum/curriculum-warmup.service';
 import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
 import { UserController } from './auth/user.controller';
 import { AuthService } from './auth/auth.service';
@@ -71,6 +73,8 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     PrismaService,
     ProviderConfigService,
     ImageCacheService,
+    CurriculumGeneratorService,
+    CurriculumWarmupService,
     AiGatewayService,
     LearnerModelService,
     PlannerService,

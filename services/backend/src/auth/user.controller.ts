@@ -12,6 +12,7 @@ import { deriveAvatarLevel, isValidAvatarUrl } from '@alg/shared-contracts';
 import { AuthService, assertPassword, extractBearerToken } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { mapTextbookUnitToSkillNodeIds } from '../curriculum/textbook-skill-mapping';
+import { CurriculumWarmupService } from '../curriculum/curriculum-warmup.service';
 
 // avatarUrl 字段名保持不变：允许 http(s):// 外链或 preset:// 本地头像资源标识。
 // preset:// 不是通用 URL，不能用 .url()；不改数据库 schema、不加 migration。
@@ -42,6 +43,7 @@ export class UserController {
   constructor(
     private readonly auth: AuthService,
     private readonly prisma: PrismaService,
+    private readonly warmup: CurriculumWarmupService,
   ) {}
 
   private async session(authorization?: string, cookie?: string) {
@@ -117,6 +119,8 @@ export class UserController {
     // 单调保护取 max(当前 abilities, append-only learning_evidence 历史累计)，
     // 保证能力状态回落不重新锁定头像；纯函数、不写库、不改 mastery 判定。
     const avatarLevel = deriveAvatarLevel(abilitiesByCategory, evidence);
+    // 级别变化后异步预热该级别已发布课程的图片/语音；失败不影响仪表盘。
+    this.warmup.warmLearnerLevel(learner.id, avatarLevel.level);
     const stats = {
       dictationWords: uniqueItems(succeeded.filter((row) => row.vocabularyDimension === 'use_in_sentence')),
       understoodWords: uniqueItems(succeeded.filter((row) => row.vocabularyDimension === 'heard_identify')),

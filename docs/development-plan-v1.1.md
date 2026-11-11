@@ -14,7 +14,10 @@
 | 固定课程 TTS 首调用生成、跨用户复用 | 仅“发布态固定教师话语 + 固定示范文本”进入 `PUBLIC_CURRICULUM`；动态纠错示范、复习轮、上一主题问候留在 `PRIVATE_DYNAMIC` | `prosody-contract.test.ts`、`tts-public-scope.test.ts` 通过 |
 | 成本账本按千字符计价 | 新增 `per_1000_chars`（元/千字符）；历史 `per_character` 价格仍可读，二者不会重复计费 | `prisma-usage-ledger.test.ts` 通过 |
 | 儿童录音只留手机端 | 客户端以一次性 base64 随课堂回合提交；服务端只在请求内转 `data:` URI 给 ASR/发音适配器，写事件前剥除音频字段；`POST /media/audio/uploads` 返回 410 | `@alg/backend` typecheck 通过；真机/编译待验证 |
-| 发音结果交给文本模型并语音纠正 | 新增 `PronunciationCoachService`，发音未通过时把 `score/errorUnits/target` 交给 `llm.teaching_explanation`，生成一句 ≤60 字纠正，拼入下一轮 `teacherUtterance` 走 TTS；失败用确定性文案 | 待补单测与真机听测 |
+| 发音结果交给文本模型并语音纠正 | 新增 `PronunciationCoachService`，发音未通过时把 `score/errorUnits/target` 交给 `llm.teaching_explanation`，生成一句 ≤60 字纠正，拼入下一轮 `teacherUtterance` 走 TTS；失败用确定性文案 | `pronunciation-coach.test.ts` 3/3 通过 |
+| 教材单词表自动补全完整课程 | 新增 `schemaVersion 2` 纯 JSON 契约、确定性生成器、`POST /admin/curriculum/textbook/generate`、可选 AI 润色；词表按单元写入草稿，不自动发布 | `curriculum/test/cefr.test.ts` 4/4、`curriculum-generator.test.ts` 3/3 通过 |
+| CEFR 全量内容预置服务端 | `packages/curriculum/data/cefr-curriculum.json` 预生成 7 级/35 单元/595 活动；`GET /admin/curriculum/preset` 只读返回；`POST /preset/import` 导入审核队列 | 预置 JSON 通过 `cefrCurriculumPackageSchema` 校验 |
+| 图片/语音只在到达级别后预热 | `CurriculumWarmupService` 在仪表盘推导级别后异步触发；先解析图片并回填，再生成 `PUBLIC_CURRICULUM` TTS；`AI_GATEWAY_MODE=mock` 跳过语音 | `curriculum-generator.test.ts` 覆盖未发布级别不生成媒体；真机/真实供应商待验证 |
 
 ## 2. 仍未关闭的差距（按优先级）
 
@@ -23,7 +26,7 @@
 | # | 差距 | 现状 | 下一步任务 | 验收 |
 |---|---|---|---|---|
 | P0-1 | Android 未编译、未真机听测 | 本机无 JDK/Gradle/kotlinc；改动只在源码层 | 走 `android-client.yml` 编译 + 真机走一遍“录音→提交→回放→发音纠正” | CI 绿；真机能回放本地录音；服务端无 `uploads/` 新文件 |
-| P0-2 | 发音评分与掌握判定尚未用真实供应商校准 | Mock/规则通过，真实分数分布未知 | 用 20 条儿童录音做离线校准；记录“分数-人工判断”混淆矩阵 | 通过/不通过阈值有依据；误判样本可追溯 |
+| P0-2 | 发音评分与掌握判定尚未用真实供应商校准 | 用户明确：真实录音校准只能在使用中观察，本轮不校准 | 保留为真实使用后的观察项；不把未校准分数单独当作 `mastered` 依据 | 用户决定，不阻塞本轮 |
 | P0-3 | 发音教练缺少回归测试 | 服务已接入，但未覆盖模型失败/坏 JSON/超长输出 | 加 `pronunciation-coach.test.ts`；强约束 ≤60 汉字 | 模型失败必回退；输出不超 TTS 长度上限 |
 | P0-4 | Web 端仍是教学联调工作台 | 可开课、提交回合、看证据；不是“只评估” | 生产构建默认关闭开课入口，只保留评估/证据/成本页面；联调入口用环境变量显式开启 | 生产 Web 无法发起新课堂；评估页可读 |
 | P0-5 | 公共 TTS 音频的清理策略未落地 | 有 scope/TTL/索引，但无定期清理任务 | 增加按 `expiresAt`/孤儿文件清理的队列任务与指标 | 过期文件可被清理；命中率/成本可观测 |
@@ -32,7 +35,7 @@
 
 | # | 差距 | 现状 | 下一步任务 |
 |---|---|---|---|
-| P1-1 | 课程内容只有 M1 三主题/约 20 活动 | `curriculum` 包只有原型内容 | 按七阶段补内容生产管线；先补“家庭/学校/食物/动物”四主题 |
+| P1-1 | 课程内容只有 M1 三主题/约 20 活动 | 已新增 CEFR 7 级预置 595 活动与教材词表生成器；内容仍须人工审核 | 继续扩充预置词库与教材版本；审核后按级别发布 |
 | P1-2 | `curriculum_stages` 只有 schema | 代码未引用 | 用阶段表驱动 planner 的阶段边界与解锁，不再写死 M1 |
 | P1-3 | 家长报告端点缺失 | 只有学习者进度/证据查询 | 增加家长周报：本周时长、独立样本数、退步点、下周建议；只读聚合，不暴露原始录音 |
 | P1-4 | Android 家长/孩子共用但角色边界弱 | 同一客户端有“我/进度”，无家长锁 | 加简单家长门（PIN 或系统生物识别）保护注销/隐私/支付；孩子端不显示敏感操作 |
@@ -54,11 +57,11 @@
 ## 3. 建议的开发顺序
 
 1. **P0-1/P0-3**：Android 编译 + 发音教练单测；这是本轮改动的回归底线。
-2. **P0-2**：真实录音校准发音阈值；没有校准就不把发音分数用于 `mastered`。
-3. **P0-4/P0-5**：Web 收敛为评估端；公共音频清理。
-4. **P1-1/P1-2**：课程与阶段表；这是从“原型”走向“可长期学习”的前置。
-5. **P1-3/P1-4**：家长报告与家长门；家庭内测最小闭环。
-6. **P1-6/P1-7**：成本与模型切换治理。
+2. **P0-4/P0-5**：Web 收敛为评估端；公共音频清理。
+3. **P1-1/P1-2**：课程与阶段表；审核并发布 CEFR 预置课程，补教材版本。
+4. **P1-3/P1-4**：家长报告与家长门；家庭内测最小闭环。
+5. **P1-6/P1-7**：成本与模型切换治理。
+6. 真实发音校准按用户决定，只在真实使用中观察，不作为本轮开发前置。
 
 ## 4. 本轮不做的事情（明确边界）
 

@@ -163,6 +163,17 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 
 推导规则（服务端纯函数，客户端只展示）：`S = Σ clamp(abilities[].stage, 0, 4)`（7 类，缺失按 0），`tier = clamp(floor(S / 2), 0, 14)`，`level = CEFR_BUCKETS[tier]`（0-2 Pre-A1 / 3-5 A1 / 6-8 A2 / 9-11 B1 / 12-14 B2），`extrasUnlocked = min(2 * ceil(tier / 3), 10)`，`unlockedCount = 24 + extrasUnlocked`。并非每档都新增头像（每 3 档才 +2），客户端应使用 `next.unlockAhead` 而不是假定 `next` 一定解锁 2 个。`calibrated` 不作为解锁开关，只影响展示措辞；客户端不保存任何解锁状态，推导幂等。契约与纯函数单测见 `packages/shared-contracts/src/cefr.ts`。
 
+### 课程生成与级别媒体预热（本轮补充登记）
+
+| 接口 | 请求 | 行为 |
+|---|---|---|
+| `POST /admin/curriculum/textbook/generate` | `{ title, level, words, unitSize?, useAi?, persist? }` | 词表生成完整 `schemaVersion 2` JSON；默认按单元写入草稿；不生成图片/语音 |
+| `GET /admin/curriculum/preset?level=A1` | 可选 `level` | 返回服务端预置 CEFR 纯 JSON；只读，不触库、不调用模型 |
+| `POST /admin/curriculum/preset/import` | `{ level? }` | 预置课程按单元写入审核队列；不自动发布 |
+| `POST /admin/curriculum/preset/warmup` | `{ level, maxImages?, maxSpeech? }` | 只处理该级别已发布课程；解析/缓存图片并回填，再预生成公共 TTS；`mock` 模式跳过语音 |
+
+完整结构与运维说明见 `docs/curriculum-generation.md`。
+
 ## 当前契约缺口
 
 1. OpenAPI 3 文档尚未生成；管理配置、结课和数据库响应仍缺统一的 Zod schema 与字段级响应约束。
@@ -170,7 +181,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 3. 学习者教学 API 仍需把已登录用户与 `guardianId` 归属校验接入所有读写路径；当前账户认证接口已具备。
 4. 原型音频上传已实现，但短期保留、自动删除、对象存储和正式访问控制尚未实现。
 5. 本 API 快照与 M0 冻结验收记录尚未建立，不能称为“contracts are locked in M0”。
-6. 管理端 `admin/auth/*`（登录 / 登出 / 会话查询）、`admin/model-routing`、`admin/curriculum/*`、`admin/backups/*` 尚未在本快照逐条登记；Android 侧 `/user/*` 等接口同样未登记。以上如实记为已知登记缺口：本文仍保持「M0 冻结快照（原型范围）」定位，不改写为完整 API 手册。
+6. 管理端 `admin/auth/*`（登录 / 登出 / 会话查询）、`admin/model-routing`、`admin/curriculum/*`（本轮已登记词表生成与预置/预热四接口，其余仍待登记）、`admin/backups/*` 尚未在本快照逐条登记；Android 侧 `/user/*` 等接口同样未登记。以上如实记为已知登记缺口：本文仍保持「M0 冻结快照（原型范围）」定位，不改写为完整 API 手册。
 
 ## 代码来源
 

@@ -11,3 +11,4 @@
 export * from './content';
 export * from './activities';
 export * from './topics';
+export * from './cefr';

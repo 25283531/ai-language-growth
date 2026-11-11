@@ -5,16 +5,19 @@
   "description": "Dual-track curriculum content and structure",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": ["dist", "data"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "generate:preset": "tsx scripts/generate-preset.ts"
   },
   "dependencies": {
     "@alg/shared-contracts": "*"
   },
   "devDependencies": {
+    "tsx": "^4.23.15",
     "typescript": "^5.7.2"
   }
 }

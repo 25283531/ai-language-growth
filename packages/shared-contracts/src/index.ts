@@ -11,3 +11,4 @@ export * from './router';
 export * from './skill-node';
 export * from './api';
 export * from './cefr';
+export * from './curriculum';

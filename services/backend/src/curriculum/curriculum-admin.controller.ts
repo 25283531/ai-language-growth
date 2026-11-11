@@ -7,9 +7,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProviderConfigService } from '../providers/provider-config.service';
 import { AdminAuthService } from '../auth/admin-auth.service';
 import { z } from 'zod';
-import { teachingActivitySchema } from '@alg/shared-contracts';
+import { curriculumWordListRequestSchema, teachingActivitySchema } from '@alg/shared-contracts';
 import type { Prisma } from '@prisma/client';
 import AdmZip from 'adm-zip';
+import { CurriculumGeneratorService } from './curriculum-generator.service';
+import { CurriculumWarmupService } from './curriculum-warmup.service';
 
 const levelSchema = z.string().trim().min(1).max(24);
 const textbookSchema = z.object({
@@ -155,10 +157,64 @@ export class CurriculumAdminController {
     private readonly gateway: AiGatewayService,
     private readonly router: ModelRouterImpl,
     private readonly adminAuth: AdminAuthService,
+    private readonly generator: CurriculumGeneratorService,
+    private readonly warmup: CurriculumWarmupService,
   ) {}
 
   private authorize(cookie?: string) {
     this.adminAuth.resolveRequest({ headers: { cookie } });
+  }
+
+  /** 服务端预置的完整 CEFR JSON；只返回内容，不触达图片/语音。 */
+  @Get('preset')
+  async preset(@Headers('cookie') cookie: string | undefined, @Query('level') level?: string) {
+    this.authorize(cookie);
+    return this.generator.preset(level);
+  }
+
+  /** 把预置 CEFR 课程导入草稿；不自动发布，避免绕过人工审核。 */
+  @Post('preset/import')
+  async importPreset(
+    @Headers('cookie') cookie: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const reviewer = this.adminAuth.resolveRequest({ headers: { cookie } });
+    const parsed = z.object({ level: z.string().trim().min(1).max(24).optional() }).safeParse(body ?? {});
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    return this.generator.importPreset(reviewer, parsed.data.level);
+  }
+
+  /** 到达某个级别后，按需解析图片并预生成公共语音。可反复调用，已缓存资源零成本。 */
+  @Post('preset/warmup')
+  async warmPreset(
+    @Headers('cookie') cookie: string | undefined,
+    @Body() body: unknown,
+  ) {
+    this.authorize(cookie);
+    const parsed = z.object({
+      level: z.string().trim().min(1).max(24),
+      maxImages: z.number().int().min(0).max(60).optional(),
+      maxSpeech: z.number().int().min(0).max(120).optional(),
+      force: z.boolean().optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    return this.warmup.warmLevel(parsed.data.level, {
+      maxImages: parsed.data.maxImages,
+      maxSpeech: parsed.data.maxSpeech,
+      force: parsed.data.force,
+    });
+  }
+
+  /** 教材词表 → 完整 JSON；默认同时把每个单元写入课程草稿，等待人工审核。 */
+  @Post('textbook/generate')
+  async generateTextbook(
+    @Headers('cookie') cookie: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const reviewer = this.adminAuth.resolveRequest({ headers: { cookie } });
+    const parsed = curriculumWordListRequestSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
+    return this.generator.generateTextbook(parsed.data, reviewer);
   }
 
   @Post('internal/model')
