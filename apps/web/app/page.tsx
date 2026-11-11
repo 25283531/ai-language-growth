@@ -247,6 +247,10 @@ export default function WorkbenchPage() {
   const [topicName, setTopicName] = useState<string | null>(null);
   const [directive, setDirective] = useState<TeachingDirective | null>(null);
   const [speech, setSpeech] = useState<SpeechPayload | null>(null);
+  // 单文件方案下 audioRef 即整轮完整音频；仅当 audioRef 缺失时才回退到 segments[0]
+  // （回滚期旧服务端可能只给 segments）。speech.scope 等 additive 字段被 TS/JSON 忽略。
+  const playableSpeechRef =
+    speech?.audioRef ?? (speech as { segments?: Array<{ audioRef: string }> } | null)?.segments?.[0]?.audioRef ?? null;
 
   const [lastTurn, setLastTurn] = useState<TurnResponse | null>(null);
   const [lastTurnError, setLastTurnError] = useState<DegradedTurnBody | null>(null);
@@ -518,8 +522,11 @@ export default function WorkbenchPage() {
   return (
     <main className="app">
       <header>
-        <nav className="account-nav"><button className="btn ghost sm" onClick={() => setClassroomMode(true)}>返回学生课堂</button><Link href="/account">账户中心</Link><Link href="/login">登录</Link><Link href="/register">注册</Link></nav>
-        <h1>M1 教学实验台 · 成长型 AI 儿童英语语言习得平台</h1>
+        <nav className="account-nav"><button className="btn ghost sm" onClick={() => setClassroomMode(true)}>课堂联调预览</button><Link href="/account">账户中心</Link><Link href="/login">登录</Link><Link href="/register">注册</Link></nav>
+        <div className="notice" role="status">
+          <b>内部评估专用</b>：Web 不是孩子实际使用的学习端；正式学习在 Android 客户端完成。本页仅用于检查教学指令、证据与成本，不对外投放。
+        </div>
+        <h1>M1 教学评估台 · 成长型 AI 儿童英语语言习得平台</h1>
         <p className="brand-sub">
           教 / 听 / 评估 / 调整 / 记录 五动作闭环验证台 · 教学决策 100% 由后端返回，Web 只渲染 directive 与采集作答 ·
           后端 <span className="mono">{API_BASE}</span>
@@ -726,13 +733,16 @@ export default function WorkbenchPage() {
                     ]}
                   />
                 </Section>
-                {playableAudioUrl(speech?.audioRef) && (
+                {/* 单文件方案：speech.audioRef 即整轮完整音频。新增的 speech.scope /
+                    speech.segments 是 additive 字段，TS / JSON 会忽略未知键，不会报错；
+                    这里额外保留 segments[0] 兜底，只为回滚期旧服务端（N 段）三态兼容。 */}
+                {playableAudioUrl(playableSpeechRef) && (
                   <div className="card" style={{ marginTop: 10 }}>
                     <div className="card-title">老师语音 · 真实合成音频</div>
                     <audio
                       controls
                       preload="none"
-                      src={playableAudioUrl(speech?.audioRef) ?? undefined}
+                      src={playableAudioUrl(playableSpeechRef) ?? undefined}
                       onLoadedMetadata={(event) => {
                         event.currentTarget.playbackRate = speech?.playbackRate ?? 1;
                       }}

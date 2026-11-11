@@ -2,7 +2,9 @@ package com.alg.languagegrowth
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.util.Base64
 import android.os.Bundle
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
@@ -59,6 +61,8 @@ private const val OFFICIAL_API = "https://152.136.230.132:3000/api/v1"
 class MainActivity : ComponentActivity() {
     private var recorder: MediaRecorder? = null
     private var recordingPath: String? = null
+    private var lastRecordingPath: String? = null
+    private var playback: MediaPlayer? = null
     private var audioPermissionGranted by mutableStateOf(false)
     private val audioPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         audioPermissionGranted = granted
@@ -86,11 +90,30 @@ class MainActivity : ComponentActivity() {
         val current = recorder ?: error("当前没有录音")
         val path = recordingPath ?: error("录音文件不存在")
         current.stop(); current.release(); recorder = null; recordingPath = null
+        lastRecordingPath = path
         return path to java.io.File(path).length()
     }
 
+    /** 回放只读手机本地缓存文件；服务端不保存录音。 */
+    fun playLastRecording(): Boolean {
+        val path = lastRecordingPath ?: return false
+        if (!java.io.File(path).exists()) return false
+        playback?.runCatching { release() }
+        playback = MediaPlayer().apply {
+            setDataSource(path)
+            prepare()
+            start()
+            setOnCompletionListener { player -> player.release(); if (playback === player) playback = null }
+        }
+        return true
+    }
+
+    fun hasLocalRecording(): Boolean =
+        lastRecordingPath?.let { java.io.File(it).exists() } == true
+
     override fun onDestroy() {
         recorder?.runCatching { stop() }; recorder?.release(); recorder = null
+        playback?.runCatching { release() }; playback = null
         super.onDestroy()
     }
 
@@ -156,6 +179,7 @@ private fun GrowthApp(
     var finishResult by remember { mutableStateOf<JSONObject?>(null) }
     var responseText by remember { mutableStateOf("") }
     var recording by remember { mutableStateOf(false) }
+    var recordingSaved by remember { mutableStateOf(false) }
     var recordingStartedAt by remember { mutableStateOf(0L) }
     var asrReservationId by remember { mutableStateOf("") }
     var speechBusy by remember { mutableStateOf(false) }
@@ -246,7 +270,7 @@ private fun GrowthApp(
                 lessonSessionId = response.optString("lessonSessionId")
                 lessonSpeech = response.optJSONObject("speech")
                 directive = response.optJSONObject("directive")
-                lastTurn = null; finishResult = null; responseText = ""
+                lastTurn = null; finishResult = null; responseText = ""; recordingSaved = false
                 tab = "learn"
                 pageStatus = ""
             } catch (e: Exception) {
@@ -257,20 +281,30 @@ private fun GrowthApp(
         }
     }
 
-    suspend fun submitTurn(audioRef: String?, durationMs: Long) {
+    suspend fun submitTurn(audioBase64: String?, audioContentType: String?, durationMs: Long) {
         if (lessonSessionId.isBlank()) { pageStatus = "请先开始课堂"; return }
         busy = true
         try {
+            // 录音只在本次 JSON 请求内传给服务端；服务端不落盘，手机本地保留供回放。
             val body = JSONObject().put("learnerId", learnerId).put("idempotencyKey", "android-${System.currentTimeMillis()}-${(0..99999).random()}").put("clientTimestamp", java.time.Instant.now().toString())
-                .put("response", JSONObject().put("text", responseText.trim().ifBlank { JSONObject.NULL }).put("audioRef", audioRef ?: JSONObject.NULL).put("audioDurationMs", if (audioRef == null) JSONObject.NULL else durationMs).put("selectedImageId", JSONObject.NULL).put("requestedSlower", false).put("requestedRepeat", false).put("freeUtterance", JSONObject.NULL))
-            val headers = if (audioRef != null) mapOf("X-Speech-Quota-Reservation" to asrReservationId, "X-Learner-Id" to learnerId) else emptyMap()
+                .put("response", JSONObject()
+                    .put("text", responseText.trim().ifBlank { JSONObject.NULL })
+                    .put("audioRef", JSONObject.NULL)
+                    .put("audioBase64", audioBase64 ?: JSONObject.NULL)
+                    .put("audioContentType", audioContentType ?: JSONObject.NULL)
+                    .put("audioDurationMs", if (audioBase64 == null) JSONObject.NULL else durationMs)
+                    .put("selectedImageId", JSONObject.NULL)
+                    .put("requestedSlower", false)
+                    .put("requestedRepeat", false)
+                    .put("freeUtterance", JSONObject.NULL))
+            val headers = if (audioBase64 != null) mapOf("X-Speech-Quota-Reservation" to asrReservationId, "X-Learner-Id" to learnerId) else emptyMap()
             val result = withContext(Dispatchers.IO) { http(base(), "/lessons/${lessonSessionId}/turn", "POST", body, token(), headers) }
             asrReservationId = ""
             lessonSpeech = result.optJSONObject("speech")
             lastTurn = result; directive = result.optJSONObject("directive"); responseText = ""
             pageStatus = result.optJSONObject("degradation")?.optString("reasons").orEmpty()
         } catch (e: Exception) {
-            if (audioRef != null && asrReservationId.isNotBlank()) {
+            if (audioBase64 != null && asrReservationId.isNotBlank()) {
                 runCatching { withContext(Dispatchers.IO) { http(base(), "/speech/quota/release", "POST", JSONObject().put("reservationId", asrReservationId), token()) } }
                 asrReservationId = ""
             }
@@ -373,7 +407,7 @@ private fun GrowthApp(
                         GrowthPill("由监护人阅读", GrowthColors.BlueDeep, GrowthColors.BlueWash, emoji = "👨‍👩‍👧")
                         GrowthSectionTitle("条款正文", "📌")
                         Text(
-                            if (privacy) "我们仅处理提供学习服务所需的账户资料与学习记录。语音功能按服务配置处理；学习记录用于生成个性化课程进度。你可以在“我”页面申请注销账户。"
+                            if (privacy) "我们仅处理提供学习服务所需的账户资料与学习记录。孩子的录音文件只保存在本机，供课后回放；服务端不保存录音文件。为完成当次语音识别和发音评估，音频会在本次请求内转发给配置的语音服务商，服务商不得将其用于模型训练。学习记录只保存识别文本、评分与学习证据，不保存原始录音。你可以在“我”页面申请注销账户。"
                             else "使用本服务时，请由监护人协助未成年人完成账户注册与学习设置。学习建议仅用于辅助学习，能力阶段以服务端记录为准。",
                             style = MaterialTheme.typography.bodyLarge,
                             lineHeight = 28.sp,
@@ -393,11 +427,12 @@ private fun GrowthApp(
                             scope.launch { runCatching { fetchDashboard() }.onFailure { pageStatus = it.message ?: "刷新失败" } }
                         })
                         "learn" -> LearnScreen(
-                            directive, lastTurn, finishResult, responseText, recording, busy, pageStatus,
+                            directive, lastTurn, finishResult, responseText, recording, recordingSaved, busy, pageStatus,
                             onStart = ::startSession,
                             speechBusy = speechBusy,
                             speechStatus = speechStatus,
                             onReplay = { playTeacher(true) },
+                            onPlayRecording = { if (!activity.playLastRecording()) pageStatus = "还没有可回放的录音" },
                             onText = { responseText = it },
                             onRecord = {
                                 teacherSpeech.stop(clearAudio = false)
@@ -416,8 +451,9 @@ private fun GrowthApp(
                                         }
                                     } else {
                                         try {
-                                            val (path, bytes) = activity.stopRecording()
+                                            val (path, _) = activity.stopRecording()
                                             recording = false
+                                            recordingSaved = true
                                             val durationMs = System.currentTimeMillis() - recordingStartedAt
                                             val seconds = (durationMs / 1000.0).coerceIn(1.0, 120.0)
                                             val reservation = withContext(Dispatchers.IO) {
@@ -428,12 +464,12 @@ private fun GrowthApp(
                                                     .put("idempotencyKey", "android-asr-${System.currentTimeMillis()}"), token())
                                             }
                                             asrReservationId = reservation.optString("reservationId")
-                                            val upload = withContext(Dispatchers.IO) {
-                                                httpBytes(base(), "/media/audio/uploads", java.io.File(path).readBytes(), "audio/mp4", token(),
-                                                    mapOf("X-Speech-Quota-Reservation" to asrReservationId, "X-Learner-Id" to learnerId))
+                                            // 录音只读手机本地缓存；以一次性 base64 随课堂回合提交，服务端不落盘。
+                                            val encoded = withContext(Dispatchers.IO) {
+                                                Base64.encodeToString(java.io.File(path).readBytes(), Base64.NO_WRAP)
                                             }
                                             responseText = ""
-                                            submitTurn(upload.optString("audioRef"), durationMs)
+                                            submitTurn(encoded, "audio/mp4", durationMs)
                                         } catch (e: Exception) {
                                             recording = false
                                             val reservationId = asrReservationId
@@ -450,7 +486,7 @@ private fun GrowthApp(
                                     }
                                 }
                             },
-                            onSubmit = { teacherSpeech.stop(clearAudio = false); scope.launch { submitTurn(null, 0) } },
+                            onSubmit = { teacherSpeech.stop(clearAudio = false); scope.launch { submitTurn(null, null, 0) } },
                             onFinish = { scope.launch { try { finishResult = withContext(Dispatchers.IO) { http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token()) } } catch (e: Exception) { pageStatus = e.message ?: "结课失败" } } },
                         )
                         "achievements" -> AchievementScreen(dashboard)
@@ -747,9 +783,9 @@ private fun HomeScreen(data: JSONObject?, childTheme: Boolean, status: String, o
 @Composable
 private fun LearnScreen(
     directive: JSONObject?, turn: JSONObject?, finish: JSONObject?, responseText: String, recording: Boolean,
-    busy: Boolean, status: String, onStart: () -> Unit, onText: (String) -> Unit,
+    recordingSaved: Boolean, busy: Boolean, status: String, onStart: () -> Unit, onText: (String) -> Unit,
     onRecord: () -> Unit, onSubmit: () -> Unit, onFinish: () -> Unit,
-    speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit,
+    speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onPlayRecording: () -> Unit,
 ) {
     GrowthCard(
         modifier = Modifier.fillMaxWidth(),
@@ -779,6 +815,7 @@ private fun LearnScreen(
             GrowthSecondaryButton(if (speechBusy) "老师正在说话" else "再听一次", onReplay, enabled = !speechBusy && !recording && !busy)
             GrowthTextField(responseText, onText, "你的回应", leadingEmoji = "✍️")
             GrowthSecondaryButton(if (recording) "停止并提交录音" else "开始录音", onRecord, emoji = "🎙️", enabled = !busy)
+            if (recordingSaved) GrowthSecondaryButton("回放我的录音", onPlayRecording, emoji = "🔊", enabled = !recording && !busy)
             GrowthPrimaryButton("提交回应", onSubmit, emoji = "📨", enabled = !busy)
             GrowthSecondaryButton("结课", onFinish, emoji = "🏁", enabled = !busy)
         }
