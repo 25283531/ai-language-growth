@@ -7,6 +7,6 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">#FFF8F0</item>
         <item name="android:navigationBarColor">#FFF8F0</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <!-- windowLightNavigationBar 需要 API 27；放在 values-v27/styles.xml。 -->
     </style>
 </resources>
