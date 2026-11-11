@@ -41,7 +41,7 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 
 ## Tech stack
 
-- **Clients:** Web first (Next.js, M1 validation); Android Kotlin + Jetpack Compose (M3).
+- **Clients:** Android Kotlin + Jetpack Compose is the learner client; internal Web evaluation console (Next.js) is read-only by default.
 - **Backend:** NestJS modular monolith, PostgreSQL + Redis, unified AI Gateway, BullMQ, S3-compatible storage + CDN, Docker, OpenTelemetry.
 - **AI:** 4 teacher roles (planner / teacher / assessor / mentor) via one LLM with different prompts and tools. Multi-model routing L0 local / L1 light / L2 mid / L3 premium, LLM / ASR / TTS routed independently. ASR is not pronunciation assessment. TTS uses a unified voice identity + abstract `teacher_speed` (e.g. 0.65), not raw vendor speed.
 - **Memory & persona:** learning memory (self-built, PostgreSQL), interaction memory (Mem0, batched at lesson end), teacher persona (self-built Personality Engine; fixed: patient, gentle, encouraging, no mocking, no rushing, honest AI identity). Full long-term memory and controlled adaptation land in M2; M1 uses a fixed persona + session memory only.
@@ -49,7 +49,7 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 ## Monorepo layout
 
 ```
-apps/web            # Next.js teaching workbench (M1)
+apps/web            # Next.js internal evaluation console (lesson start disabled by default)
 apps/admin-web      # Parent & admin console
 apps/android        # Kotlin client (M3; M1 minimal audio prototype)
 services/backend    # NestJS modular monolith
