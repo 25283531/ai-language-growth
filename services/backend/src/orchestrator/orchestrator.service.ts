@@ -41,6 +41,7 @@ import { PlannerService } from '../planner/planner.service';
 import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
 import { PrismaService } from '../prisma/prisma.service';
 import { GrowthMentorService } from '../agents/growth-mentor.service';
+import { splitTeachingSpeech } from '../speech/tts-segments';
 import { MemoryManagerService } from '../agents/memory-manager.service';
 import { PersonalityEngineService } from '../agents/personality-engine.service';
 
@@ -1866,38 +1867,51 @@ export class OrchestratorService {
       decision ??
       (await this.router.route({ serviceKind: 'tts', taskRoute: 'tts.dynamic_teaching' }));
 
-    const text = [directive.teacherUtterance, directive.demonstrationText]
-      .filter(Boolean)
-      .join(' ');
+    /**
+     * 固定内容与动态引导分开合成，并以稳定短片段作为缓存键。
+     *
+     * 这样「hello」这类固定单词、固定短句和文章段落可以在所有课堂之间
+     * 复用同一份服务端音频；长文章按标点切成 <=120 码点的片段，既避开
+     * 供应商单次文本上限，也让未变化段落不必重新合成。
+     */
+    const segments: string[] = [directive.teacherUtterance, directive.demonstrationText]
+      .filter((value): value is string => Boolean(value))
+      .flatMap((value) => splitTeachingSpeech(value, 120));
 
-    const outcome = await this.gateway.ttsWithResult(
-      {
-        text,
-        voice: directive.voice,
-        voiceIdentity: 'teacher_default',
-      },
-      routingDecision,
-    );
+    const outcomes = [];
+    for (const text of segments) {
+      outcomes.push(await this.gateway.ttsWithResult(
+        { text, voice: directive.voice, voiceIdentity: 'teacher_default' },
+        routingDecision,
+      ));
+    }
+    const first = outcomes[0];
 
     return {
       speech: {
-        audioRef: outcome.result.audioRef,
-        cached: outcome.result.cached,
+        audioRef: first?.result.audioRef ?? null,
+        cached: outcomes.length > 0 && outcomes.every((item) => item.result.cached),
         teacherSpeed: directive.voice.teacherSpeed,
-        speedMode: outcome.result.speedMode,
-        playbackRate: outcome.result.playbackRate,
+        speedMode: first?.result.speedMode,
+        playbackRate: first?.result.playbackRate,
         voiceStyle: directive.voice.voiceStyle,
         pauseAfterSentenceMs: directive.voice.pauseAfterSentenceMs,
         pronunciationMode: directive.voice.pronunciationMode,
+        segments: outcomes.map((item) => ({
+          audioRef: item.result.audioRef,
+          cached: item.result.cached,
+          ...(item.result.speedMode ? { speedMode: item.result.speedMode } : {}),
+          ...(typeof item.result.playbackRate === 'number' ? { playbackRate: item.result.playbackRate } : {}),
+        })),
       },
-      characters: outcome.result.characters,
+      characters: outcomes.reduce((total, item) => total + item.result.characters, 0),
       meta: {
-        degraded: outcome.degraded,
-        reasons: outcome.reasons,
-        effectiveLevel: outcome.effectiveLevel,
-        providerAlias: outcome.providerAlias,
-        modelAlias: outcome.result.modelAlias,
-        latencyMs: outcome.latencyMs,
+        degraded: outcomes.some((item) => item.degraded),
+        reasons: [...new Set(outcomes.flatMap((item) => item.reasons))],
+        effectiveLevel: first?.effectiveLevel ?? routingDecision.level,
+        providerAlias: first?.providerAlias ?? routingDecision.providerAlias,
+        modelAlias: first?.result.modelAlias ?? routingDecision.modelAlias,
+        latencyMs: outcomes.reduce((total, item) => total + item.latencyMs, 0),
       },
     };
   }

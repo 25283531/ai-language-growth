@@ -111,6 +111,7 @@ jobs:
             services/backend/test/textbook-skill-mapping.test.ts \
             services/backend/test/planner-track-band.test.ts \
             services/backend/test/ai-gateway-budget.test.ts \
+            services/backend/test/tts-cache.test.ts \
             services/backend/test/admin-console-static-guard.test.ts \
             services/backend/test/web-client-auth-guard.test.ts \
             services/backend/test/queue-runtime.test.ts \

@@ -1,9 +1,14 @@
 package com.alg.languagegrowth
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.os.Bundle
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +31,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +57,43 @@ import java.net.URL
 private const val OFFICIAL_API = "https://152.136.230.132:3000/api/v1"
 
 class MainActivity : ComponentActivity() {
+    private var recorder: MediaRecorder? = null
+    private var recordingPath: String? = null
+    private var audioPermissionGranted by mutableStateOf(false)
+    private val audioPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        audioPermissionGranted = granted
+    }
+
+    fun hasAudioPermission(): Boolean = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    fun requestAudioPermission() {
+        if (hasAudioPermission()) audioPermissionGranted = true else audioPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    fun startRecording(): String {
+        val file = java.io.File(cacheDir, "classroom-${System.currentTimeMillis()}.m4a")
+        val created = if (android.os.Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()
+        created.setAudioSource(MediaRecorder.AudioSource.MIC)
+        created.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        created.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        created.setOutputFile(file.absolutePath)
+        created.prepare(); created.start()
+        recorder = created; recordingPath = file.absolutePath
+        return file.absolutePath
+    }
+
+    fun stopRecording(): Pair<String, Long> {
+        val current = recorder ?: error("当前没有录音")
+        val path = recordingPath ?: error("录音文件不存在")
+        current.stop(); current.release(); recorder = null; recordingPath = null
+        return path to java.io.File(path).length()
+    }
+
+    override fun onDestroy() {
+        recorder?.runCatching { stop() }; recorder?.release(); recorder = null
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val appearance = getSharedPreferences("appearance", MODE_PRIVATE)
@@ -57,6 +102,7 @@ class MainActivity : ComponentActivity() {
             var childTheme by remember { mutableStateOf(appearance.getBoolean("childTheme", true)) }
             GrowthTheme(childTheme) {
                 GrowthApp(
+                    this@MainActivity,
                     account,
                     childTheme,
                     { childTheme = it; appearance.edit().putBoolean("childTheme", it).apply() },
@@ -80,6 +126,7 @@ private val tabs = listOf("home", "learn", "achievements", "me")
 
 @Composable
 private fun GrowthApp(
+    activity: MainActivity,
     account: android.content.SharedPreferences,
     childTheme: Boolean,
     onTheme: (Boolean) -> Unit,
@@ -103,7 +150,30 @@ private fun GrowthApp(
     var pageStatus by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var dashboard by remember { mutableStateOf<JSONObject?>(null) }
-    var lessonText by remember { mutableStateOf("") }
+    var lessonSessionId by remember { mutableStateOf("") }
+    var directive by remember { mutableStateOf<JSONObject?>(null) }
+    var lastTurn by remember { mutableStateOf<JSONObject?>(null) }
+    var finishResult by remember { mutableStateOf<JSONObject?>(null) }
+    var responseText by remember { mutableStateOf("") }
+    var recording by remember { mutableStateOf(false) }
+    var recordingStartedAt by remember { mutableStateOf(0L) }
+    var asrReservationId by remember { mutableStateOf("") }
+    var speechBusy by remember { mutableStateOf(false) }
+    var speechStatus by remember { mutableStateOf("") }
+    var lessonSpeech by remember { mutableStateOf<JSONObject?>(null) }
+    val teacherSpeech = remember(activity) { TeacherSpeechController(activity.cacheDir) }
+
+    DisposableEffect(activity, teacherSpeech) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                teacherSpeech.stop()
+                speechBusy = false
+                speechStatus = "语音已停止，可返回课堂后重试"
+            }
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { activity.lifecycle.removeObserver(observer); teacherSpeech.close() }
+    }
     var screen by remember { mutableStateOf("tabs") }
     var editName by remember { mutableStateOf("") }
     var avatarUrl by remember { mutableStateOf("") }
@@ -118,6 +188,23 @@ private fun GrowthApp(
         return if (value.endsWith("/api/v1")) value else "$value/api/v1"
     }
     fun token() = account.getString("token", null)
+
+    fun playTeacher(replay: Boolean = false) {
+        val current = directive ?: return
+        teacherSpeech.play(base(), token().orEmpty(), learnerId, current, lessonSpeech, replay) { active, message ->
+            speechBusy = active
+            speechStatus = message
+        }
+    }
+
+    LaunchedEffect(loggedIn, learnerId, tab, screen, directive, finishResult) {
+        teacherSpeech.stop()
+        speechBusy = false
+        speechStatus = ""
+        if (loggedIn && learnerId.isNotBlank() && tab == "learn" && screen == "tabs" && directive != null && finishResult == null) {
+            playTeacher()
+        }
+    }
 
     suspend fun fetchDashboard() {
         val result = withContext(Dispatchers.IO) { http(base(), "/user/dashboard", "GET", token = token()) }
@@ -156,13 +243,10 @@ private fun GrowthApp(
                 val response = withContext(Dispatchers.IO) {
                     http(base(), "/lessons/start", "POST", JSONObject().put("learnerId", learnerId), token())
                 }
-                val directive = response.optJSONObject("directive") ?: JSONObject()
-                lessonText = listOf(
-                    response.optString("topicName"),
-                    directive.optString("teacherUtterance"),
-                    directive.optString("demonstrationText"),
-                ).filter { it.isNotBlank() && it != "null" }.joinToString("\n\n")
-                if (lessonText.isBlank()) lessonText = "今天的课堂已经准备好，跟着老师一起开始吧！"
+                lessonSessionId = response.optString("lessonSessionId")
+                lessonSpeech = response.optJSONObject("speech")
+                directive = response.optJSONObject("directive")
+                lastTurn = null; finishResult = null; responseText = ""
                 tab = "learn"
                 pageStatus = ""
             } catch (e: Exception) {
@@ -171,6 +255,27 @@ private fun GrowthApp(
                 busy = false
             }
         }
+    }
+
+    suspend fun submitTurn(audioRef: String?, durationMs: Long) {
+        if (lessonSessionId.isBlank()) { pageStatus = "请先开始课堂"; return }
+        busy = true
+        try {
+            val body = JSONObject().put("learnerId", learnerId).put("idempotencyKey", "android-${System.currentTimeMillis()}-${(0..99999).random()}").put("clientTimestamp", java.time.Instant.now().toString())
+                .put("response", JSONObject().put("text", responseText.trim().ifBlank { JSONObject.NULL }).put("audioRef", audioRef ?: JSONObject.NULL).put("audioDurationMs", if (audioRef == null) JSONObject.NULL else durationMs).put("selectedImageId", JSONObject.NULL).put("requestedSlower", false).put("requestedRepeat", false).put("freeUtterance", JSONObject.NULL))
+            val headers = if (audioRef != null) mapOf("X-Speech-Quota-Reservation" to asrReservationId, "X-Learner-Id" to learnerId) else emptyMap()
+            val result = withContext(Dispatchers.IO) { http(base(), "/lessons/${lessonSessionId}/turn", "POST", body, token(), headers) }
+            asrReservationId = ""
+            lessonSpeech = result.optJSONObject("speech")
+            lastTurn = result; directive = result.optJSONObject("directive"); responseText = ""
+            pageStatus = result.optJSONObject("degradation")?.optString("reasons").orEmpty()
+        } catch (e: Exception) {
+            if (audioRef != null && asrReservationId.isNotBlank()) {
+                runCatching { withContext(Dispatchers.IO) { http(base(), "/speech/quota/release", "POST", JSONObject().put("reservationId", asrReservationId), token()) } }
+                asrReservationId = ""
+            }
+            pageStatus = e.message ?: "提交失败"
+        } finally { busy = false }
     }
 
     if (!loggedIn) {
@@ -287,7 +392,67 @@ private fun GrowthApp(
                         "home" -> HomeScreen(dashboard, childTheme, pageStatus, onStart = ::startSession, onRefresh = {
                             scope.launch { runCatching { fetchDashboard() }.onFailure { pageStatus = it.message ?: "刷新失败" } }
                         })
-                        "learn" -> LearnScreen(lessonText, busy, pageStatus, ::startSession)
+                        "learn" -> LearnScreen(
+                            directive, lastTurn, finishResult, responseText, recording, busy, pageStatus,
+                            onStart = ::startSession,
+                            speechBusy = speechBusy,
+                            speechStatus = speechStatus,
+                            onReplay = { playTeacher(true) },
+                            onText = { responseText = it },
+                            onRecord = {
+                                teacherSpeech.stop(clearAudio = false)
+                                speechBusy = false
+                                scope.launch {
+                                    if (!recording) {
+                                        if (!activity.hasAudioPermission()) {
+                                            activity.requestAudioPermission()
+                                            pageStatus = "请允许麦克风权限后再次点击录音"
+                                        } else {
+                                            try {
+                                                activity.startRecording()
+                                                recordingStartedAt = System.currentTimeMillis()
+                                                recording = true
+                                            } catch (e: Exception) { pageStatus = e.message ?: "无法开始录音" }
+                                        }
+                                    } else {
+                                        try {
+                                            val (path, bytes) = activity.stopRecording()
+                                            recording = false
+                                            val durationMs = System.currentTimeMillis() - recordingStartedAt
+                                            val seconds = (durationMs / 1000.0).coerceIn(1.0, 120.0)
+                                            val reservation = withContext(Dispatchers.IO) {
+                                                http(base(), "/speech/quota/reserve", "POST", JSONObject()
+                                                    .put("learnerId", learnerId)
+                                                    .put("serviceKind", "asr")
+                                                    .put("seconds", seconds)
+                                                    .put("idempotencyKey", "android-asr-${System.currentTimeMillis()}"), token())
+                                            }
+                                            asrReservationId = reservation.optString("reservationId")
+                                            val upload = withContext(Dispatchers.IO) {
+                                                httpBytes(base(), "/media/audio/uploads", java.io.File(path).readBytes(), "audio/mp4", token(),
+                                                    mapOf("X-Speech-Quota-Reservation" to asrReservationId, "X-Learner-Id" to learnerId))
+                                            }
+                                            responseText = ""
+                                            submitTurn(upload.optString("audioRef"), durationMs)
+                                        } catch (e: Exception) {
+                                            recording = false
+                                            val reservationId = asrReservationId
+                                            asrReservationId = ""
+                                            if (reservationId.isNotBlank()) {
+                                                runCatching {
+                                                    withContext(Dispatchers.IO) {
+                                                        http(base(), "/speech/quota/release", "POST", JSONObject().put("reservationId", reservationId), token())
+                                                    }
+                                                }
+                                            }
+                                            pageStatus = e.message ?: "录音提交失败"
+                                        }
+                                    }
+                                }
+                            },
+                            onSubmit = { teacherSpeech.stop(clearAudio = false); scope.launch { submitTurn(null, 0) } },
+                            onFinish = { scope.launch { try { finishResult = withContext(Dispatchers.IO) { http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token()) } } catch (e: Exception) { pageStatus = e.message ?: "结课失败" } } },
+                        )
                         "achievements" -> AchievementScreen(dashboard)
                         else -> ProfileScreen(
                             dashboard, editName, { editName = it }, avatarUrl, { avatarUrl = it },
@@ -580,7 +745,12 @@ private fun HomeScreen(data: JSONObject?, childTheme: Boolean, status: String, o
 /* -------------------------------------------------------------- 今天学什么 */
 
 @Composable
-private fun LearnScreen(lessonText: String, busy: Boolean, status: String, onStart: () -> Unit) {
+private fun LearnScreen(
+    directive: JSONObject?, turn: JSONObject?, finish: JSONObject?, responseText: String, recording: Boolean,
+    busy: Boolean, status: String, onStart: () -> Unit, onText: (String) -> Unit,
+    onRecord: () -> Unit, onSubmit: () -> Unit, onFinish: () -> Unit,
+    speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit,
+) {
     GrowthCard(
         modifier = Modifier.fillMaxWidth(),
         fill = GrowthColors.BlueWash,
@@ -594,27 +764,26 @@ private fun LearnScreen(lessonText: String, busy: Boolean, status: String, onSta
             }
         }
     }
-    GrowthPrimaryButton(
-        if (lessonText.isBlank()) "开始学习" else "再来一节",
-        onStart,
-        emoji = "✨",
-        enabled = !busy,
-        busy = busy,
-    )
-    if (lessonText.isNotBlank()) {
+    GrowthPrimaryButton(if (directive == null) "开始学习" else "再来一节", onStart, emoji = "✨", enabled = !busy, busy = busy)
+    if (directive != null) {
         GrowthCard(modifier = Modifier.fillMaxWidth()) {
-            GrowthSectionTitle("今天的课堂", "📖")
-            lessonText.split("\n\n").filter { it.isNotBlank() }.forEachIndexed { index, part ->
-                GrowthSpeechBubble(
-                    text = part,
-                    tint = if (index == 0) GrowthColors.PrimaryDeep else GrowthColors.BlueDeep,
-                    wash = if (index == 0) GrowthColors.PrimaryWash else GrowthColors.BlueWash,
-                    emoji = if (index == 0) "🌟" else "💬",
-                    big = index == 0,
-                )
-            }
-            Text("准备好后，可以跟着老师读一读或回答问题。", style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+            GrowthSectionTitle("课堂指令 · ${directive.optString("expectedResponse")}", "📖")
+            directive.optJSONArray("targetWords")?.let { words -> (0 until words.length()).forEach { Text(words.optString(it), style = MaterialTheme.typography.displayMedium, color = GrowthColors.PrimaryDeep) } }
+            directive.optString("demonstrationText").takeIf { it != "null" && it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.headlineMedium, color = GrowthColors.BlueDeep) }
+            Text(directive.optString("teacherUtterance"), style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink)
+            val units = directive.optJSONArray("pronunciationUnits")
+            if (units != null) (0 until units.length()).forEach { i -> units.optJSONObject(i)?.let { Text("${it.optString("text")} · ${it.optString("kind")}${if (it.optBoolean("isFocus")) " · 重点" else ""}") } }
+            Text("提示：${directive.optString("personaHint").takeUnless { it == "null" } ?: "—"}", color = GrowthColors.InkSoft)
+            if (directive.optString("expectedResponse") == "tap_image") Text("此指令没有图片选项配置，暂不能点选图片；请使用文本回应。", color = GrowthColors.InkSoft)
+            if (speechStatus.isNotBlank()) Text(speechStatus, color = GrowthColors.InkSoft)
+            GrowthSecondaryButton(if (speechBusy) "老师正在说话" else "再听一次", onReplay, enabled = !speechBusy && !recording && !busy)
+            GrowthTextField(responseText, onText, "你的回应", leadingEmoji = "✍️")
+            GrowthSecondaryButton(if (recording) "停止并提交录音" else "开始录音", onRecord, emoji = "🎙️", enabled = !busy)
+            GrowthPrimaryButton("提交回应", onSubmit, emoji = "📨", enabled = !busy)
+            GrowthSecondaryButton("结课", onFinish, emoji = "🏁", enabled = !busy)
         }
+        turn?.let { Text("服务端评估：${it.optJSONObject("assessment") ?: "—"}\n证据：${it.optJSONArray("evidence") ?: "[]"}\n状态变更：${it.optJSONArray("stateChanges") ?: "[]"}\n降级：${it.optJSONObject("degradation") ?: "—"}", color = GrowthColors.InkSoft) }
+        finish?.let { GrowthCard(modifier = Modifier.fillMaxWidth()) { Text(it.optString("summary"), style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink) } }
     } else {
         GrowthCard(
             modifier = Modifier.fillMaxWidth(),
@@ -826,15 +995,16 @@ private fun ProfileScreen(
     if (status.isNotBlank()) GrowthStatusPill(status)
 }
 
-/* ------------------------------------------------------------- 网络层（未改） */
+/* ------------------------------------------------------------- 网络层 */
 
-private fun http(base: String, path: String, method: String, body: JSONObject? = null, token: String? = null): JSONObject {
+internal fun http(base: String, path: String, method: String, body: JSONObject? = null, token: String? = null, headers: Map<String, String> = emptyMap()): JSONObject {
     val connection = URL("${base.trimEnd('/')}$path").openConnection() as HttpURLConnection
     connection.requestMethod = method
     connection.connectTimeout = 10_000
     connection.readTimeout = 20_000
     connection.setRequestProperty("Accept", "application/json")
     if (!token.isNullOrBlank()) connection.setRequestProperty("Authorization", "Bearer $token")
+    headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }
     if (body != null) {
         connection.doOutput = true
         connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
@@ -844,6 +1014,22 @@ private fun http(base: String, path: String, method: String, body: JSONObject? =
         val code = connection.responseCode
         val text = (if (code in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
         val result = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+        if (code !in 200..299) error(result.optString("message").ifBlank { "请求失败（$code）" })
+        result
+    } finally { connection.disconnect() }
+}
+
+private fun httpBytes(base: String, path: String, bytes: ByteArray, contentType: String, token: String?, headers: Map<String, String>): JSONObject {
+    val connection = URL("${base.trimEnd('/')}$path").openConnection() as HttpURLConnection
+    connection.requestMethod = "POST"; connection.doOutput = true; connection.connectTimeout = 10_000; connection.readTimeout = 30_000
+    connection.setRequestProperty("Accept", "application/json"); connection.setRequestProperty("Content-Type", contentType)
+    if (!token.isNullOrBlank()) connection.setRequestProperty("Authorization", "Bearer $token")
+    headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }
+    connection.outputStream.use { it.write(bytes) }
+    return try {
+        val code = connection.responseCode
+        val text = (if (code in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val result = JSONObject(text)
         if (code !in 200..299) error(result.optString("message").ifBlank { "请求失败（$code）" })
         result
     } finally { connection.disconnect() }

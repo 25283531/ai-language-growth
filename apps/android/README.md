@@ -8,11 +8,13 @@
 - **正式真机联调地址**：`https://152.136.230.132:3000`（API 前缀 `/api/v1`）。该入口为 Caddy 终结 TLS，反代到 `alg-admin-web:3001`，再由 Next rewrite 转发到 `backend:3000`；证书为 Let's Encrypt（含 IP SAN）。
 - 旧的 HTTP 联调端口 `http://152.136.230.132:3100` 仍不可直接用于本客户端（明文流量已关闭）。
 - **端口陷阱**：服务器 `443` 指向无关的 `elder-server`，不要填 `https://152.136.230.132`（不带端口）。客户端地址务必带 `:3000`。
-- 当前切片仅覆盖开课与指令展示。录音、ASR、TTS、语音额度租约、监护人账户和家长中心会按 M3 后续节点逐步接入；在此之前仍使用 `apps/android-audio-prototype` 验证现有音频额度链路。
+- 正式客户端已接通开课、指令画面、文本/录音回合、结课，以及教师语音播放与本地重播。音频请求均带 Bearer、`X-Learner-Id` 与语音额度租约；`apps/android-audio-prototype` 仅为早期验证原型，不是用户端 APK。
+- 教师语音采用「服务端缓存优先」：`/lessons/start`、`/turn` 返回的 `speech.segments` 是服务端已按固定单词 / 短句 / 文章段落复用或生成的音频片段；缺少该字段时才降级为 `POST /speech/cache/lookup`（只读查缓存）→ 未命中再 `POST /speech/synthesize`。当前一轮音频下载到本地后，「再听一次」只播放本地文件，不产生网络请求、合成或额度结算。
+- 监护人账户和家长中心仍按 M3 后续节点接入。
 
 ## 云端构建
 
-`.github/workflows/android-client.yml` 在变更或手动触发时编译 APK 并上传 artifact。手动运行时默认版本为 `0.0.1`（version code `1`），可选择 `debug` 或 `release`。
+`.github/workflows/android-client.yml` 在变更或手动触发时编译 APK 并上传 artifact。手动运行时默认版本为 `0.0.3`（version code `3`），可选择 `debug` 或 `release`。
 
 正式发布包需要在 GitHub 仓库 Secrets 配置 `KEYSTORE_BASE64`、`KEYSTORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`。工作流也兼容旧的 `ANDROID_*` 命名。工作流只在运行器临时目录解码签名文件，不把 keystore、密码或密钥写入仓库。
 M1 runs a parallel minimal Android audio prototype (record / play / slow-speed / upload) to surface browser-vs-Android differences early: permissions, interruption, background playback, Bluetooth, player behaviour.

@@ -73,6 +73,38 @@ export class SpeechController {
     return result;
   }
 
+  /**
+   * 播放前只读探测服务端 TTS 缓存。
+   *
+   * 固定单词 / 短句 / 文章由编排器分段合成后落在服务端缓存；客户端在
+   * 调用 synthesize 之前先查这里，命中即可直接下载音频，不产生任何
+   * 供应商 TTS 请求。音频下载仍需要本人额度租约与学习者标识。
+   */
+  @Post('cache/lookup')
+  async lookupCache(@Body() body: unknown, @Req() request: Request) {
+    const parsed = synthesizeSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new HttpException({ message: '参数不合法', detail: parsed.error.flatten() }, 400);
+    }
+    const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
+    if (!learnerId) throw new HttpException('缓存查询缺少学习者标识', 400);
+    await this.auth.assertLearnerOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      learnerId,
+    );
+    const speech = await this.gateway.peekTtsCache({
+      text: parsed.data.text,
+      voice: {
+        teacherSpeed: parsed.data.teacherSpeed,
+        voiceStyle: parsed.data.voiceStyle,
+        pauseAfterSentenceMs: parsed.data.pauseAfterSentenceMs,
+        pronunciationMode: parsed.data.pronunciationMode,
+      },
+      voiceIdentity: 'teacher_default',
+    });
+    return { cached: Boolean(speech), speech };
+  }
+
   @Post('recognize')
   async recognize(@Body() body: unknown, @Req() request: Request) {
     const parsed = recognizeSchema.safeParse(body);

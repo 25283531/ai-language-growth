@@ -254,6 +254,13 @@ export const turnResponseSchema = z.object({
   /** 听 —— 需要生成的语音（缓存命中时不重复计费） */
   speech: z.object({
     audioRef: z.string().nullable().default(null),
+    /** Ordered teacher guidance / fixed example segments; audioRef is the first segment for legacy clients. */
+    segments: z.array(z.object({
+      audioRef: z.string(),
+      cached: z.boolean(),
+      speedMode: z.enum(['native', 'playback']).optional(),
+      playbackRate: z.number().min(0.25).max(4).optional(),
+    })).optional(),
     /** 是否命中缓存（重复播放不重新消耗 TTS） */
     cached: z.boolean().default(false),
     teacherSpeed: z.number(),

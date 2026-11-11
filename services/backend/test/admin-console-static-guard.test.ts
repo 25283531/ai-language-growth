@@ -40,7 +40,11 @@ const androidSources = readdirSync(ANDROID_DIR)
   .map((file) => readFileSync(join(ANDROID_DIR, file), 'utf8'))
   .join('\n');
 
-/** 基线 d282095 的 Android 功能锚点集合（从 HEAD 对象提取，不随工作区改动漂移）。 */
+/**
+ * 基线 d282095 的 Android 功能锚点集合（从 HEAD 对象提取，不随工作区改动漂移）。
+ * 课堂回合与教师语音是后续新增的正式功能，故路径集合按「基线不可丢 +
+ * 新功能必须齐」校验，而不是要求集合大小永远不变。
+ */
 const BASELINE_PATH_LITERALS = [
   '"/api/v1"',
   '"/auth/captcha"',
@@ -54,6 +58,16 @@ const BASELINE_PATH_LITERALS = [
   '"/user/password"',
   '"/user/profile"',
   '"/user/textbook"',
+];
+/** 正式课堂 + 教师语音链路新增的必需端点，一项都不能少。 */
+const CLASSROOM_PATH_LITERALS = [
+  '"/api/v1/media/audio/"',
+  '"/media/audio/uploads"',
+  '"/speech/cache/lookup"',
+  '"/speech/quota/release"',
+  '"/speech/quota/reserve"',
+  '"/speech/quota/settle"',
+  '"/speech/synthesize"',
 ];
 const BASELINE_PREF_KEYS = [
   'getSharedPreferences("account"',
@@ -158,8 +172,23 @@ describe('Android：功能锚点零回归（静态）', () => {
     // 允许视觉重构把代码拆到同包新 .kt；但功能锚点集合一项都不能少、也不能多。
     assert.deepEqual(
       collect(androidSources, /"\/[a-zA-Z0-9_/-]+"/g),
-      [...BASELINE_PATH_LITERALS].sort(),
-      'API 路径集合与基线不一致',
+      [...BASELINE_PATH_LITERALS, ...CLASSROOM_PATH_LITERALS].sort(),
+      'API 路径集合必须等于「基线 + 课堂/教师语音端点」，不得丢失或静默新增',
+    );
+    assert.match(
+      androidSources,
+      /class TeacherSpeechController/,
+      '正式客户端必须存在教师语音播放控制器',
+    );
+    assert.match(
+      androidSources,
+      /fun play\([\s\S]{0,6000}?cache\/lookup/,
+      '播放前必须先查询服务端 TTS 缓存',
+    );
+    assert.match(
+      androidSources,
+      /fun play\([\s\S]{0,12000}?cachedParts/,
+      '重播必须复用本地已下载音频',
     );
     assert.deepEqual(
       collect(androidSources, /getSharedPreferences\("[^"]+"|put(String|Boolean)\("[^"]+"/g),

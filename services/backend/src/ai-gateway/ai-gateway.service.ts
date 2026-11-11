@@ -12,7 +12,7 @@
  */
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   AdapterRegistry,
@@ -79,7 +79,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     text: string;
     teacherSpeed: number;
     voiceIdentity: string;
+    outcome: GatewayCallResult<TtsResponse>;
   }>();
+  /** Coalesce simultaneous requests for the same utterance within this process. */
+  private readonly ttsInFlight = new Map<string, Promise<GatewayCallResult<TtsResponse>>>();
   private readonly providerTimeouts = new Map<string, number>();
   private pronunciationCandidates: string[] = [];
   private readonly runtimeCandidates: Record<'llm' | 'tts' | 'asr', string[]> = {
@@ -261,53 +264,29 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     request: TtsRequest,
     decision: RoutingDecision,
   ): Promise<GatewayCallResult<TtsResponse>> {
-    const normalizedRequest = {
-      ...request,
-      voice: {
-        teacherSpeed: request.voice.teacherSpeed ?? 0.65,
-        voiceStyle: request.voice.voiceStyle ?? 'gentle',
-        pauseAfterSentenceMs: request.voice.pauseAfterSentenceMs ?? 1000,
-        pronunciationMode: request.voice.pronunciationMode ?? 'slow_clear',
-      },
-      voiceIdentity: request.voiceIdentity ?? 'teacher_default',
-    } as TtsRequest & { voice: { teacherSpeed: number; voiceStyle: string; pauseAfterSentenceMs: number; pronunciationMode: string }; voiceIdentity: string };
-    // —— 缓存命中：反复播放不重新消耗 TTS ——
+    const normalizedRequest = this.normalizeTtsRequest(request);
     const cacheKey = this.ttsCacheKey(normalizedRequest);
-    let cached = this.ttsCache.get(cacheKey);
-    if (cached) {
-      // Only local media references must point to an existing file. Mock and
-      // provider-hosted references are valid cache entries without local files.
-      if (cached.audioRef.startsWith('/api/v1/media/audio/')) {
-        const audioFile = cached.audioRef.split('/').pop();
-        try {
-          if (!audioFile || audioFile.includes('..')) throw new Error('invalid audio reference');
-          await access(join(resolveAudioDir(), audioFile));
-        } catch {
-          this.ttsCache.delete(cacheKey);
-          cached = undefined;
-        }
-      }
-    }
-    cached ??= await this.loadPersistentTtsCache(cacheKey, normalizedRequest);
-    if (cached) {
-      const speed = this.ttsSpeedMetadata(normalizedRequest, decision.providerAlias);
-      return {
-        result: {
-          audioRef: cached.audioRef,
-          characters: 0, // 缓存命中不计入字符量
-          latencyMs: 0,
-          providerAlias: decision.providerAlias,
-          modelAlias: decision.modelAlias,
-          cached: true,
-          ...speed,
-        },
-        degraded: false,
-        reasons: [],
-        effectiveLevel: decision.level,
-        providerAlias: decision.providerAlias,
-        latencyMs: 0,
-      };
-    }
+    const pending = this.ttsInFlight.get(cacheKey);
+    if (pending) return this.cachedTtsOutcome(await pending);
+    const work = this.resolveTts(normalizedRequest, decision, cacheKey);
+    this.ttsInFlight.set(cacheKey, work);
+    try { return await work; }
+    finally { this.ttsInFlight.delete(cacheKey); }
+  }
+
+  private cachedTtsOutcome(outcome: GatewayCallResult<TtsResponse>): GatewayCallResult<TtsResponse> {
+    return { ...outcome, reasons: [...outcome.reasons], latencyMs: 0,
+      result: { ...outcome.result, cached: true, characters: 0, latencyMs: 0 } };
+  }
+
+  private async resolveTts(
+    normalizedRequest: TtsRequest & { voice: { teacherSpeed: number }; voiceIdentity: string },
+    decision: RoutingDecision,
+    cacheKey: string,
+  ): Promise<GatewayCallResult<TtsResponse>> {
+    // —— 缓存命中：反复播放不重新消耗 TTS ——
+    const cached = await this.findTtsCache(cacheKey, normalizedRequest);
+    if (cached) return this.cachedTtsOutcome(cached.outcome);
 
     const outcome = await this.callWithFallback<TtsResponse>(
       'tts',
@@ -322,6 +301,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
 
     // 只要拿到可用音频就缓存：降级到兜底适配器同样是有效音频，
     // 若因 degraded 而不缓存，Mock 模式下重复播放会永远重新计费。
+    // 不可播放的 mock:// 引用只在内存复用，不会写入持久索引。
     if (outcome.result.audioRef && !outcome.result.cached) {
       this.ttsCache.set(cacheKey, {
         audioRef: outcome.result.audioRef,
@@ -329,12 +309,57 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         text: normalizedRequest.text,
         teacherSpeed: normalizedRequest.voice.teacherSpeed,
         voiceIdentity: normalizedRequest.voiceIdentity,
+        outcome: { ...outcome, result: { ...outcome.result } },
       });
-      await this.storePersistentTtsCache(cacheKey, normalizedRequest, outcome.result).catch((error) =>
+      if (this.ttsCache.size > 1000) this.ttsCache.delete(this.ttsCache.keys().next().value!);
+      await this.storePersistentTtsCache(cacheKey, normalizedRequest, outcome).catch((error) =>
         this.logger.warn(`TTS 持久化缓存索引写入失败：${(error as Error).message}`),
       );
     }
     return outcome;
+  }
+
+  /**
+   * 只读缓存探测：供「播放前先检查服务端缓存资源」使用。
+   * 绝不触发供应商 TTS；命中时返回与 synthesize 相同的音频描述。
+   */
+  async peekTtsCache(request: TtsRequest): Promise<TtsResponse | null> {
+    const normalized = this.normalizeTtsRequest(request);
+    const hit = await this.findTtsCache(this.ttsCacheKey(normalized), normalized);
+    if (!hit) return null;
+    return { ...hit.outcome.result, cached: true, characters: 0, latencyMs: 0 };
+  }
+
+  private normalizeTtsRequest(request: TtsRequest) {
+    return {
+      ...request,
+      voice: {
+        teacherSpeed: request.voice.teacherSpeed ?? 0.65,
+        voiceStyle: request.voice.voiceStyle ?? 'gentle',
+        pauseAfterSentenceMs: request.voice.pauseAfterSentenceMs ?? 1000,
+        pronunciationMode: request.voice.pronunciationMode ?? 'slow_clear',
+      },
+      voiceIdentity: request.voiceIdentity ?? 'teacher_default',
+    } as TtsRequest & { voice: { teacherSpeed: number; voiceStyle: string; pauseAfterSentenceMs: number; pronunciationMode: string }; voiceIdentity: string };
+  }
+
+  private async findTtsCache(cacheKey: string, request: TtsRequest) {
+    let cached = this.ttsCache.get(cacheKey);
+    if (cached) {
+      // 本地媒体引用必须指向仍存在的文件；mock/provider-hosted 引用无需本地文件。
+      if (cached.audioRef.startsWith('/api/v1/media/audio/')) {
+        const audioFile = cached.audioRef.split('/').pop();
+        try {
+          if (!audioFile || audioFile.includes('..')) throw new Error('invalid audio reference');
+          await access(join(resolveAudioDir(), audioFile));
+        } catch {
+          this.ttsCache.delete(cacheKey);
+          cached = undefined;
+        }
+      }
+    }
+    cached ??= await this.loadPersistentTtsCache(cacheKey, request);
+    return cached;
   }
 
   private ttsSpeedMetadata(request: TtsRequest, providerAlias: string): {
@@ -358,14 +383,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
    * 不含供应商或模型标识 —— 换模型不应让缓存失效导致重复计费。
    */
   private ttsCacheKey(request: TtsRequest): string {
-    return [
-      request.text,
-      request.voice.teacherSpeed,
-      request.voice.voiceStyle,
-      request.voice.pronunciationMode,
-      request.voice.pauseAfterSentenceMs,
+    return JSON.stringify([
+      'tts-v2', process.env.TTS_VOICE_PROFILE_VERSION ?? '1',
+      request.text, request.voice.teacherSpeed, request.voice.voiceStyle,
+      request.voice.pronunciationMode, request.voice.pauseAfterSentenceMs,
       request.voiceIdentity,
-    ].join('|');
+    ]);
   }
 
   private async loadPersistentTtsCache(
@@ -377,6 +400,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     text: string;
     teacherSpeed: number;
     voiceIdentity: string;
+    outcome: GatewayCallResult<TtsResponse>;
   } | undefined> {
     const file = this.ttsCacheIndexPath(cacheKey);
     try {
@@ -388,9 +412,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         text?: unknown;
         teacherSpeed?: unknown;
         voiceIdentity?: unknown;
+        textHash?: string;
+        outcome?: GatewayCallResult<TtsResponse>;
       };
-      if (typeof entry.audioRef !== 'string' || !entry.audioRef.startsWith('/api/v1/media/audio/')) return undefined;
-      if (entry.text !== request.text || Number(entry.teacherSpeed) !== teacherSpeed || entry.voiceIdentity !== voiceIdentity) return undefined;
+      if (typeof entry.audioRef !== 'string' || !/^\/api\/v1\/media\/audio\/[a-f0-9]{24}\.(mp3|wav|m4a)$/i.test(entry.audioRef)) return undefined;
+      if (entry.textHash !== createHash('sha256').update(request.text).digest('hex') || Number(entry.teacherSpeed) !== teacherSpeed || entry.voiceIdentity !== voiceIdentity) return undefined;
+      if (!entry.outcome?.result || entry.outcome.result.audioRef !== entry.audioRef || typeof entry.outcome.result.providerAlias !== 'string' || entry.outcome.result.providerAlias.startsWith('mock')) return undefined;
       const audioFile = entry.audioRef.split('/').pop();
       if (!audioFile || audioFile.includes('..')) return undefined;
       await access(join(resolveAudioDir(), audioFile));
@@ -400,27 +427,33 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         text: request.text,
         teacherSpeed,
         voiceIdentity,
+        outcome: entry.outcome,
       };
       this.ttsCache.set(cacheKey, cached);
+      if (this.ttsCache.size > 1000) this.ttsCache.delete(this.ttsCache.keys().next().value!);
       return cached;
     } catch {
       return undefined;
     }
   }
 
-  private async storePersistentTtsCache(cacheKey: string, request: TtsRequest, result: TtsResponse): Promise<void> {
+  private async storePersistentTtsCache(cacheKey: string, request: TtsRequest, outcome: GatewayCallResult<TtsResponse>): Promise<void> {
+    const result = outcome.result;
+    if (!/^\/api\/v1\/media\/audio\/[a-f0-9]{24}\.(mp3|wav|m4a)$/i.test(result.audioRef)) return;
     const directory = resolveAudioDir();
+    await access(join(directory, result.audioRef.split('/').pop()!));
     await mkdir(directory, { recursive: true });
-    await writeFile(this.ttsCacheIndexPath(cacheKey), JSON.stringify({
-      audioRef: result.audioRef,
-      characters: result.characters,
-      text: request.text,
-      voice: request.voice,
-      teacherSpeed: request.voice.teacherSpeed,
-      voiceIdentity: request.voiceIdentity,
-      providerAlias: result.providerAlias,
-      modelAlias: result.modelAlias,
-    }), 'utf8');
+    const target = this.ttsCacheIndexPath(cacheKey);
+    const temporary = `${target}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify({
+        audioRef: result.audioRef, characters: result.characters,
+        textHash: createHash('sha256').update(request.text).digest('hex'),
+        teacherSpeed: request.voice.teacherSpeed, voiceIdentity: request.voiceIdentity,
+        outcome,
+      }), 'utf8');
+      await rename(temporary, target);
+    } finally { await unlink(temporary).catch(() => undefined); }
     const audioFile = result.audioRef.split('/').pop();
     if (audioFile && !audioFile.includes('..')) {
       const extension = audioFile.split('.').pop() || null;
