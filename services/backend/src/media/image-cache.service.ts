@@ -1,42 +1,53 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
+import { QueueRuntimeService } from '../queue/queue-runtime.service';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const RETRY_COOLDOWN_MS = 60 * 60 * 1000;
 const STALE_DOWNLOAD_MS = 10 * 60 * 1000;
 const IMAGE_DIR = process.env.AI_MEDIA_CACHE_DIR || join(process.cwd(), '.cache', 'media');
 
-@Injectable()
-export class ImageCacheService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(ImageCacheService.name);
-  private timer?: NodeJS.Timeout;
-  private working = false;
+export async function persistCachedImage(bytes: Buffer, extension: string, directory = IMAGE_DIR): Promise<string> {
+  const checksum = createHash('sha256').update(bytes).digest('hex');
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, `${checksum}.${extension}`);
+  await writeFile(path, bytes, { flag: 'wx' }).catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EEXIST') throw error;
+    const existing = await readFile(path);
+    if (!existing.equals(bytes)) throw new Error('既有图片缓存内容校验失败');
+  });
+  return checksum;
+}
 
-  constructor(private readonly prisma: PrismaService) {}
+@Injectable()
+export class ImageCacheService implements OnModuleInit {
+  private working = false;
+  private readonly imageDirectory = IMAGE_DIR;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly queue: QueueRuntimeService,
+  ) {}
 
   onModuleInit(): void {
-    void this.cacheNext().catch((error) => {
-      this.logger.warn(`课程图片后台缓存失败：${(error as Error).message}`);
+    this.queue.startImageCache(async (job) => {
+      await this.cacheNext(job.data.assetId, async (assetId) => {
+        await job.updateData({ assetId });
+      });
     });
-    this.timer = setInterval(() => void this.cacheNext().catch((error) => {
-      this.logger.warn(`课程图片后台缓存失败：${(error as Error).message}`);
-    }), 60_000);
-    this.timer.unref();
   }
 
-  onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
-  }
-
-  private async cacheNext(): Promise<void> {
+  async cacheNext(retryAssetId?: string, rememberAsset?: (assetId: string) => Promise<void>): Promise<void> {
     if (this.working) return;
     this.working = true;
     try {
-      const asset = await this.prisma.media_assets.findFirst({
+      const asset = retryAssetId
+        ? await this.prisma.media_assets.findFirst({ where: { id: retryAssetId, kind: 'image', cacheStatus: { not: 'cached' } } })
+        : await this.prisma.media_assets.findFirst({
         where: {
           kind: 'image',
           sourceUrl: { not: null },
@@ -55,15 +66,15 @@ export class ImageCacheService implements OnModuleInit, OnModuleDestroy {
         orderBy: { createdAt: 'asc' },
       });
       if (!asset?.sourceUrl) return;
+      // Persist only the ID so BullMQ retries revisit the same asset despite DB cooldown.
+      await rememberAsset?.(asset.id);
       await this.prisma.media_assets.update({
         where: { id: asset.id },
         data: { cacheStatus: 'downloading', cacheAttemptedAt: new Date() },
       });
       try {
         const { bytes, extension } = await this.download(asset.sourceUrl);
-        const checksum = createHash('sha256').update(bytes).digest('hex');
-        await mkdir(IMAGE_DIR, { recursive: true });
-        await writeFile(join(IMAGE_DIR, `${checksum}.${extension}`), bytes, { flag: 'wx' }).catch(() => undefined);
+        const checksum = await persistCachedImage(bytes, extension, this.imageDirectory);
         await this.prisma.media_assets.update({
           where: { id: asset.id },
           data: {
@@ -74,11 +85,13 @@ export class ImageCacheService implements OnModuleInit, OnModuleDestroy {
             cacheError: null,
           },
         });
-      } catch (error) {
+      } catch {
         await this.prisma.media_assets.update({
           where: { id: asset.id },
-          data: { cacheStatus: 'failed', cacheError: String((error as Error).message).slice(0, 500) },
+          data: { cacheStatus: 'failed', cacheError: '课程图片缓存失败，等待后台重试' },
         });
+        // Do not persist source URLs or upstream errors into Redis/logs.
+        throw new Error('课程图片缓存失败');
       }
     } finally {
       this.working = false;

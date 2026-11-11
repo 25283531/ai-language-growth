@@ -7,6 +7,7 @@ import { Module } from '@nestjs/common';
 import { ModelRouterImpl } from '@alg/model-router';
 import { resolveProviderAliases } from '@alg/ai-provider-sdk';
 import { ConfigModule } from './config/config.module';
+import { QueueModule } from './queue/queue.module';
 import { PrismaService } from './prisma/prisma.service';
 import { AiGatewayService } from './ai-gateway/ai-gateway.service';
 import { LearnerModelService } from './learner-model/learner-model.service';
@@ -43,7 +44,7 @@ import { MemoryManagerService } from './agents/memory-manager.service';
 import { PersonalityEngineService } from './agents/personality-engine.service';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, QueueModule],
   controllers: [
     LessonsController,
     LearnersController,

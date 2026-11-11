@@ -43,6 +43,32 @@ services:
     networks:
       - alg-net
 
+  redis-queue:
+    image: redis:7-alpine
+    container_name: alg-redis-queue
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      # 可覆盖的开发初始值，非容量评估；生产须实测容量并预留 AOF 重写等开销。
+      - "${QUEUE_REDIS_MAXMEMORY:-256mb}"
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redisqueuedata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - alg-net
+
   backend:
     image: ghcr.io/25283531/ai-language-growth-backend:latest
     container_name: alg-backend
@@ -52,11 +78,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis-queue:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-alg}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_language_growth}?schema=public
       REDIS_URL: redis://redis:6379
+      QUEUE_REDIS_URL: ${QUEUE_REDIS_URL:-redis://redis-queue:6379}
       AI_GATEWAY_MODE: ${AI_GATEWAY_MODE:-mock}
       AI_GATEWAY_LIVE_SERVICES: ${AI_GATEWAY_LIVE_SERVICES:-llm,asr,tts}
       # 所有 Provider 配置必须在此透传；漏一个就会在容器里静默回落 Mock（约束二）。
@@ -169,6 +198,7 @@ services:
 volumes:
   pgdata:
   redisdata:
+  redisqueuedata:
   backenddata:
   curriculum_packages:
 

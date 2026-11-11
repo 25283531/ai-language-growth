@@ -10,6 +10,7 @@ export interface AppConfig {
   port: number;
   databaseUrl: string;
   redisUrl: string;
+  queueRedisUrl: string;
   aiGatewayMode: 'mock' | 'live';
   llm: { apiKey?: string; baseUrl?: string; model?: string };
   tts: { apiKey?: string; baseUrl?: string; model?: string };
@@ -40,6 +41,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: Number(env.PORT ?? 3100),
     databaseUrl: env.DATABASE_URL ?? '',
     redisUrl: env.REDIS_URL ?? '',
+    queueRedisUrl: env.QUEUE_REDIS_URL ?? '',
     aiGatewayMode: (env.AI_GATEWAY_MODE ?? 'mock') as 'mock' | 'live',
     llm: pick('LLM'),
     tts: pick('TTS'),

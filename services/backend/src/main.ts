@@ -26,6 +26,7 @@ async function bootstrap(): Promise<void> {
     logger: config.nodeEnv === 'development' ? ['log', 'warn', 'error'] : ['warn', 'error'],
   });
 
+  app.enableShutdownHooks();
   app.enableCors({
     origin: true,
     credentials: true,

@@ -21,6 +21,17 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     services:
+      queue-test-redis:
+        image: redis:7-alpine
+        # Redis service command cannot be overridden by Actions; integration step
+        # explicitly configures this disposable instance before worker startup.
+        ports:
+          - 6381:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       postgres:
         image: postgres:16-alpine
         env:
@@ -102,10 +113,18 @@ jobs:
             services/backend/test/ai-gateway-budget.test.ts \
             services/backend/test/admin-console-static-guard.test.ts \
             services/backend/test/web-client-auth-guard.test.ts \
+            services/backend/test/queue-runtime.test.ts \
+            services/backend/test/image-cache-queue.test.ts \
             packages/skill-graph/test/mastery.test.ts \
             packages/model-router/test/router.test.ts \
             packages/shared-contracts/test/cefr.test.ts \
             packages/ai-provider-sdk/test/*.test.ts
+
+      - name: Disposable queue Redis integration
+        env:
+          QUEUE_TEST_REDIS_URL: redis://127.0.0.1:6381/15
+          QUEUE_TEST_REDIS_DISPOSABLE_AUTHORIZED: '1'
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/queue-redis.integration.test.ts
 
       - name: Start mock API for M1 integration acceptance
         env:
