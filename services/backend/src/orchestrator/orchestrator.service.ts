@@ -1932,7 +1932,10 @@ export class OrchestratorService {
       ? baseTeacherUtterance
       : activity.taskType === 'listening_comprehension'
         ? `我们先来认识 ${targetWord}。${teachingIntro} 听一听，选出你听到的词。`
-        : activity.taskType === 'word_mimicry'
+        : activity.taskType === 'image_identification' &&
+            !(activity as { assessment?: { acceptedImageIds?: string[] } }).assessment?.acceptedImageIds?.length
+          ? `请想一想 ${targetWord} 的意思。${teachingIntro} 没有图片时，输入或说出这个单词也可以。`
+          : activity.taskType === 'word_mimicry'
           ? `我们一起来读 ${targetWord}。${teachingIntro} 先听老师慢慢说，再跟着读。`
           : activity.taskType === 'sentence_pattern'
             ? `我们试着用 ${targetWord} 说一句话。${teachingIntro}`
@@ -2257,10 +2260,10 @@ function answerCandidates(input: {
   const configured = input.assessment?.acceptedTexts ?? [];
   if (configured.length) return configured.map(normalizeAnswer).filter(Boolean);
   if (
-    ['word_mimicry', 'pronunciation_drill', 'phrase_assembly', 'listening_comprehension'].includes(input.taskType)
+    ['word_mimicry', 'pronunciation_drill', 'phrase_assembly', 'listening_comprehension', 'image_identification'].includes(input.taskType)
   ) {
-    // 听辨活动也应允许孩子用文字/语音说出听到的目标词；
-    // 否则没有图片选项时，孩子只能提交空回应，活动永远无法完成。
+    // 听辨/识图活动也应允许孩子用文字/语音说出目标词；
+    // 当前客户端没有图片选项时，孩子仍能完成活动，而不是卡在同一个任务上。
     return input.targetWords.map(normalizeAnswer).filter(Boolean);
   }
   if (input.taskType === 'sentence_pattern' && input.demonstrationText?.trim()) {
