@@ -30,6 +30,7 @@ export const TASK_ROUTES = [
   'llm.simple_dialogue', // 简单问候与问答
   'llm.teaching_explanation', // 教学解释
   'llm.learning_plan', // 长期学习规划
+  'llm.learning_plan_tiebreak', // 候选活动同层且任务类型不同时的 L1 边界裁决
   'llm.method_adaptation', // 教学方法调整
   'llm.growth_report', // 阶段成长汇总与家长解释
   'llm.memory_extraction', // 结课批量交互记忆候选提取

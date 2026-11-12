@@ -118,6 +118,7 @@ jobs:
             services/backend/test/learners-auth.test.ts \
             services/backend/test/textbook-skill-mapping.test.ts \
             services/backend/test/planner-track-band.test.ts \
+            services/backend/test/planner-adaptive-choice.test.ts \
             services/backend/test/ai-gateway-budget.test.ts \
             services/backend/test/tts-cache.test.ts \
             services/backend/test/tts-scope.test.ts \
@@ -141,6 +142,12 @@ jobs:
         env:
           USAGE_COST_DB_INTEGRATION: '1'
         run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/usage-cost.integration.test.ts
+
+      - name: P1-6 adaptive planner LLM call budget
+        env:
+          P1_6_DB_INTEGRATION: '1'
+          P1_6_EXPECT_LLM_CALLS: '1'
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/p1-6-adaptive-ledger.integration.test.ts
 
       - name: Disposable queue Redis integration
         env:
