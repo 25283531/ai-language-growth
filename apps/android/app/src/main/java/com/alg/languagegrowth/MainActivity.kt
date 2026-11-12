@@ -893,7 +893,7 @@ private fun LearnScreen(
     GrowthPrimaryButton(if (directive == null) "开始学习" else "再来一节", onStart, emoji = "✨", enabled = !busy, busy = busy)
     if (directive != null) {
         GrowthCard(modifier = Modifier.fillMaxWidth()) {
-            GrowthSectionTitle("课堂指令 · ${directive.optString("expectedResponse")}", "📖")
+            GrowthSectionTitle("课堂指令", "📖")
             PronunciationCard(
                 directive = directive,
                 speaking = speechBusy && speechStatus.contains("正在说话"),
@@ -908,7 +908,16 @@ private fun LearnScreen(
             GrowthPrimaryButton("提交回应", onSubmit, emoji = "📨", enabled = !busy)
             GrowthSecondaryButton("结课", onFinish, emoji = "🏁", enabled = !busy)
         }
-        finish?.let { GrowthCard(modifier = Modifier.fillMaxWidth()) { Text(it.optString("summary"), style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink) } }
+        finish?.let {
+            GrowthCard(
+                modifier = Modifier.fillMaxWidth(),
+                fill = GrowthColors.SunWash,
+                outline = GrowthColors.Sun.copy(alpha = 0.28f),
+            ) {
+                Text("这节课完成啦！", style = MaterialTheme.typography.headlineMedium, color = GrowthColors.Ink)
+                Text("今天又练习了一点，休息一下，下次继续 🌿", color = GrowthColors.InkSoft)
+            }
+        }
     } else {
         GrowthCard(
             modifier = Modifier.fillMaxWidth(),
