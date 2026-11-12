@@ -43,6 +43,7 @@ import { CurriculumWarmupService } from './curriculum/curriculum-warmup.service'
 import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
 import { UserController } from './auth/user.controller';
 import { AuthService } from './auth/auth.service';
+import { ParentReportService } from './reports/parent-report.service';
 import { AdminAuthService } from './auth/admin-auth.service';
 import { EmailService } from './auth/email.service';
 import { MembershipController, MembershipUsersAdminController } from './membership/membership.controller';
@@ -88,6 +89,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     CurriculumWarmupService,
     AiGatewayService,
     LearnerModelService,
+    ParentReportService,
     PlannerService,
     OrchestratorService,
     SpeechQuotaService,

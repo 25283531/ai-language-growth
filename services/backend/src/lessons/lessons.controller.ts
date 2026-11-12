@@ -17,6 +17,7 @@ import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
 import { AuthService, extractBearerToken } from '../auth/auth.service';
+import { ParentReportService } from '../reports/parent-report.service';
 
 @Controller('api/v1/lessons')
 export class LessonsController {
@@ -160,6 +161,7 @@ export class LearnersController {
     @Inject(LearnerModelService) private readonly learnerModel: LearnerModelService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuthService) private readonly auth: AuthService,
+    @Inject(ParentReportService) private readonly reports: ParentReportService,
   ) {}
 
   /** 统一入口：解析会话 + 校验归属，返回当前账号 user id。 */
@@ -234,6 +236,21 @@ export class LearnersController {
       take: 100,
     });
     return rows;
+  }
+
+  /**
+   * 家长周报：只读、按自然周聚合；不返回原始音频、转写、供应商或成本数据。
+   * weekStart 固定为 Asia/Shanghai 周一，默认本周，最多回看最近 8 周。
+   */
+  @Get(':id/reports/weekly')
+  async weeklyReport(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+    @Query('weekStart') weekStart?: string,
+  ) {
+    await this.authorize(authorization, cookie, id);
+    return this.reports.weekly(id, weekStart);
   }
 
   @Get(':id/growth')

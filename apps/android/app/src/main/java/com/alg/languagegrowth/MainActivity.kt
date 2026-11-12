@@ -143,6 +143,27 @@ private data class Tile(
     val wash: Color,
 )
 
+private fun JSONObject.jsonObjects(key: String): List<JSONObject> {
+    val array = optJSONArray(key) ?: return emptyList()
+    return (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+}
+
+private fun JSONObject?.stringItems(key: String): List<String> {
+    val array = this?.optJSONArray(key) ?: return emptyList()
+    return (0 until array.length()).mapNotNull { index ->
+        array.optString(index).takeIf { it.isNotBlank() }
+    }
+}
+
+private fun errorUnitLabel(unit: String): String = when (unit) {
+    "syllable" -> "音节"
+    "phoneme" -> "音素"
+    "word" -> "单词"
+    "pitch" -> "音高"
+    "rhythm" -> "节奏"
+    else -> "发音"
+}
+
 /** 底部 4 个 tab 的键集合，与改造前基线一致；图标 / 配色数据见 AppDesign.GrowthNavItems。 */
 @Suppress("UNUSED_VARIABLE")
 private val tabs = listOf("home", "learn", "achievements", "me")
@@ -173,6 +194,8 @@ private fun GrowthApp(
     var pageStatus by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var dashboard by remember { mutableStateOf<JSONObject?>(null) }
+    var weeklyReport by remember { mutableStateOf<JSONObject?>(null) }
+    var weeklyError by remember { mutableStateOf("") }
     var lessonSessionId by remember { mutableStateOf("") }
     var directive by remember { mutableStateOf<JSONObject?>(null) }
     var lastTurn by remember { mutableStateOf<JSONObject?>(null) }
@@ -230,6 +253,15 @@ private fun GrowthApp(
         }
     }
 
+    suspend fun fetchWeeklyReport() {
+        if (learnerId.isBlank()) return
+        val result = withContext(Dispatchers.IO) {
+            http(base(), "/learners/${learnerId}/reports/weekly", "GET", token = token())
+        }
+        weeklyReport = result
+        weeklyError = ""
+    }
+
     suspend fun fetchDashboard() {
         val result = withContext(Dispatchers.IO) { http(base(), "/user/dashboard", "GET", token = token()) }
         dashboard = result
@@ -241,6 +273,11 @@ private fun GrowthApp(
         editName = user.optString("displayName")
         avatarUrl = user.optString("avatarUrl").takeUnless { it == "null" }.orEmpty()
         account.edit().putString("email", email).apply()
+        try {
+            fetchWeeklyReport()
+        } catch (e: Exception) {
+            weeklyError = e.message ?: "本周周报暂时无法加载"
+        }
     }
 
     fun loadCaptcha() {
@@ -567,6 +604,20 @@ private fun GrowthApp(
                                         loggedIn = false
                                         pageStatus = "账户已注销"
                                     } catch (e: Exception) { pageStatus = e.message ?: "注销失败" } finally { busy = false }
+                                }
+                            },
+                            weekly = weeklyReport,
+                            weeklyError = weeklyError,
+                            onRefreshWeekly = {
+                                scope.launch {
+                                    pageStatus = ""
+                                    try {
+                                        fetchWeeklyReport()
+                                        pageStatus = "周报已刷新"
+                                    } catch (e: Exception) {
+                                        weeklyError = e.message ?: "周报刷新失败"
+                                        pageStatus = "周报暂时无法刷新"
+                                    }
                                 }
                             },
                         )
@@ -920,6 +971,147 @@ private fun AchievementScreen(data: JSONObject?) {
 /* ------------------------------------------------------- 我的账户（家长向） */
 
 @Composable
+private fun WeeklyReportCard(report: JSONObject?, error: String, onRefresh: () -> Unit) {
+    GrowthCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GrowthSectionTitle("成长周报", "📊")
+            Spacer(Modifier.weight(1f))
+            GrowthPill("家长可见", GrowthColors.ForestDeep, GrowthColors.ForestWash, emoji = "👨‍👩‍👧")
+        }
+        if (error.isNotBlank()) {
+            Text(error, style = MaterialTheme.typography.bodySmall, color = GrowthColors.Danger)
+        }
+        if (report == null) {
+            Text(
+                "正在加载本周学习记录…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = GrowthColors.InkSoft,
+            )
+        } else {
+            Text(
+                "${report.optString("weekStart")} — ${report.optString("weekEnd")} · Asia/Shanghai",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+            Text(
+                "这是本周学习记录，不是能力结论。",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+
+            val summary = report.optJSONObject("summary")
+            val reviews = report.optJSONObject("reviews")
+            val metrics = listOf(
+                Tile("课堂", "${summary?.optInt("sessions", 0) ?: 0} 次", "📖", GrowthColors.PrimaryDeep, GrowthColors.PrimaryWash),
+                Tile("学习时长", "${summary?.optInt("learningMinutes", 0) ?: 0} 分钟", "⏱️", GrowthColors.SunDeep, GrowthColors.SunWash),
+                Tile("独立完成", "${summary?.optInt("independentSuccesses", 0) ?: 0} 次", "🌟", GrowthColors.MintDeep, GrowthColors.MintWash),
+                Tile("待复习", "${reviews?.optInt("dueCount", 0) ?: 0} 个", "🔁", GrowthColors.ForestDeep, GrowthColors.ForestWash),
+            )
+            metrics.chunked(2).forEach { row ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    row.forEach { tile ->
+                        GrowthStatTile(
+                            tile.value,
+                            tile.label,
+                            tile.emoji,
+                            tile.tint,
+                            tile.wash,
+                            Modifier.weight(1f),
+                        )
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+
+            if (!report.optBoolean("hasData", false)) {
+                Text(
+                    "本周还没有足够的课堂记录。完成一次课堂后，这里会自动汇总。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+
+            val highlights = report.jsonObjects("highlights")
+            if (highlights.isNotEmpty()) {
+                GrowthSectionTitle("本周亮点", "✨")
+                highlights.forEach { item ->
+                    Text(
+                        "${item.optString("skillName")} · ${item.optString("abilityLabel")} · 独立完成 ${item.optInt("independentSuccesses", 0)} 次",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = GrowthColors.Ink,
+                    )
+                }
+            }
+
+            val needsPractice = report.jsonObjects("needsPractice")
+            if (needsPractice.isNotEmpty()) {
+                GrowthSectionTitle("本周需要再练", "🌱")
+                needsPractice.forEach { item ->
+                    Text(
+                        "${item.optString("skillName")} · ${item.optString("abilityLabel")} · ${item.optInt("unsuccessfulAttempts", 0)} 次需要帮助",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = GrowthColors.Ink,
+                    )
+                    val focus = item.jsonObjects("errorUnits").joinToString("、") { unit ->
+                        "${errorUnitLabel(unit.optString("unit"))} ${unit.optInt("count", 0)} 次"
+                    }
+                    if (focus.isNotBlank()) {
+                        Text("先复习：$focus", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                    }
+                    if (item.optBoolean("priorIndependentSuccess", false)) {
+                        Text(
+                            "之前独立完成过，这次再熟悉一下就好。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GrowthColors.ForestDeep,
+                        )
+                    }
+                }
+            }
+
+            val dueCount = reviews?.optInt("dueCount", 0) ?: 0
+            if (dueCount > 0) {
+                GrowthSectionTitle("近期需要巩固", "🔁")
+                val overdue = reviews?.optInt("overdueCount", 0) ?: 0
+                Text(
+                    if (overdue > 0) "有 $dueCount 个复习项到期，其中 $overdue 个已等待一段时间。" else "有 $dueCount 个复习项到期。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GrowthColors.Ink,
+                )
+                reviews?.jsonObjects("items").orEmpty().forEach { item ->
+                    Text(
+                        "${item.optString("skillName")} · ${item.optString("dueAt").take(10)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GrowthColors.InkSoft,
+                    )
+                }
+            }
+
+            val suggestions = report.optJSONObject("nextWeek").stringItems("suggestions")
+            if (suggestions.isNotEmpty()) {
+                GrowthSectionTitle("下周建议", "🧭")
+                suggestions.forEach { item ->
+                    Text("• $item", style = MaterialTheme.typography.bodyMedium, color = GrowthColors.Ink)
+                }
+            }
+
+            Text(
+                report.optString("calibrationNotice"),
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
+        GrowthSecondaryButton(
+            if (report == null) "加载周报" else "刷新周报",
+            onRefresh,
+            emoji = "🔄",
+        )
+    }
+}
+
+@Composable
 private fun ProfileScreen(
     data: JSONObject?, name: String, onName: (String) -> Unit, avatar: String, onAvatar: (String) -> Unit,
     currentPassword: String, onCurrentPassword: (String) -> Unit, newPassword: String, onNewPassword: (String) -> Unit,
@@ -928,6 +1120,7 @@ private fun ProfileScreen(
     onSaveProfile: () -> Unit, onPassword: () -> Unit, onTextbook: () -> Unit,
     onVerify: () -> Unit, onSendVerification: () -> Unit, onPrivacy: () -> Unit, onTerms: () -> Unit,
     onLogout: () -> Unit, onDelete: () -> Unit,
+    weekly: JSONObject?, weeklyError: String, onRefreshWeekly: () -> Unit,
 ) {
     val user = data?.optJSONObject("user")
     var textbookMenu by remember { mutableStateOf(false) }
@@ -943,6 +1136,8 @@ private fun ProfileScreen(
         GrowthTextField(name, onName, "个人资料名称", leadingEmoji = "✏️")
         GrowthPrimaryButton("保存资料", onSaveProfile, emoji = "💾")
     }
+
+    WeeklyReportCard(weekly, weeklyError, onRefreshWeekly)
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("选择头像", "🎨")

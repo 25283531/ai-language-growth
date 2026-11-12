@@ -70,7 +70,10 @@ function controller() {
   const prisma = fakePrisma();
   const auth = new AuthService(prisma as never);
   const learnerModel = { abilitySnapshot: async () => ({}) };
-  return new LearnersController(learnerModel as never, prisma as never, auth);
+  const reports = {
+    weekly: async (learnerId: string, weekStart?: string) => ({ learnerId, weekStart: weekStart ?? null }),
+  };
+  return new LearnersController(learnerModel as never, prisma as never, auth, reports as never);
 }
 
 const statusOf = (error: unknown): number =>
@@ -86,6 +89,10 @@ describe('学习者接口鉴权', () => {
     await assert.rejects(() => api.abilities('learner-a', undefined, undefined), (error) => statusOf(error) === 401);
     await assert.rejects(() => api.evidence('learner-a', undefined, undefined), (error) => statusOf(error) === 401);
     await assert.rejects(() => api.growth('learner-a', undefined, undefined), (error) => statusOf(error) === 401);
+    await assert.rejects(
+      () => api.weeklyReport('learner-a', undefined, undefined),
+      (error) => statusOf(error) === 401,
+    );
   });
 
   it('列表只返回当前账号名下的学习者（不泄露他人档案）', async () => {
@@ -104,6 +111,10 @@ describe('学习者接口鉴权', () => {
     await assert.rejects(() => api.abilities('learner-b', headers, undefined), (error) => statusOf(error) === 403);
     await assert.rejects(() => api.evidence('learner-b', headers, undefined), (error) => statusOf(error) === 403);
     await assert.rejects(() => api.growth('learner-b', headers, undefined), (error) => statusOf(error) === 403);
+    await assert.rejects(
+      () => api.weeklyReport('learner-b', headers, undefined),
+      (error) => statusOf(error) === 403,
+    );
   });
 
   it('userId 与 guardianId 不一致的脏档案对双方都不可见', async () => {
@@ -124,5 +135,7 @@ describe('学习者接口鉴权', () => {
     assert.equal(abilities.learnerId, 'learner-a');
     const growth = await api.growth('learner-a', `Bearer ${TOKEN_A}`, undefined);
     assert.equal(growth.learnerId, 'learner-a');
+    const weekly = await api.weeklyReport('learner-a', `Bearer ${TOKEN_A}`, undefined, '2026-11-09');
+    assert.deepEqual(weekly, { learnerId: 'learner-a', weekStart: '2026-11-09' });
   });
 });

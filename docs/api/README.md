@@ -28,6 +28,22 @@
 | `GET /learners/{id}/abilities` | 无 | 能力状态与未校准提示 | 无 |
 | `GET /learners/{id}/evidence?skillNodeId=...` | 可选筛选 | 最近最多 100 条学习证据 | 无 |
 | `GET /learners/{id}/growth` | 无 | 最近成长快照、最多 30 条未过期记忆、最多 30 条待复习计划及未校准提示 | 无 |
+| `GET /learners/{id}/reports/weekly?weekStart=YYYY-MM-DD` | 可选周一，默认本周，最多回看 8 周 | 家长周报：课堂数、学习时长估算、独立完成数、覆盖能力数、本周亮点、待巩固点、到期复习与下周确定性建议 | 会话（Bearer / Cookie） |
+
+### 家长周报
+
+`GET /learners/{id}/reports/weekly` 是只读周报，不生成诊断、不调用 LLM，也不写数据库。固定使用 `Asia/Shanghai` 时区、周一 00:00 为周起点，返回：
+
+- `summary`：完成课堂数、未完成课堂数、学习时长、活跃天数、独立成功次数、覆盖能力数；
+- `topics`：本周完成的主题及次数；
+- `highlights`：按独立成功次数汇总的亮点（最多 3 项）；
+- `needsPractice`：本周需要再练的能力、错误单元计数，以及 `priorIndependentSuccess`（此前独立完成过）；
+- `reviews`：到期待复习数量、逾期数量、下一次复习时间与最多 3 个复习项；
+- `nextWeek.suggestions`：最多 3 条确定性建议；
+- `privacy`：`includesRawAudio` / `includesTranscript` / `includesProviderData` / `includesInternalCost` 固定为 `false`；
+- `calibrationNotice`：说明周报只是学习记录，不构成能力结论。
+
+`learningMinutes` 是按课堂 `startedAt` / `finishedAt` 计算的自然时长（wall-clock）估算，单节封顶 60 分钟，不是精确活跃时长。独立成功只取 `learning_evidence` 中 `succeeded && independent && contributesToPromotion` 且来源不是 `llm_judgement` 的记录；响应不返回原始音频、转写、供应商别名、成本、`skillNodeId` 或 `masteryCode`。
 
 ## 账户与会员
 

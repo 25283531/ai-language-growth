@@ -116,6 +116,7 @@ jobs:
             services/backend/test/growth-followup.test.ts \
             services/backend/test/prisma-usage-ledger.test.ts \
             services/backend/test/learners-auth.test.ts \
+            services/backend/test/parent-report.test.ts \
             services/backend/test/textbook-skill-mapping.test.ts \
             services/backend/test/planner-track-band.test.ts \
             services/backend/test/planner-adaptive-choice.test.ts \
