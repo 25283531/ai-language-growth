@@ -38,7 +38,7 @@ export const CEFR_CAN_DO: Record<CefrCurriculumLevel, string[]> = {
   C2: ['能精确区分语义和语气', '能理解高难度文本', '能自然、准确地表达复杂思想'],
 };
 
-/** 预置词库：每个级别 25 个核心词，按每单元 6 词生成约 5 个单元。 */
+/** 预置词库：每个级别 25 个核心词，按每单元 5 词生成 5 个单元。 */
 export const CEFR_PRESET_WORDS: Record<CefrCurriculumLevel, string[]> = {
   'pre-A1': [
     'hello', 'hi', 'bye', 'yes', 'no', 'please', 'sorry', 'thanks', 'name', 'boy',
@@ -77,6 +77,17 @@ export const CEFR_PRESET_WORDS: Record<CefrCurriculumLevel, string[]> = {
   ],
 };
 
+/** 拓展词库：在核心词之外按级别追加 1 个拓展词单元，不改变已发布的核心词单元。 */
+export const CEFR_EXTENSION_WORDS: Record<CefrCurriculumLevel, string[]> = {
+  'pre-A1': ['hand', 'eye', 'nose', 'mouth', 'ear'],
+  A1: ['rice', 'noodles', 'chicken', 'fish', 'juice'],
+  A2: ['airport', 'hotel', 'restaurant', 'cinema', 'beach'],
+  B1: ['volunteer', 'community', 'transport', 'schedule', 'goal'],
+  B2: ['innovation', 'sustainable', 'priority', 'negotiate', 'impact'],
+  C1: ['pragmatic', 'resilient', 'substantiate', 'undermine', 'prevalent'],
+  C2: ['ubiquitous', 'meticulous', 'candid', 'profound', 'vindicate'],
+};
+
 type DailyExpression = {
   en: string;
   zh: string;
@@ -104,6 +115,13 @@ export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression
     { en: 'I need help.', zh: '我需要帮助。', scene: 'free_chat_scene', query: 'child asking teacher for help illustration' },
     { en: 'Good morning!', zh: '早上好！', scene: 'greeting_scene', query: 'morning greeting children illustration' },
     { en: 'Good night!', zh: '晚安！', scene: 'greeting_scene', query: 'bedtime good night illustration' },
+    { en: 'Good afternoon!', zh: '下午好！', scene: 'greeting_scene', query: 'afternoon greeting children illustration' },
+    { en: 'I like this toy.', zh: '我喜欢这个玩具。', scene: 'object_pic_scene', query: 'child holding toy illustration' },
+    { en: 'Where is my bag?', zh: '我的包在哪里？', scene: 'free_chat_scene', query: 'child looking for bag illustration' },
+    { en: 'Come here, please.', zh: '请过来。', scene: 'free_chat_scene', query: 'teacher calling child illustration' },
+    { en: 'Sit down, please.', zh: '请坐下。', scene: 'free_chat_scene', query: 'children sitting down classroom illustration' },
+    { en: "Let's play together.", zh: '我们一起玩吧。', scene: 'free_chat_scene', query: 'children playing together illustration' },
+    { en: 'I am happy today.', zh: '我今天很开心。', scene: 'self_intro_scene', query: 'happy child illustration' },
   ],
   A1: [
     { en: 'This is my family.', zh: '这是我的家人。', scene: 'self_intro_scene', query: 'child showing family photo illustration' },
@@ -120,6 +138,13 @@ export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression
     { en: "I'm hungry.", zh: '我饿了。', scene: 'free_chat_scene', query: 'child feeling hungry illustration' },
     { en: 'Can I go out and play?', zh: '我可以出去玩吗？', scene: 'free_chat_scene', query: 'child asking to play outside illustration' },
     { en: 'See you tomorrow.', zh: '明天见。', scene: 'greeting_scene', query: 'children saying goodbye illustration' },
+    { en: 'My favorite color is blue.', zh: '我最喜欢的颜色是蓝色。', scene: 'self_intro_scene', query: 'child pointing to blue color illustration' },
+    { en: 'I get up at seven.', zh: '我七点起床。', scene: 'free_chat_scene', query: 'child waking up at seven illustration' },
+    { en: 'I go to school by bus.', zh: '我坐公共汽车去学校。', scene: 'free_chat_scene', query: 'child taking school bus illustration' },
+    { en: 'There is a cat under the table.', zh: '桌子下面有一只猫。', scene: 'object_pic_scene', query: 'cat under table illustration' },
+    { en: 'How many books do you have?', zh: '你有多少本书？', scene: 'free_chat_scene', query: 'children counting books illustration' },
+    { en: 'May I come in?', zh: '我可以进来吗？', scene: 'free_chat_scene', query: 'child asking to enter classroom illustration' },
+    { en: 'Have a nice day!', zh: '祝你今天愉快！', scene: 'greeting_scene', query: 'friendly greeting illustration' },
   ],
   A2: [
     { en: 'I went to the park yesterday.', zh: '我昨天去了公园。', scene: 'story_scene', query: 'children playing in park illustration' },
@@ -136,6 +161,13 @@ export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression
     { en: "Let's meet at six.", zh: '我们六点见吧。', scene: 'greeting_scene', query: 'children meeting at six illustration' },
     { en: "I'm looking for a jacket.", zh: '我在找一件夹克。', scene: 'object_shop_scene', query: 'child shopping for jacket illustration' },
     { en: 'Is there a supermarket near here?', zh: '这附近有超市吗？', scene: 'free_chat_scene', query: 'child asking supermarket location illustration' },
+    { en: 'I usually walk to school.', zh: '我通常步行去学校。', scene: 'free_chat_scene', query: 'child walking to school illustration' },
+    { en: 'We had a great time at the beach.', zh: '我们在海滩玩得很开心。', scene: 'story_scene', query: 'children happy at beach illustration' },
+    { en: 'Could I try this jacket on?', zh: '我可以试穿这件夹克吗？', scene: 'object_shop_scene', query: 'child trying on jacket illustration' },
+    { en: "I'm allergic to milk.", zh: '我对牛奶过敏。', scene: 'free_chat_scene', query: 'child refusing milk allergy illustration' },
+    { en: "What's the weather like tomorrow?", zh: '明天天气怎么样？', scene: 'free_chat_scene', query: 'children checking tomorrow weather illustration' },
+    { en: "Let's take a photo here.", zh: '我们在这里拍张照吧。', scene: 'free_chat_scene', query: 'children taking photo illustration' },
+    { en: "I'll be back in ten minutes.", zh: '我十分钟后回来。', scene: 'free_chat_scene', query: 'child leaving and returning illustration' },
   ],
   B1: [
     { en: 'In my opinion, this is a good idea.', zh: '在我看来，这是个好主意。', scene: 'free_chat_scene', query: 'children discussing ideas illustration' },
@@ -152,6 +184,13 @@ export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression
     { en: 'Although it was difficult, I finished it.', zh: '虽然很难，但我完成了。', scene: 'story_scene', query: 'child finishing difficult task illustration' },
     { en: "I'm looking forward to the trip.", zh: '我很期待这次旅行。', scene: 'free_chat_scene', query: 'child excited about trip illustration' },
     { en: 'That sounds like a good idea.', zh: '听起来是个好主意。', scene: 'free_chat_scene', query: 'children liking an idea illustration' },
+    { en: 'It reminded me of my hometown.', zh: '它让我想起了家乡。', scene: 'story_scene', query: 'child remembering hometown illustration' },
+    { en: "I'm thinking of joining the club.", zh: '我在考虑加入俱乐部。', scene: 'free_chat_scene', query: 'child considering joining club illustration' },
+    { en: 'Could you give me some advice?', zh: '你能给我一些建议吗？', scene: 'free_chat_scene', query: 'child asking for advice illustration' },
+    { en: "I'd rather stay at home tonight.", zh: '今晚我宁愿待在家里。', scene: 'free_chat_scene', query: 'child choosing to stay home illustration' },
+    { en: 'The meeting has been put off.', zh: '会议被推迟了。', scene: 'free_chat_scene', query: 'postponed meeting calendar illustration' },
+    { en: "It's not as easy as it looks.", zh: '这并不像看起来那么容易。', scene: 'free_chat_scene', query: 'child facing difficult task illustration' },
+    { en: "I'm afraid I can't make it.", zh: '恐怕我去不了。', scene: 'free_chat_scene', query: 'child politely declining invitation illustration' },
   ],
   B2: [
     { en: 'From my perspective, the benefits are clear.', zh: '从我的角度看，好处很明显。', scene: 'free_chat_scene', query: 'children presenting ideas illustration' },
@@ -168,6 +207,13 @@ export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression
     { en: 'It depends on the weather.', zh: '这取决于天气。', scene: 'free_chat_scene', query: 'children checking weather illustration' },
     { en: "I'm not entirely convinced.", zh: '我不完全信服。', scene: 'free_chat_scene', query: 'child skeptical discussion illustration' },
     { en: "Let's reach a compromise.", zh: '我们各退一步吧。', scene: 'free_chat_scene', query: 'children reaching agreement illustration' },
+    { en: 'This trend has become increasingly common.', zh: '这种趋势越来越普遍。', scene: 'free_chat_scene', query: 'students discussing a trend illustration' },
+    { en: 'The figures suggest a steady decline.', zh: '数据显示持续下降。', scene: 'free_chat_scene', query: 'students reading a declining chart illustration' },
+    { en: 'We need to weigh the risks against the benefits.', zh: '我们需要权衡风险与收益。', scene: 'free_chat_scene', query: 'students weighing risks and benefits illustration' },
+    { en: "I'd like to build on that point.", zh: '我想在那个观点上继续展开。', scene: 'free_chat_scene', query: 'student building on an argument illustration' },
+    { en: "It's worth considering the alternative.", zh: '值得考虑另一种选择。', scene: 'free_chat_scene', query: 'students considering alternatives illustration' },
+    { en: 'That may not be the whole story.', zh: '那可能不是全部情况。', scene: 'free_chat_scene', query: 'student questioning a simple explanation illustration' },
+    { en: "Let's put this into perspective.", zh: '我们把这个放在全局中看。', scene: 'free_chat_scene', query: 'students putting issue in perspective illustration' },
   ],
   C1: [
     { en: 'It could be argued that the policy is effective.', zh: '可以说这项政策是有效的。', scene: 'free_chat_scene', query: 'students debating policy illustration' },
@@ -184,6 +230,13 @@ export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression
     { en: 'It is worth noting that the sample is small.', zh: '值得注意的是样本很小。', scene: 'free_chat_scene', query: 'students noting sample size illustration' },
     { en: "I'm inclined to agree, provided that we test it.", zh: '如果测试过，我倾向于同意。', scene: 'free_chat_scene', query: 'conditional agreement illustration' },
     { en: 'Let me reframe the issue.', zh: '让我重新表述这个问题。', scene: 'free_chat_scene', query: 'student reframing issue illustration' },
+    { en: 'The proposal is fraught with difficulties.', zh: '这项提议充满困难。', scene: 'free_chat_scene', query: 'students examining a difficult proposal illustration' },
+    { en: 'We should not lose sight of the broader context.', zh: '我们不应忽视更广泛的背景。', scene: 'free_chat_scene', query: 'students discussing broader context illustration' },
+    { en: 'This lends weight to the argument.', zh: '这为论点提供了支持。', scene: 'free_chat_scene', query: 'student supporting an argument illustration' },
+    { en: 'I would hesitate to draw a firm conclusion.', zh: '我不会急于下定论。', scene: 'free_chat_scene', query: 'student pausing before conclusion illustration' },
+    { en: 'The two explanations are not mutually exclusive.', zh: '这两种解释并不互斥。', scene: 'free_chat_scene', query: 'student comparing two explanations illustration' },
+    { en: 'It is tempting, but ultimately unconvincing.', zh: '这很诱人，但最终缺乏说服力。', scene: 'free_chat_scene', query: 'student rejecting a tempting argument illustration' },
+    { en: 'Let us examine the premises more closely.', zh: '让我们更仔细地审视前提。', scene: 'free_chat_scene', query: 'students examining premises illustration' },
   ],
   C2: [
     { en: 'There is a fine line between confidence and arrogance.', zh: '自信与傲慢之间只有一线之隔。', scene: 'free_chat_scene', query: 'abstract confidence arrogance illustration' },
@@ -200,6 +253,13 @@ export const CEFR_DAILY_EXPRESSIONS: Record<CefrCurriculumLevel, DailyExpression
     { en: 'Insofar as it concerns children, the rule is too strict.', zh: '就涉及儿童而言，这条规则太严了。', scene: 'free_chat_scene', query: 'child policy discussion illustration' },
     { en: 'The nuance here is easy to miss.', zh: '这里的细微差别很容易被忽略。', scene: 'free_chat_scene', query: 'student highlighting nuance illustration' },
     { en: 'We may be conflating two different issues.', zh: '我们可能把两个不同的问题混为一谈。', scene: 'free_chat_scene', query: 'student separating two issues illustration' },
+    { en: 'The argument rests on a dubious premise.', zh: '这个论点建立在一个可疑的前提上。', scene: 'free_chat_scene', query: 'student questioning a premise illustration' },
+    { en: 'Such a reading strains credulity.', zh: '这样的解读难以令人信服。', scene: 'free_chat_scene', query: 'student skeptical of an interpretation illustration' },
+    { en: 'The parallels are suggestive rather than conclusive.', zh: '这些相似之处只是暗示性的，而非结论性的。', scene: 'free_chat_scene', query: 'student comparing suggestive parallels illustration' },
+    { en: 'I would resist that characterization.', zh: '我不认同那种描述。', scene: 'free_chat_scene', query: 'student rejecting a characterization illustration' },
+    { en: 'The caveat is by no means trivial.', zh: '这个保留意见绝非小事。', scene: 'free_chat_scene', query: 'student emphasizing a caveat illustration' },
+    { en: 'His rejoinder was measured but firm.', zh: '他的反驳克制而坚定。', scene: 'free_chat_scene', query: 'measured but firm reply illustration' },
+    { en: 'The evidence, such as it is, points the other way.', zh: '现有证据虽然有限，却指向相反方向。', scene: 'free_chat_scene', query: 'student interpreting limited evidence illustration' },
   ],
 };
 
@@ -379,6 +439,41 @@ const LEXICON: Record<string, { zh: string; phonetic?: string }> = {
   paradox: { zh: '悖论', phonetic: '/ˈpærədɑːks/' },
   plausible: { zh: '看似合理的', phonetic: '/ˈplɔːzəbəl/' },
   sophisticated: { zh: '复杂精密的；老练的', phonetic: '/səˈfɪstɪkeɪtɪd/' },
+  hand: { zh: '手', phonetic: '/hænd/' },
+  eye: { zh: '眼睛', phonetic: '/aɪ/' },
+  nose: { zh: '鼻子', phonetic: '/noʊz/' },
+  mouth: { zh: '嘴', phonetic: '/maʊθ/' },
+  ear: { zh: '耳朵', phonetic: '/ɪr/' },
+  rice: { zh: '米饭', phonetic: '/raɪs/' },
+  noodles: { zh: '面条', phonetic: '/ˈnuːdəlz/' },
+  chicken: { zh: '鸡肉', phonetic: '/ˈtʃɪkɪn/' },
+  fish: { zh: '鱼', phonetic: '/fɪʃ/' },
+  juice: { zh: '果汁', phonetic: '/dʒuːs/' },
+  airport: { zh: '机场', phonetic: '/ˈerpɔːrt/' },
+  hotel: { zh: '酒店', phonetic: '/hoʊˈtel/' },
+  restaurant: { zh: '餐馆', phonetic: '/ˈrestərɑːnt/' },
+  cinema: { zh: '电影院', phonetic: '/ˈsɪnəmə/' },
+  beach: { zh: '海滩', phonetic: '/biːtʃ/' },
+  volunteer: { zh: '志愿者', phonetic: '/ˌvɑːlənˈtɪr/' },
+  community: { zh: '社区', phonetic: '/kəˈmjuːnəti/' },
+  transport: { zh: '交通', phonetic: '/ˈtrænspɔːrt/' },
+  schedule: { zh: '日程安排', phonetic: '/ˈskedʒuːl/' },
+  goal: { zh: '目标', phonetic: '/ɡoʊl/' },
+  innovation: { zh: '创新', phonetic: '/ˌɪnəˈveɪʃən/' },
+  sustainable: { zh: '可持续的', phonetic: '/səˈsteɪnəbəl/' },
+  priority: { zh: '优先事项', phonetic: '/praɪˈɔːrəti/' },
+  negotiate: { zh: '协商', phonetic: '/nɪˈɡoʊʃieɪt/' },
+  impact: { zh: '影响', phonetic: '/ˈɪmpækt/' },
+  pragmatic: { zh: '务实的', phonetic: '/præɡˈmætɪk/' },
+  resilient: { zh: '有韧性的', phonetic: '/rɪˈzɪliənt/' },
+  substantiate: { zh: '证实', phonetic: '/səbˈstænʃieɪt/' },
+  undermine: { zh: '削弱', phonetic: '/ˌʌndərˈmaɪn/' },
+  prevalent: { zh: '普遍的', phonetic: '/ˈprevələnt/' },
+  ubiquitous: { zh: '无处不在的', phonetic: '/juːˈbɪkwɪtəs/' },
+  meticulous: { zh: '一丝不苟的', phonetic: '/məˈtɪkjələs/' },
+  candid: { zh: '坦率的', phonetic: '/ˈkændɪd/' },
+  profound: { zh: '深刻的', phonetic: '/prəˈfaʊnd/' },
+  vindicate: { zh: '证明……正确', phonetic: '/ˈvɪndɪkeɪt/' },
 };
 
 const GREETINGS = new Set(['hello', 'hi', 'bye', 'yes', 'no', 'please', 'sorry', 'thanks', 'name']);
@@ -466,13 +561,24 @@ export function buildCefrPreset(): CefrCurriculumPackage {
     levels: (Object.keys(CEFR_PRESET_WORDS) as CefrCurriculumLevel[]).map((level) => {
       const prefix = level.toLowerCase().replace(/[^a-z0-9]/g, '');
       const wordUnits = buildUnits(level, CEFR_PRESET_WORDS[level], 5, prefix);
+      const extensionUnits = buildUnits(level, CEFR_EXTENSION_WORDS[level], 5, `${prefix}-x`);
+      extensionUnits.forEach((unit, index) => {
+        unit.title = `${CEFR_LEVEL_NAMES[level]} · 拓展词 ${index + 1}`;
+        unit.order = wordUnits.length + index;
+      });
       return {
         code: level,
         nameZh: CEFR_LEVEL_NAMES[level],
         canDo: CEFR_CAN_DO[level],
         units: [
           ...wordUnits,
-          ...buildExpressionUnits(level, CEFR_DAILY_EXPRESSIONS[level], prefix, wordUnits.length),
+          ...extensionUnits,
+          ...buildExpressionUnits(
+            level,
+            CEFR_DAILY_EXPRESSIONS[level],
+            prefix,
+            wordUnits.length + extensionUnits.length,
+          ),
         ],
       };
     }),

@@ -7,7 +7,7 @@
 
 | 层 | 位置 | 是否含媒体 | 说明 |
 |---|---|---|---|
-| 纯 JSON 课程 | `packages/curriculum/data/cefr-curriculum.json` | 否 | 7 个等级、49 个单元、917 个活动；含核心词汇单元与日常用语/场景单元 |
+| 纯 JSON 课程 | `packages/curriculum/data/cefr-curriculum.json` | 否 | 7 个等级、63 个单元、1197 个活动；含核心词汇、拓展词汇与日常用语/场景单元 |
 | 生成器 | `packages/curriculum/src/cefr.ts` | 否 | 纯函数；不访问数据库、不调用模型，输入词表即可生成稳定结构 |
 | 后端生成服务 | `services/backend/src/curriculum/curriculum-generator.service.ts` | 否 | 可选 AI 润色音标/释义/例句；失败保留确定性结构；可写入草稿库 |
 | 媒体预热 | `services/backend/src/curriculum/curriculum-warmup.service.ts` | 是 | 到达级别后解析图片、写入 `media_assets`，再按发布内容预生成 `PUBLIC_CURRICULUM` TTS |
@@ -290,8 +290,8 @@ this.warmup.warmLearnerLevel(learner.id, avatarLevel.level);
 ## 7. 已知边界
 
 - Openverse 与 Wikimedia Commons 返回的是通用图片，可能不完全贴合教材语境；必须人工审核，必要时在后台替换 `imageAssets`。
-- 每个级别包含 5 个核心词汇单元和 2 个日常用语单元；日常用语覆盖问候、自我介绍、请求、购物、出行、就医、观点、协商等常见场景。
-- 预置词库每级 25 个核心词、14 条日常用语，是长期课程骨架，不是完整词典；教材词表可按需扩展。
+- 每个级别包含 5 个核心词汇单元、1 个拓展词汇单元和 3 个日常用语单元；日常用语覆盖问候、自我介绍、请求、购物、出行、就医、观点、协商等常见场景。
+- 预置词库每级 25 个核心词 + 5 个拓展词、21 条日常用语，是长期课程骨架，不是完整词典；教材词表可按需扩展。
 - `difficultPhonemes` 与音节切分是启发式结果，预置 JSON 已标注；正式发布前应人工核对。
 - 媒体预热每次默认最多 24 张图、30 条语音；大级别可分多次触发，已缓存资源不会重复计费。
-- 预置课程导入后仍需人工审核；不会自动把 917 个活动直接推给孩子。
+- 预置课程导入后仍需人工审核；不会自动把 1197 个活动直接推给孩子。

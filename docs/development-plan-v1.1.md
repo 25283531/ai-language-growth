@@ -16,7 +16,7 @@
 | 儿童录音只留手机端 | 客户端以一次性 base64 随课堂回合提交；服务端只在请求内转 `data:` URI 给 ASR/发音适配器，写事件前剥除音频字段；`POST /media/audio/uploads` 返回 410 | `@alg/backend` typecheck 通过；真机/编译待验证 |
 | 发音结果交给文本模型并语音纠正 | 新增 `PronunciationCoachService`，发音未通过时把 `score/errorUnits/target` 交给 `llm.teaching_explanation`，生成一句 ≤60 字纠正，拼入下一轮 `teacherUtterance` 走 TTS；失败用确定性文案 | `pronunciation-coach.test.ts` 3/3 通过 |
 | 教材单词表自动补全完整课程 | 新增 `schemaVersion 2` 纯 JSON 契约、确定性生成器、`POST /admin/curriculum/textbook/generate`、可选 AI 润色；词表按单元写入草稿，不自动发布 | `curriculum/test/cefr.test.ts` 4/4、`curriculum-generator.test.ts` 3/3 通过 |
-| CEFR 全量内容预置服务端 | `packages/curriculum/data/cefr-curriculum.json` 预生成 7 级/49 单元/917 活动（核心词 + 日常用语/场景）；`GET /admin/curriculum/preset` 只读返回；`POST /preset/import` 导入审核队列 | 预置 JSON 通过 `cefrCurriculumPackageSchema` 校验 |
+| CEFR 全量内容预置服务端 | `packages/curriculum/data/cefr-curriculum.json` 预生成 7 级/63 单元/1197 活动（核心词 + 拓展词 + 日常用语/场景）；`GET /admin/curriculum/preset` 只读返回；`POST /preset/import` 导入审核队列 | 预置 JSON 通过 `cefrCurriculumPackageSchema` 校验 |
 | 图片/语音只在到达级别后预热 | `CurriculumWarmupService` 在仪表盘推导级别后异步触发；先按单词/短句/场景需求从 Openverse + Wikimedia Commons 搜索并缓存最优图，找不到记录 `missingImages` 供管理员上传，再生成 `PUBLIC_CURRICULUM` TTS；`AI_GATEWAY_MODE=mock` 跳过语音 | `curriculum-generator.test.ts` 覆盖未发布级别不生成媒体；真实图片搜索与真机/真实供应商待验证 |
 | 生产 Web 只读评估 | Web 默认关闭课堂预览与开课按钮；`startLesson` 在 `NEXT_PUBLIC_ENABLE_LESSON_START !== 'true'` 时直接拒绝；评估/证据/成本页保持可读；仅本地联调显式开启 | `web-evaluation-only.test.ts` 4/4 通过；生产 `next start` 首页 HTML 无开课按钮/课堂预览，含关闭态说明 |
 | 公共 TTS 音频按 TTL 与孤儿文件清理 | `TtsCacheMaintenanceService` 默认每 6 小时清理：删除已到期 `media_assets` 与 `.tts-*.json` 索引；仅删除无任何活跃数据库/索引引用且超过 7 天宽限期的顶层音频。`PUBLIC_CURRICULUM`/`PRONUNCIATION` 永不按 TTL 删除；索引损坏或数据库删除失败时跳过音频删除 | `tts-cache-maintenance.test.ts` 5/5 通过（过期、公共保留、双引用、损坏索引、数据库失败、幂等）；`tts-cache.test.ts` 增加命中率/合成字符数断言 |
@@ -34,7 +34,7 @@
 
 | # | 差距 | 现状 | 下一步任务 |
 |---|---|---|---|
-| P1-1 | 课程内容只有 M1 三主题/约 20 活动 | 已新增 CEFR 7 级预置 917 活动与教材词表生成器；内容仍须人工审核 | 继续扩充预置词库、日常用语与教材版本；审核后按级别发布 |
+| P1-1 | 课程内容只有 M1 三主题/约 20 活动 | 已新增 CEFR 7 级预置课程：63 单元/1197 活动，含 25 核心词 + 5 拓展词、21 条日常用语/级；教材词表生成器与 3 个教材版本目录已接入 | 审核后按级别发布；真实媒体预热与真机听测继续 |
 | P1-2 | `curriculum_stages` 只有 schema | 代码未引用 | 用阶段表驱动 planner 的阶段边界与解锁，不再写死 M1 |
 | P1-3 ✅ 已关闭 | 家长报告端点缺失 | 已新增只读 `GET /learners/:id/reports/weekly`：按 `Asia/Shanghai` 周一起算，聚合课堂时长估算、独立成功、覆盖能力、待巩固点、到期复习与确定性下周建议；空周/边界/鉴权/隐私单测通过 | 只读聚合，不写库、不调 LLM、不暴露原始录音/转写/供应商/成本；Android「我的账户」新增成长周报卡片；CI `43193274538` 与 Android `43193274548` 成功，提交 `0ef1231` |
 | P1-4 ✅ 已关闭 | Android 家长/孩子共用但角色边界弱 | 已增加两位数乘一位数的家长验证；家长区是独立解锁态，不复用儿童主题 | 孩子端隐藏注销、隐私协议与会员支付占位入口；解锁后才显示并受回调二次校验；重新打开应用、退出登录或修改密码后恢复孩子端；Android CI `43198957269` 与 CI `43198957277` 成功，提交 `a6f6d3b` |
