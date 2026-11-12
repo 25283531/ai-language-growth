@@ -70,6 +70,7 @@ P1-7 不恢复 2026-11-09 取消的「手工填写儿童专项分数」门槛，
 - `services/backend/test/provider-benchmark.test.ts`：11/11 通过，覆盖通过、样本不足、平均延迟/P95 超限、配置缺项、Embedding、TTS 门槛、最近一次失败覆盖旧通过、mock/live 门禁和 live 路由保存拒绝。
 - `services/backend/test/admin-console-static-guard.test.ts`：新增运行按钮/最近结果/生产提示静态守卫，全部通过。
 - `services/backend/test/p1-7-benchmark.integration.test.ts`：在一次性 PostgreSQL 上创建配置、模型和 5 条真实账本，运行 benchmark 后核对 `benchmarkType`、`sampleCount`、`latest`、`productionReady` 与 live 拒绝；通过后删除一次性库。
+- 全量后端单测 185/185 通过；CI `43187489013` 的 `P1-7 benchmark readiness persistence` 步骤成功。
 - 未调用真实供应商，未写入生产数据库。
 
 ## 6. 已知限制
