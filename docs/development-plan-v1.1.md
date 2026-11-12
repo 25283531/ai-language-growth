@@ -50,10 +50,24 @@
 | # | 差距 | 下一步 |
 |---|---|---|
 | P2-1 ✅ 已关闭 | `m1-api.integration.test.ts` 需真实 Postgres，未在本机跑 | 2026-11-12 已在服务器 `152.136.230.132` 的 `alg-postgres` 容器创建一次性测试库，完成 21 个迁移 + seed，启动本地 mock 后端后运行测试：`1/1` 通过、`0` 失败（4580.5ms）；测试库已 `DROP DATABASE ... WITH (FORCE)`，生产库未写入测试数据。复现脚本：`tools/run_m1_remote_pg.py`；完整证明见 PR #2「P2-1 补证」。 |
-| P2-2（进行中） | TTS/ASR/发音成本只有账本，无按课程/用户的预算看板 | 2026-11-12 管理端新增 `/costs` 只读面板：展示进程内 TTS 命中率、实际合成字符、单次合成均摊与缓存清理状态；接口无 lessonId / 课程维度，ASR/发音及按课程/用户的预算账本仍待接入。同日本地 mock 实测：3 条文本各调用 2 次合成，接口返回 6 请求 / 3 命中 / 0 合并 / 3 未命中 / 命中率 50.0% / 实际合成 53 字符 / 3 缓存条目；`/costs` 页面显示与接口一致；清理首跑扫描 0/0/0、61ms、0B（首跑早于本次合成）。 |
+| P2-2（进行中） | TTS/ASR/发音成本只有账本，无按课程/用户的预算看板 | 2026-11-12 管理端新增 `/costs` 只读面板：展示进程内 TTS 命中率、实际合成字符、单次合成均摊与缓存清理状态；接口无 lessonId / 课程维度，ASR/发音及按课程/用户的预算账本仍待接入。同日本地 mock 实测：3 条文本各调用 2 次合成，接口返回 6 请求 / 3 命中 / 0 合并 / 3 未命中 / 命中率 50.0% / 实际合成 53 字符 / 3 缓存条目；`/costs` 页面显示与接口一致；清理首跑扫描 0/0/0、61ms、0B（首跑早于本次合成）；该提交 CI `43148451997` 通过。剩余范围拆解见下方「P2-2 后续任务」。 |
 | P2-3 | 发音供应商如果不支持“不留存”，隐私政策与实际不一致 | 选型时把“不用于训练/不保留”写进供应商清单；不支持则不接 |
 | P2-4 | 音频格式/采样率在 Android 与供应商之间未做真机矩阵 | 至少验证 AAC 44.1k/单声道；不支持的格式服务端明确 415 |
 | P2-5 | 生产 Docker 基础冒烟已完成（2026-11-12）：新镜像重建、迁移 `20261111120000_media_asset_scope_ownership` 应用、`/api/v1/health` 200、旧录音上传端点 410 | 生产仍为 `AI_GATEWAY_MODE=mock`；切 live 后需跑一课真实 TTS/ASR/发音并核对账本 |
+
+#### P2-2 后续任务（未完成）
+
+> 现状：`ai_usage_logs` 已有 `learnerId`、`lessonSessionId`、`ttsCharacters`、`asrSeconds`、`pronunciationCalls`、`estimatedCostCny`；`GET /api/v1/usage/summary` 只支持按 learner/session 过滤，`/costs` 只读进程内 TTS 指标，尚未读账本。`/speech/recognize`、`/speech/evaluate` 直连网关，当前未写 usage 行；ASR 的 `seconds` 已在 `AsrResponse` 返回，发音按调用次数计量。`lesson_sessions` 只有 `topicId`，没有独立 `courseId`/`lessonId`；课程维度先按 session→topicId 聚合，若产品需要稳定课程 ID，再单独加字段/迁移。
+>
+> 价格口径：`estimatedCostCny=0` 且模型未配置价格时表示“未计价”，不是零成本；预算先支持字符/秒/次数与未计价计数，金额预算必须等 `ai_models.prices` 可用后启用。
+
+| 顺序 | 任务 | 具体交付 | 验收 |
+|---|---|---|---|
+| 1 | **P2-2A ASR/发音入账** | 在 `/speech/recognize`、`/speech/evaluate` 成功返回后写 `ai_usage_logs`：`serviceKind`、`taskRoute`、`learnerId`、可选 `lessonSessionId`、`asrSeconds`（用 `AsrResponse.seconds`）、`pronunciationCalls=1`、provider/model、latency；ASR 二次高质量识别按实际两次 pass 分别入账；不写音频或目标文本。编排器已有写入路径不得重复记账。 | mock 调用 recognize/evaluate 各 1 次，账本各新增 1 行；ASR suspect 触发二次识别时新增 2 行；`/usage/summary` 的 `byService` 出现 asr/pronunciation；失败调用不计费或按明确规则单列，测试覆盖。 |
+| 2 | **P2-2B 课程/用户聚合 API** | 新增管理员只读端点（建议 `GET /api/v1/admin/usage/cost`），按 `from/to` + 可选 `learnerId`/`lessonSessionId`/`topicId` 聚合；返回 TTS 字符、ASR 秒、发音次数、`estimatedCostCny`、`unpricedCalls`，按 learner/topic/day 分组；先以 `lesson_sessions.topicId` 作为课程维度，不伪造 `lessonId`；无 `learnerId` 的记录单列 unassigned，不混入用户或课程。 | 在一次性 DB 造 2 个 learner × 2 个 topic 的账本行，接口合计与 SQL 对账一致；空区间返回 0 且不报错；仅管理员可读；不返回原始文本/音频。 |
+| 3 | **P2-2C `/costs` 接入账本** | 保留现有进程内 TTS 缓存面板，新增“账本成本”区：日期范围、learner/topic 过滤，展示 TTS 字符、ASR 秒、发音次数、估算金额、未计价调用；进程指标与账本指标分栏标注，不把两者相加。 | 页面值与 `admin/usage/cost` JSON 一致；筛选、空态、未计价提示可见；仍为只读，静态守卫禁止 POST/PUT/PATCH/DELETE；类型检查与构建通过。 |
+| 4 | **P2-2D 课程/用户预算** | 先定义预算作用域（建议 learner/day 与 topic/month）和配置来源（管理员设置或环境变量）；80% 软告警、100% 告警/可选阻断；未配置价格时预算只按字符/秒/次数，不展示金额。硬阻断需产品确认后再接 router，不默认阻断教学。 | 预算配置可读回；80/100 阈值测试通过；未计价时页面显示“用量预算”而非“0 元”；不改变现有 router 的全局 `dailyBudgetCny` 行为，除非有单独决策记录。 |
+| 5 | **P2-2E 回归与上线门槛** | 用一次性 PostgreSQL + mock 跑完整链路：TTS、ASR、发音各若干次，核对账本、聚合 API、`/costs`；补测试与文档；不写生产库。 | 账本行数、单位、金额口径与调用次数一致；聚合与页面一致；无生产数据写入；CI 绿。 |
 
 复现（先 `npm ci && npm run build`）：`M1_REMOTE_PASSWORD='<password>' python tools/run_m1_remote_pg.py --host 152.136.230.132 --user root`
 
