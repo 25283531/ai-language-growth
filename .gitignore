@@ -34,6 +34,8 @@ venv/
 # Android / Kotlin
 *.apk
 *.aab
+# 本地打包 zip（含 debug APK），不是源码；报告仍可单独跟踪
+deliverables/android/*.zip
 local.properties
 .gradle/
 app/build/
