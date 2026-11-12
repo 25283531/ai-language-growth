@@ -49,11 +49,13 @@
 
 | # | 差距 | 下一步 |
 |---|---|---|
-| P2-1 ✅ 已关闭 | `m1-api.integration.test.ts` 需真实 Postgres，未在本机跑 | 2026-11-12 已在服务器 `152.136.230.132` 的 `alg-postgres` 容器创建一次性测试库，完成 21 个迁移 + seed，启动本地 mock 后端后运行测试：`1/1` 通过、`0` 失败（4580.5ms）；测试库已 `DROP DATABASE ... WITH (FORCE)`，生产库未写入测试数据。完整证明见 PR #2「P2-1 补证」。 |
+| P2-1 ✅ 已关闭 | `m1-api.integration.test.ts` 需真实 Postgres，未在本机跑 | 2026-11-12 已在服务器 `152.136.230.132` 的 `alg-postgres` 容器创建一次性测试库，完成 21 个迁移 + seed，启动本地 mock 后端后运行测试：`1/1` 通过、`0` 失败（4580.5ms）；测试库已 `DROP DATABASE ... WITH (FORCE)`，生产库未写入测试数据。复现脚本：`tools/run_m1_remote_pg.py`；完整证明见 PR #2「P2-1 补证」。 |
 | P2-2 | TTS/ASR/发音成本只有账本，无按课程/用户的预算看板 | Admin 加日/周成本、缓存命中率、单课成本 |
 | P2-3 | 发音供应商如果不支持“不留存”，隐私政策与实际不一致 | 选型时把“不用于训练/不保留”写进供应商清单；不支持则不接 |
 | P2-4 | 音频格式/采样率在 Android 与供应商之间未做真机矩阵 | 至少验证 AAC 44.1k/单声道；不支持的格式服务端明确 415 |
 | P2-5 | 生产 Docker 基础冒烟已完成（2026-11-12）：新镜像重建、迁移 `20261111120000_media_asset_scope_ownership` 应用、`/api/v1/health` 200、旧录音上传端点 410 | 生产仍为 `AI_GATEWAY_MODE=mock`；切 live 后需跑一课真实 TTS/ASR/发音并核对账本 |
+
+复现（先 `npm ci && npm run build`）：`M1_REMOTE_PASSWORD='<password>' python tools/run_m1_remote_pg.py --host 152.136.230.132 --user root`
 
 ## 3. 建议的开发顺序
 
