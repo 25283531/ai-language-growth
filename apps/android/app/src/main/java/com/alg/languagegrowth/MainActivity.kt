@@ -931,9 +931,9 @@ private fun LearnScreen(
  * 儿童发音卡：只展示可读的字母、IPA 与跟读提示。
  *
  * 服务端的 pronunciationUnits.kind（word/syllable/phoneme）是内部枚举，
- * 不直接呈现给孩子；音节只作为字母块展示，避免出现 “syllable” 这类术语。
+ * 不直接呈现给孩子；这里把单词拆成单个字母块，避免出现 “syllable” 这类术语。
  * 当前教师语音是一整段连续音频，没有单词级时间戳，因此朗读时以整张
- * 发音卡进入“正在朗读”状态为准，不伪造逐音节跳动的时间轴。
+ * 发音卡进入“正在朗读”状态为准，不伪造逐字母跳动的时间轴。
  */
 @Composable
 private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
@@ -944,11 +944,30 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
         ?: directive.optString("demonstrationText").trim().takeUnless { it.isBlank() || it == "null" }
         ?: return
     val ipa = WordPhonics.of(word)
+    val displayWord = word.trim().trim('.', ',', '!', '?', ';', ':', '"')
+    val letters = displayWord
+        .filter { it.isLetter() || it == '\'' || it == '-' }
+        .take(14)
+        .map { it.toString() }
     val units = directive.optJSONArray("pronunciationUnits")
-    val letters = (0 until (units?.length() ?: 0)).mapNotNull { index ->
-        units?.optJSONObject(index)?.takeIf { it.optString("text").isNotBlank() }
+    val focusTexts = (0 until (units?.length() ?: 0)).mapNotNull { index ->
+        units?.optJSONObject(index)
+            ?.takeIf { it.optBoolean("isFocus", false) }
+            ?.optString("text")
+            ?.lowercase()
+            ?.filter { it.isLetter() }
+            ?.takeIf { it.isNotBlank() }
     }
-    val hasFocus = letters.any { it.optBoolean("isFocus", false) }
+    // 服务端只给出音节级重点；把它映射到对应字母，孩子看到的是“哪几个字母要多练”。
+    val focusIndexes = mutableSetOf<Int>()
+    var searchFrom = 0
+    focusTexts.forEach { focus ->
+        val at = displayWord.lowercase().indexOf(focus, searchFrom)
+        if (at >= 0) {
+            (at until at + focus.length).forEach { focusIndexes.add(it) }
+            searchFrom = at + focus.length
+        }
+    }
 
     GrowthCard(
         modifier = Modifier.fillMaxWidth(),
@@ -971,8 +990,8 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
         }
         if (letters.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                letters.forEach { unit ->
-                    val focus = unit.optBoolean("isFocus", false)
+                letters.forEachIndexed { index, letter ->
+                    val focus = index in focusIndexes
                     val tint = when {
                         focus -> GrowthColors.SunDeep
                         speaking -> GrowthColors.PrimaryDeep
@@ -991,7 +1010,7 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(unit.optString("text"), style = MaterialTheme.typography.titleLarge, color = tint)
+                        Text(letter, style = MaterialTheme.typography.titleLarge, color = tint)
                     }
                 }
             }
@@ -1002,7 +1021,7 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
             style = MaterialTheme.typography.bodySmall,
             color = GrowthColors.InkSoft,
         )
-        if (hasFocus) {
+        if (focusIndexes.isNotEmpty()) {
             Text(
                 "黄色字母是这次要多练的部分。",
                 style = MaterialTheme.typography.bodySmall,
