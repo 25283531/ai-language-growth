@@ -196,11 +196,12 @@ private fun GrowthApp(
     var dashboard by remember { mutableStateOf<JSONObject?>(null) }
     var weeklyReport by remember { mutableStateOf<JSONObject?>(null) }
     var weeklyError by remember { mutableStateOf("") }
+    var weeklyRefreshing by remember { mutableStateOf(false) }
+    var weeklyStatus by remember { mutableStateOf("") }
     // 家长区是本次运行期内的独立解锁态，不复用 childTheme（主题不等于角色）。
     var parentUnlocked by remember { mutableStateOf(false) }
     var lessonSessionId by remember { mutableStateOf("") }
     var directive by remember { mutableStateOf<JSONObject?>(null) }
-    var lastTurn by remember { mutableStateOf<JSONObject?>(null) }
     var finishResult by remember { mutableStateOf<JSONObject?>(null) }
     var responseText by remember { mutableStateOf("") }
     var recording by remember { mutableStateOf(false) }
@@ -309,7 +310,7 @@ private fun GrowthApp(
                 lessonSessionId = response.optString("lessonSessionId")
                 lessonSpeech = response.optJSONObject("speech")
                 directive = response.optJSONObject("directive")
-                lastTurn = null; finishResult = null; responseText = ""; recordingSaved = false
+                finishResult = null; responseText = ""; recordingSaved = false
                 tab = "learn"
                 pageStatus = ""
             } catch (e: Exception) {
@@ -340,8 +341,9 @@ private fun GrowthApp(
             val result = withContext(Dispatchers.IO) { http(base(), "/lessons/${lessonSessionId}/turn", "POST", body, token(), headers) }
             asrReservationId = ""
             lessonSpeech = result.optJSONObject("speech")
-            lastTurn = result; directive = result.optJSONObject("directive"); responseText = ""
-            pageStatus = result.optJSONObject("degradation")?.optString("reasons").orEmpty()
+            directive = result.optJSONObject("directive"); responseText = ""
+            // 降级原因只用于服务端排障，不把内部供应商/协议细节展示给孩子。
+            pageStatus = ""
         } catch (e: Exception) {
             if (audioBase64 != null && asrReservationId.isNotBlank()) {
                 runCatching { withContext(Dispatchers.IO) { http(base(), "/speech/quota/release", "POST", JSONObject().put("reservationId", asrReservationId), token()) } }
@@ -420,6 +422,23 @@ private fun GrowthApp(
             .onFailure { pageStatus = it.message ?: "学习资料加载失败" }
     }
 
+    // 切回「我」时重新拉取本周周报：结课/刷新学习进度后不必重启应用。
+    LaunchedEffect(tab, loggedIn, learnerId) {
+        if (loggedIn && tab == "me" && learnerId.isNotBlank()) {
+            weeklyRefreshing = true
+            weeklyStatus = "正在刷新周报…"
+            try {
+                fetchWeeklyReport()
+                weeklyStatus = "已更新本周记录"
+            } catch (e: Exception) {
+                weeklyError = e.message ?: "本周周报暂时无法加载"
+                weeklyStatus = "周报暂时无法刷新"
+            } finally {
+                weeklyRefreshing = false
+            }
+        }
+    }
+
     GrowthBackground {
         Scaffold(
             containerColor = Color.Transparent,
@@ -466,7 +485,7 @@ private fun GrowthApp(
                             scope.launch { runCatching { fetchDashboard() }.onFailure { pageStatus = it.message ?: "刷新失败" } }
                         })
                         "learn" -> LearnScreen(
-                            directive, lastTurn, finishResult, responseText, recording, recordingSaved, busy, pageStatus,
+                            directive, finishResult, responseText, recording, recordingSaved, busy, pageStatus,
                             onStart = ::startSession,
                             speechBusy = speechBusy,
                             speechStatus = speechStatus,
@@ -619,15 +638,20 @@ private fun GrowthApp(
                             },
                             weekly = weeklyReport,
                             weeklyError = weeklyError,
+                            weeklyRefreshing = weeklyRefreshing,
+                            weeklyStatus = weeklyStatus,
                             onRefreshWeekly = {
-                                scope.launch {
-                                    pageStatus = ""
+                                if (!weeklyRefreshing) scope.launch {
+                                    weeklyRefreshing = true
+                                    weeklyStatus = "正在刷新周报…"
                                     try {
                                         fetchWeeklyReport()
-                                        pageStatus = "周报已刷新"
+                                        weeklyStatus = "周报已刷新"
                                     } catch (e: Exception) {
                                         weeklyError = e.message ?: "周报刷新失败"
-                                        pageStatus = "周报暂时无法刷新"
+                                        weeklyStatus = "周报暂时无法刷新"
+                                    } finally {
+                                        weeklyRefreshing = false
                                     }
                                 }
                             },
@@ -848,7 +872,7 @@ private fun HomeScreen(data: JSONObject?, childTheme: Boolean, status: String, o
 
 @Composable
 private fun LearnScreen(
-    directive: JSONObject?, turn: JSONObject?, finish: JSONObject?, responseText: String, recording: Boolean,
+    directive: JSONObject?, finish: JSONObject?, responseText: String, recording: Boolean,
     recordingSaved: Boolean, busy: Boolean, status: String, onStart: () -> Unit, onText: (String) -> Unit,
     onRecord: () -> Unit, onSubmit: () -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onPlayRecording: () -> Unit,
@@ -869,24 +893,31 @@ private fun LearnScreen(
     GrowthPrimaryButton(if (directive == null) "开始学习" else "再来一节", onStart, emoji = "✨", enabled = !busy, busy = busy)
     if (directive != null) {
         GrowthCard(modifier = Modifier.fillMaxWidth()) {
-            GrowthSectionTitle("课堂指令 · ${directive.optString("expectedResponse")}", "📖")
-            directive.optJSONArray("targetWords")?.let { words -> (0 until words.length()).forEach { Text(words.optString(it), style = MaterialTheme.typography.displayMedium, color = GrowthColors.PrimaryDeep) } }
-            directive.optString("demonstrationText").takeIf { it != "null" && it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.headlineMedium, color = GrowthColors.BlueDeep) }
+            GrowthSectionTitle("课堂指令", "📖")
+            PronunciationCard(
+                directive = directive,
+                speaking = speechBusy && speechStatus.contains("正在说话"),
+            )
             Text(directive.optString("teacherUtterance"), style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink)
-            val units = directive.optJSONArray("pronunciationUnits")
-            if (units != null) (0 until units.length()).forEach { i -> units.optJSONObject(i)?.let { Text("${it.optString("text")} · ${it.optString("kind")}${if (it.optBoolean("isFocus")) " · 重点" else ""}") } }
-            Text("提示：${directive.optString("personaHint").takeUnless { it == "null" } ?: "—"}", color = GrowthColors.InkSoft)
             if (directive.optString("expectedResponse") == "tap_image") Text("此指令没有图片选项配置，暂不能点选图片；请使用文本回应。", color = GrowthColors.InkSoft)
             if (speechStatus.isNotBlank()) Text(speechStatus, color = GrowthColors.InkSoft)
             GrowthSecondaryButton(if (speechBusy) "老师正在说话" else "再听一次", onReplay, enabled = !speechBusy && !recording && !busy)
-            GrowthTextField(responseText, onText, "你的回应", leadingEmoji = "✍️")
+            GrowthTextField(responseText, onText, "尝试拼写一下", leadingEmoji = "✍️")
             GrowthSecondaryButton(if (recording) "停止并提交录音" else "开始录音", onRecord, emoji = "🎙️", enabled = !busy)
             if (recordingSaved) GrowthSecondaryButton("回放我的录音", onPlayRecording, emoji = "🔊", enabled = !recording && !busy)
             GrowthPrimaryButton("提交回应", onSubmit, emoji = "📨", enabled = !busy)
             GrowthSecondaryButton("结课", onFinish, emoji = "🏁", enabled = !busy)
         }
-        turn?.let { Text("服务端评估：${it.optJSONObject("assessment") ?: "—"}\n证据：${it.optJSONArray("evidence") ?: "[]"}\n状态变更：${it.optJSONArray("stateChanges") ?: "[]"}\n降级：${it.optJSONObject("degradation") ?: "—"}", color = GrowthColors.InkSoft) }
-        finish?.let { GrowthCard(modifier = Modifier.fillMaxWidth()) { Text(it.optString("summary"), style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink) } }
+        finish?.let {
+            GrowthCard(
+                modifier = Modifier.fillMaxWidth(),
+                fill = GrowthColors.SunWash,
+                outline = GrowthColors.Sun.copy(alpha = 0.28f),
+            ) {
+                Text("这节课完成啦！", style = MaterialTheme.typography.headlineMedium, color = GrowthColors.Ink)
+                Text("今天又练习了一点，休息一下，下次继续 🌿", color = GrowthColors.InkSoft)
+            }
+        }
     } else {
         GrowthCard(
             modifier = Modifier.fillMaxWidth(),
@@ -903,6 +934,110 @@ private fun LearnScreen(
         }
     }
     if (status.isNotBlank()) GrowthStatusPill(status)
+}
+
+/**
+ * 儿童发音卡：只展示可读的字母、IPA 与跟读提示。
+ *
+ * 服务端的 pronunciationUnits.kind（word/syllable/phoneme）是内部枚举，
+ * 不直接呈现给孩子；这里把单词拆成单个字母块，避免出现 “syllable” 这类术语。
+ * 当前教师语音是一整段连续音频，没有单词级时间戳，因此朗读时以整张
+ * 发音卡进入“正在朗读”状态为准，不伪造逐字母跳动的时间轴。
+ */
+@Composable
+private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
+    val targetWords = directive.optJSONArray("targetWords")
+    val word = (0 until (targetWords?.length() ?: 0))
+        .mapNotNull { index -> targetWords?.optString(index)?.trim()?.takeIf { it.isNotBlank() } }
+        .firstOrNull()
+        ?: directive.optString("demonstrationText").trim().takeUnless { it.isBlank() || it == "null" }
+        ?: return
+    val ipa = WordPhonics.of(word)
+    val displayWord = word.trim().trim('.', ',', '!', '?', ';', ':', '"')
+    val letters = displayWord
+        .filter { it.isLetter() || it == '\'' || it == '-' }
+        .take(14)
+        .map { it.toString() }
+    val units = directive.optJSONArray("pronunciationUnits")
+    val focusTexts = (0 until (units?.length() ?: 0)).mapNotNull { index ->
+        units?.optJSONObject(index)
+            ?.takeIf { it.optBoolean("isFocus", false) }
+            ?.optString("text")
+            ?.lowercase()
+            ?.filter { it.isLetter() }
+            ?.takeIf { it.isNotBlank() }
+    }
+    // 服务端只给出音节级重点；把它映射到对应字母，孩子看到的是“哪几个字母要多练”。
+    val focusIndexes = mutableSetOf<Int>()
+    var searchFrom = 0
+    focusTexts.forEach { focus ->
+        val at = displayWord.lowercase().indexOf(focus, searchFrom)
+        if (at >= 0) {
+            (at until at + focus.length).forEach { focusIndexes.add(it) }
+            searchFrom = at + focus.length
+        }
+    }
+
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = if (speaking) GrowthColors.PrimaryWash else GrowthColors.SunWash,
+        outline = (if (speaking) GrowthColors.Primary else GrowthColors.Sun).copy(alpha = 0.30f),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GrowthSectionTitle("发音卡", "🔤")
+            Spacer(Modifier.weight(1f))
+            GrowthPill(
+                if (speaking) "正在朗读" else "跟读",
+                if (speaking) GrowthColors.PrimaryDeep else GrowthColors.SunDeep,
+                if (speaking) GrowthColors.PrimaryWash else GrowthColors.SunWash,
+                emoji = if (speaking) "🔊" else "👂",
+            )
+        }
+        Text(word, style = MaterialTheme.typography.displayMedium, color = GrowthColors.Ink)
+        if (ipa.isNotBlank()) {
+            Text(ipa, style = MaterialTheme.typography.headlineMedium, color = GrowthColors.BlueDeep)
+        }
+        if (letters.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                letters.forEachIndexed { index, letter ->
+                    val focus = index in focusIndexes
+                    val tint = when {
+                        focus -> GrowthColors.SunDeep
+                        speaking -> GrowthColors.PrimaryDeep
+                        else -> GrowthColors.BlueDeep
+                    }
+                    val wash = when {
+                        focus -> GrowthColors.SunWash
+                        speaking -> GrowthColors.PrimaryWash
+                        else -> GrowthColors.BlueWash
+                    }
+                    Box(
+                        Modifier
+                            .clip(GrowthShapes.Pill)
+                            .background(wash)
+                            .border(1.dp, tint.copy(alpha = 0.35f), GrowthShapes.Pill)
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(letter, style = MaterialTheme.typography.titleLarge, color = tint)
+                    }
+                }
+            }
+        }
+        Text(
+            if (speaking) "老师正在读：眼睛跟着字母和音标，听完再跟读一遍。"
+            else "先看字母，再听音标，最后自己读一遍。",
+            style = MaterialTheme.typography.bodySmall,
+            color = GrowthColors.InkSoft,
+        )
+        if (focusIndexes.isNotEmpty()) {
+            Text(
+                "黄色字母是这次要多练的部分。",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.SunDeep,
+            )
+        }
+    }
 }
 
 /* -------------------------------------------------------------- 成长成就 */
@@ -986,7 +1121,13 @@ private fun AchievementScreen(data: JSONObject?) {
 /* ------------------------------------------------------- 我的账户（家长向） */
 
 @Composable
-private fun WeeklyReportCard(report: JSONObject?, error: String, onRefresh: () -> Unit) {
+private fun WeeklyReportCard(
+    report: JSONObject?,
+    error: String,
+    refreshing: Boolean,
+    refreshStatus: String,
+    onRefresh: () -> Unit,
+) {
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             GrowthSectionTitle("成长周报", "📊")
@@ -1118,10 +1259,16 @@ private fun WeeklyReportCard(report: JSONObject?, error: String, onRefresh: () -
                 color = GrowthColors.InkSoft,
             )
         }
+        if (refreshStatus.isNotBlank()) GrowthStatusPill(refreshStatus)
         GrowthSecondaryButton(
-            if (report == null) "加载周报" else "刷新周报",
+            when {
+                refreshing -> "正在刷新周报…"
+                report == null -> "加载周报"
+                else -> "刷新周报"
+            },
             onRefresh,
             emoji = "🔄",
+            enabled = !refreshing,
         )
     }
 }
@@ -1176,7 +1323,8 @@ private fun ProfileScreen(
     onSaveProfile: () -> Unit, onPassword: () -> Unit, onTextbook: () -> Unit,
     onVerify: () -> Unit, onSendVerification: () -> Unit, onPrivacy: () -> Unit, onTerms: () -> Unit,
     onLogout: () -> Unit, onDelete: () -> Unit,
-    weekly: JSONObject?, weeklyError: String, onRefreshWeekly: () -> Unit,
+    weekly: JSONObject?, weeklyError: String, weeklyRefreshing: Boolean, weeklyStatus: String,
+    onRefreshWeekly: () -> Unit,
     parentUnlocked: Boolean, onParentUnlocked: () -> Unit, onLockParent: () -> Unit, onPayment: () -> Unit,
 ) {
     val user = data?.optJSONObject("user")
@@ -1221,7 +1369,7 @@ private fun ProfileScreen(
         GrowthPrimaryButton("保存资料", onSaveProfile, emoji = "💾")
     }
 
-    WeeklyReportCard(weekly, weeklyError, onRefreshWeekly)
+    WeeklyReportCard(weekly, weeklyError, weeklyRefreshing, weeklyStatus, onRefreshWeekly)
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("选择头像", "🎨")
