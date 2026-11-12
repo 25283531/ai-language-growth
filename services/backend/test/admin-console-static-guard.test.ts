@@ -293,4 +293,23 @@ describe('管理端成本与缓存页：只读静态守卫', () => {
     assert.match(costs, /不相加|不与/, '成本页未说明账本与进程指标分开、不可相加');
     assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '成本页不应发送写请求');
   });
+
+  it('10. 预算快照只读接入，展示 learner/day 与 topic/month 用量与 80/100 阈值，未计价时不展示金额', () => {
+    assert.match(
+      costs,
+      /adminFetch<UsageBudgetSnapshotResponse>\('\/usage\/budget'\)/,
+      '成本页未通过 adminFetch 读取预算快照',
+    );
+    assert.match(costs, /\/usage\/budget\/evaluate/, '成本页缺少预算评估路径');
+    for (const scope of ['learner_day', 'topic_month']) {
+      assert.match(costs, new RegExp(scope), `成本页缺少预算作用域 ${scope}`);
+    }
+    for (const text of ['learner / day', 'topic / month', '80% 告警', '100% 超限', 'advisory']) {
+      assert.ok(costs.includes(text), `成本页缺少预算展示 ${text}`);
+    }
+    assert.match(costs, /displayMode/, '成本页未消费 displayMode');
+    assert.match(costs, /unpricedCalls/, '成本页未展示未计价调用');
+    assert.match(costs, /只(?:展示|显示)字符\/秒\/次数/, '成本页未说明未计价时只展示用量');
+    assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '预算接入不应发送写请求');
+  });
 });

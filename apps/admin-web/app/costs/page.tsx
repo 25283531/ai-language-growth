@@ -81,6 +81,70 @@ type UsageCostResponse = {
   note?: string;
 };
 
+type BudgetMetricKey =
+  | 'ttsCharacters'
+  | 'asrSeconds'
+  | 'pronunciationCalls'
+  | 'estimatedCostCny';
+
+type BudgetLimits = Partial<Record<BudgetMetricKey, number>>;
+type BudgetStatus = 'ok' | 'warning' | 'exceeded';
+
+type BudgetMetric = {
+  key: BudgetMetricKey;
+  label: string;
+  used: number;
+  limit: number;
+  ratio: number;
+  status: BudgetStatus;
+};
+
+type UsageBudgetSnapshotResponse = {
+  source?: string;
+  enforcement?: string;
+  thresholds?: { warning?: number; exceeded?: number };
+  scopes?: {
+    learnerDay?: { scope?: string; limits?: BudgetLimits };
+    topicMonth?: { scope?: string; limits?: BudgetLimits };
+  };
+};
+
+type UsageBudgetSnapshot = {
+  source: string;
+  enforcement: string;
+  thresholds: { warning: number; exceeded: number };
+  scopes: {
+    learnerDay: { scope: string; limits: BudgetLimits };
+    topicMonth: { scope: string; limits: BudgetLimits };
+  };
+};
+
+type UsageBudgetEvaluationResponse = {
+  scope?: string;
+  window?: { from?: string; to?: string };
+  status?: string;
+  enforcement?: string;
+  blocked?: boolean;
+  displayMode?: string;
+  metrics?: Array<Partial<BudgetMetric>>;
+  cost?: Partial<BudgetMetric> | null;
+  unpricedCalls?: number;
+  notices?: string[];
+};
+
+type UsageBudgetEvaluation = {
+  scope: string;
+  window: { from: string; to: string };
+  status: BudgetStatus;
+  enforcement: string;
+  blocked: boolean;
+  displayMode: 'usage' | 'cost_and_usage';
+  metrics: BudgetMetric[];
+  cost: BudgetMetric | null;
+  unpricedCalls: number;
+  notices: string[];
+};
+
 type UsageFilters = {
   from: string;
   to: string;
@@ -139,6 +203,23 @@ const EMPTY_USAGE: UsageReport = {
   note: '',
 };
 
+const BUDGET_METRIC_KEYS: BudgetMetricKey[] = [
+  'ttsCharacters',
+  'asrSeconds',
+  'pronunciationCalls',
+  'estimatedCostCny',
+];
+
+const EMPTY_BUDGET_SNAPSHOT: UsageBudgetSnapshot = {
+  source: 'environment',
+  enforcement: 'advisory',
+  thresholds: { warning: 0.8, exceeded: 1 },
+  scopes: {
+    learnerDay: { scope: 'learner_day', limits: {} },
+    topicMonth: { scope: 'topic_month', limits: {} },
+  },
+};
+
 function finite(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
@@ -186,6 +267,98 @@ function normalizeUsage(value: UsageCostResponse | undefined): UsageReport {
   };
 }
 
+function normalizeBudgetLimits(value: unknown): BudgetLimits {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const limits: BudgetLimits = {};
+  for (const key of BUDGET_METRIC_KEYS) {
+    const raw = (value as Record<string, unknown>)[key];
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) limits[key] = raw;
+  }
+  return limits;
+}
+
+function normalizeBudgetSnapshot(value: UsageBudgetSnapshotResponse | undefined): UsageBudgetSnapshot {
+  const source = value ?? {};
+  const warning = finite(source.thresholds?.warning);
+  const exceeded = finite(source.thresholds?.exceeded);
+  return {
+    source: typeof source.source === 'string' ? source.source : 'environment',
+    enforcement: typeof source.enforcement === 'string' ? source.enforcement : 'advisory',
+    thresholds: {
+      warning: warning > 0 ? warning : 0.8,
+      exceeded: exceeded > 0 ? exceeded : 1,
+    },
+    scopes: {
+      learnerDay: {
+        scope: typeof source.scopes?.learnerDay?.scope === 'string'
+          ? source.scopes.learnerDay.scope
+          : 'learner_day',
+        limits: normalizeBudgetLimits(source.scopes?.learnerDay?.limits),
+      },
+      topicMonth: {
+        scope: typeof source.scopes?.topicMonth?.scope === 'string'
+          ? source.scopes.topicMonth.scope
+          : 'topic_month',
+        limits: normalizeBudgetLimits(source.scopes?.topicMonth?.limits),
+      },
+    },
+  };
+}
+
+function normalizeBudgetStatus(value: unknown): BudgetStatus {
+  return value === 'warning' || value === 'exceeded' ? value : 'ok';
+}
+
+function normalizeBudgetMetric(value: Partial<BudgetMetric> | null | undefined): BudgetMetric | null {
+  if (!value || !BUDGET_METRIC_KEYS.includes(value.key as BudgetMetricKey)) return null;
+  const key = value.key as BudgetMetricKey;
+  const used = Math.max(0, finite(value.used));
+  const limit = Math.max(0, finite(value.limit));
+  if (limit <= 0) return null;
+  const ratio = typeof value.ratio === 'number' && Number.isFinite(value.ratio)
+    ? Math.max(0, value.ratio)
+    : used / limit;
+  return {
+    key,
+    label: typeof value.label === 'string' ? value.label : budgetMetricLabel(key),
+    used,
+    limit,
+    ratio,
+    status: normalizeBudgetStatus(value.status),
+  };
+}
+
+function normalizeBudgetEvaluation(
+  value: UsageBudgetEvaluationResponse | null | undefined,
+): UsageBudgetEvaluation | null {
+  if (!value) return null;
+  const displayMode = value.displayMode === 'cost_and_usage' ? 'cost_and_usage' : 'usage';
+  const metrics = Array.isArray(value.metrics)
+    ? value.metrics
+        .map(normalizeBudgetMetric)
+        .filter((metric): metric is BudgetMetric => Boolean(metric))
+        .filter((metric) => metric.key !== 'estimatedCostCny')
+    : [];
+  const cost = displayMode === 'cost_and_usage' ? normalizeBudgetMetric(value.cost) : null;
+  return {
+    scope: typeof value.scope === 'string' ? value.scope : '',
+    window: {
+      from: typeof value.window?.from === 'string' ? value.window.from : '',
+      to: typeof value.window?.to === 'string' ? value.window.to : '',
+    },
+    status: normalizeBudgetStatus(value.status),
+    enforcement: typeof value.enforcement === 'string' ? value.enforcement : 'advisory',
+    blocked: Boolean(value.blocked),
+    displayMode,
+    metrics,
+    cost,
+    unpricedCalls: integer(value.unpricedCalls),
+    notices: Array.isArray(value.notices)
+      ? value.notices.filter((notice): notice is string => typeof notice === 'string')
+      : [],
+  };
+}
+
 function normalizeCache(value: TtsCacheResponse['cache']): TtsCacheStats {
   const cache = value ?? {};
   return {
@@ -230,6 +403,48 @@ function formatCny(value: number): string {
 
 function formatSeconds(value: number): string {
   return `${Math.max(0, finite(value)).toFixed(2)} 秒`;
+}
+
+function budgetMetricLabel(key: BudgetMetricKey): string {
+  switch (key) {
+    case 'ttsCharacters': return 'TTS 字符';
+    case 'asrSeconds': return 'ASR 秒数';
+    case 'pronunciationCalls': return '发音次数';
+    case 'estimatedCostCny': return '估算金额';
+  }
+}
+
+function formatBudgetValue(key: BudgetMetricKey, value: number): string {
+  if (key === 'asrSeconds') return formatSeconds(value);
+  if (key === 'estimatedCostCny') return formatCny(value);
+  return formatInteger(value);
+}
+
+function formatBudgetRatio(value: number): string {
+  return `${(Math.max(0, finite(value)) * 100).toFixed(1)}%`;
+}
+
+function budgetStatusText(status: BudgetStatus): string {
+  if (status === 'exceeded') return '100% 超限';
+  if (status === 'warning') return '80% 告警';
+  return '正常';
+}
+
+function budgetStatusClass(status: BudgetStatus): string {
+  return status === 'ok' ? '' : ` ${status}`;
+}
+
+function configuredUsageLimits(limits: BudgetLimits): Array<[BudgetMetricKey, number]> {
+  return BUDGET_METRIC_KEYS
+    .filter((key) => key !== 'estimatedCostCny')
+    .map((key) => [key, limits[key]] as [BudgetMetricKey, number | undefined])
+    .filter((entry): entry is [BudgetMetricKey, number] => entry[1] !== undefined && entry[1] > 0);
+}
+
+function hasAnyBudgetLimit(snapshot: UsageBudgetSnapshot): boolean {
+  return BUDGET_METRIC_KEYS.some((key) =>
+    Boolean(snapshot.scopes.learnerDay.limits[key] || snapshot.scopes.topicMonth.limits[key]),
+  );
 }
 
 function formatBytes(value: number): string {
@@ -314,6 +529,12 @@ function buildUsagePath(filters: UsageFilters): string {
   return `/usage/cost?${params.toString()}`;
 }
 
+function buildBudgetPath(scope: 'learner_day' | 'topic_month', value: string): string {
+  const params = new URLSearchParams({ scope });
+  params.set(scope === 'learner_day' ? 'learnerId' : 'topicId', value);
+  return `/usage/budget/evaluate?${params.toString()}`;
+}
+
 function readableError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -321,6 +542,124 @@ function readableError(error: unknown, fallback: string): string {
 function isSessionExpired(error: unknown): boolean {
   if (error instanceof AdminApiError) return error.status === 401 || error.status === 403;
   return error instanceof Error && error.message.includes('登录已失效');
+}
+
+type BudgetCardProps = {
+  title: string;
+  scope: string;
+  entityLabel: string;
+  limits: BudgetLimits;
+  evaluation: UsageBudgetEvaluation | null;
+  loading: boolean;
+  error: string;
+  missingHint: string;
+  onRetry: () => void;
+};
+
+function BudgetMetricRow({ metric }: { metric: BudgetMetric }) {
+  const width = Math.min(100, Math.max(0, finite(metric.ratio) * 100));
+  return <div className="budget-metric">
+    <div className="budget-metric-head">
+      <span>{metric.label}</span>
+      <strong>{formatBudgetValue(metric.key, metric.used)} / {formatBudgetValue(metric.key, metric.limit)}</strong>
+    </div>
+    <div
+      className="budget-track"
+      role="progressbar"
+      aria-label={`${metric.label}预算使用率`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(width)}
+    >
+      <span className={`budget-fill ${metric.status}`} style={{ width: `${width}%` }} />
+      <i className="budget-threshold" aria-hidden="true" />
+    </div>
+    <div className="budget-caption">
+      <span className={metric.status === 'ok' ? '' : metric.status}>{budgetStatusText(metric.status)}</span>
+      <span>{formatBudgetRatio(metric.ratio)}</span>
+    </div>
+  </div>;
+}
+
+function BudgetScopeCard({
+  title,
+  scope,
+  entityLabel,
+  limits,
+  evaluation,
+  loading,
+  error,
+  missingHint,
+  onRetry,
+}: BudgetCardProps) {
+  const metrics = evaluation
+    ? [...evaluation.metrics, ...(evaluation.cost ? [evaluation.cost] : [])]
+    : [];
+  const configured = configuredUsageLimits(limits);
+  const hasEvaluation = Boolean(evaluation);
+  const badgeClass = evaluation
+    ? metrics.length === 0
+      ? ''
+      : budgetStatusClass(evaluation.status)
+    : '';
+  const badgeText = loading
+    ? '读取中'
+    : error
+      ? '读取失败'
+      : evaluation
+        ? metrics.length === 0
+          ? '未配置'
+          : budgetStatusText(evaluation.status)
+        : '待指定';
+
+  return <article className="budget-card">
+    <div className="budget-card-head">
+      <div>
+        <h3>{title}</h3>
+        <p className="budget-scope"><code>{scope}</code><span>{entityLabel}</span></p>
+      </div>
+      <span className={`metric-badge${badgeClass}`}>{badgeText}</span>
+    </div>
+
+    {loading && <p className="status">正在读取预算评估…</p>}
+    {!loading && error && <div className="feedback error" role="alert">
+      {error}
+      <button className="secondary" type="button" onClick={onRetry}>重试</button>
+    </div>}
+
+    {!loading && !error && hasEvaluation && evaluation && <>
+      <p className="budget-window">窗口：{formatRange(evaluation.window.from, evaluation.window.to)}（终点不含）</p>
+      {metrics.length > 0
+        ? <div className="budget-metrics">{metrics.map((metric) => <BudgetMetricRow key={metric.key} metric={metric} />)}</div>
+        : <p className="empty-state">该作用域未配置字符/秒/次数上限。</p>}
+      {evaluation.unpricedCalls > 0 && <div className="feedback warn" role="status">
+        有 {formatInteger(evaluation.unpricedCalls)} 次未计价调用；金额预算未参与判定，本卡只展示字符/秒/次数。
+      </div>}
+      {evaluation.notices.length > 0 && <ul className="budget-notices">
+        {evaluation.notices.map((notice, index) => <li key={`${notice}-${index}`}>{notice}</li>)}
+      </ul>}
+      <p className="helper budget-advisory">
+        {evaluation.enforcement === 'advisory' || !evaluation.blocked
+          ? '当前为 advisory：达到阈值只告警，不阻断教学。'
+          : '预算策略包含阻断，请以服务端策略为准。'}
+      </p>
+    </>}
+
+    {!loading && !hasEvaluation && <>
+      {configured.length > 0
+        ? <div className="budget-limits">
+            {configured.map(([key, limit]) => <div className="budget-limit-row" key={key}>
+              <span>{budgetMetricLabel(key)}</span>
+              <strong>{formatBudgetValue(key, limit)}</strong>
+            </div>)}
+          </div>
+        : <p className="empty-state">该作用域未配置字符/秒/次数上限。</p>}
+      {limits.estimatedCostCny !== undefined && <p className="helper">
+        已配置金额上限；仅当评估窗口内没有未计价调用且金额可用于预算时才会展示金额。
+      </p>}
+      <p className="helper">{missingHint}</p>
+    </>}
+  </article>;
 }
 
 type UsageTableRow = UsageMetrics & { label: string };
@@ -371,13 +710,20 @@ export default function CostsPage() {
   const [cache, setCache] = useState<TtsCacheStats>(EMPTY_CACHE);
   const [maintenance, setMaintenance] = useState<MaintenanceStatus>(EMPTY_MAINTENANCE);
   const [usage, setUsage] = useState<UsageReport>(EMPTY_USAGE);
+  const [budgetSnapshot, setBudgetSnapshot] = useState<UsageBudgetSnapshot>(EMPTY_BUDGET_SNAPSHOT);
+  const [learnerBudget, setLearnerBudget] = useState<UsageBudgetEvaluation | null>(null);
+  const [topicBudget, setTopicBudget] = useState<UsageBudgetEvaluation | null>(null);
   const [filters, setFilters] = useState<UsageFilters>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<UsageFilters | null>(null);
   const [filterError, setFilterError] = useState('');
   const [cacheState, setCacheState] = useState<LoadState>('loading');
   const [usageState, setUsageState] = useState<LoadState>('loading');
+  const [budgetState, setBudgetState] = useState<LoadState>('loading');
   const [cacheMessage, setCacheMessage] = useState('');
   const [usageMessage, setUsageMessage] = useState('');
+  const [budgetMessage, setBudgetMessage] = useState('');
+  const [learnerBudgetError, setLearnerBudgetError] = useState('');
+  const [topicBudgetError, setTopicBudgetError] = useState('');
   const [loadedAt, setLoadedAt] = useState('');
   const [sessionExpired, setSessionExpired] = useState(false);
   const mountedRef = useRef(true);
@@ -390,12 +736,27 @@ export default function CostsPage() {
     if (mountedRef.current) {
       setCacheState('loading');
       setUsageState('loading');
+      setBudgetState('loading');
       setCacheMessage('');
       setUsageMessage('');
+      setBudgetMessage('');
+      setLearnerBudgetError('');
+      setTopicBudgetError('');
+      setLearnerBudget(null);
+      setTopicBudget(null);
     }
-    const [cacheResult, usageResult] = await Promise.allSettled([
+    const learnerId = appliedFilters.learnerId.trim();
+    const topicId = appliedFilters.topicId.trim();
+    const [cacheResult, usageResult, budgetResult, learnerBudgetResult, topicBudgetResult] = await Promise.allSettled([
       adminFetch<TtsCacheResponse>('/tts-cache'),
       adminFetch<UsageCostResponse>(buildUsagePath(appliedFilters)),
+      adminFetch<UsageBudgetSnapshotResponse>('/usage/budget'),
+      learnerId
+        ? adminFetch<UsageBudgetEvaluationResponse>(buildBudgetPath('learner_day', learnerId))
+        : Promise.resolve(null),
+      topicId
+        ? adminFetch<UsageBudgetEvaluationResponse>(buildBudgetPath('topic_month', topicId))
+        : Promise.resolve(null),
     ]);
     if (!mountedRef.current || seq !== requestSeqRef.current) return;
 
@@ -419,9 +780,38 @@ export default function CostsPage() {
       setUsageMessage(readableError(usageResult.reason, '读取账本用量失败'));
     }
 
+    if (budgetResult.status === 'fulfilled') {
+      setBudgetSnapshot(normalizeBudgetSnapshot(budgetResult.value));
+      setBudgetState('ready');
+    } else {
+      expired = expired || isSessionExpired(budgetResult.reason);
+      setBudgetState('error');
+      setBudgetMessage(readableError(budgetResult.reason, '读取预算快照失败'));
+    }
+
+    if (learnerBudgetResult.status === 'fulfilled') {
+      setLearnerBudget(normalizeBudgetEvaluation(learnerBudgetResult.value));
+    } else {
+      expired = expired || isSessionExpired(learnerBudgetResult.reason);
+      setLearnerBudgetError(readableError(learnerBudgetResult.reason, '读取 learner/day 预算失败'));
+    }
+
+    if (topicBudgetResult.status === 'fulfilled') {
+      setTopicBudget(normalizeBudgetEvaluation(topicBudgetResult.value));
+    } else {
+      expired = expired || isSessionExpired(topicBudgetResult.reason);
+      setTopicBudgetError(readableError(topicBudgetResult.reason, '读取 topic/month 预算失败'));
+    }
+
     sessionExpiredRef.current = expired;
     setSessionExpired(expired);
-    if (cacheResult.status === 'fulfilled' || usageResult.status === 'fulfilled') {
+    if (
+      cacheResult.status === 'fulfilled' ||
+      usageResult.status === 'fulfilled' ||
+      budgetResult.status === 'fulfilled' ||
+      learnerBudgetResult.status === 'fulfilled' ||
+      topicBudgetResult.status === 'fulfilled'
+    ) {
       setLoadedAt(new Date().toLocaleString('zh-CN', { hour12: false }));
     }
   }, [appliedFilters]);
@@ -475,7 +865,10 @@ export default function CostsPage() {
     : null;
   const lastRun = maintenance.lastRun;
   const cacheBarWidth = `${(cache.hitRate * 100).toFixed(1)}%`;
-  const busy = cacheState === 'loading' || usageState === 'loading';
+  const busy = cacheState === 'loading' || usageState === 'loading' || budgetState === 'loading';
+  const learnerId = appliedFilters?.learnerId.trim() ?? '';
+  const topicId = appliedFilters?.topicId.trim() ?? '';
+  const budgetConfigured = hasAnyBudgetLimit(budgetSnapshot);
   const learnerRows: UsageTableRow[] = usage.byLearner.map((bucket) => ({
     ...bucket,
     label: bucket.learnerId ?? '未归属学习者',
@@ -533,6 +926,67 @@ export default function CostsPage() {
           </div>
         </form>
         {filterError && <div className="feedback error" role="alert">{filterError}</div>}
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">USAGE BUDGET</p>
+            <h2>用量预算</h2>
+            <p className="muted">读取环境变量配置快照，并按当前 UTC 自然日 / 自然月评估；80% 软告警、100% 超限告警，当前不阻断教学。</p>
+          </div>
+          <span className={`metric-badge ${budgetState === 'error' ? 'warn' : ''}`}>
+            {budgetState === 'loading'
+              ? '读取中'
+              : budgetState === 'error'
+                ? '读取失败'
+                : budgetConfigured
+                  ? 'advisory'
+                  : '未配置'}
+          </span>
+        </div>
+
+        {budgetState === 'error' && !sessionExpired && <div className="feedback error" role="alert">
+          {budgetMessage || '读取预算快照失败。'}
+          <button className="secondary" type="button" onClick={() => void load()}>重试</button>
+        </div>}
+        {budgetState === 'ready' && !budgetConfigured && <div className="feedback warn" role="status">
+          <code>USAGE_BUDGET_CONFIG_JSON</code> 未配置 learner/day 或 topic/month 限额；页面只显示配置状态，不会把 0 元当作免费额度。
+        </div>}
+
+        <div className="cost-summary budget-summary">
+          <div className="cost-stat"><span>配置来源</span><strong>{budgetSnapshot.source === 'environment' ? '环境变量' : budgetSnapshot.source}</strong></div>
+          <div className="cost-stat"><span>告警阈值</span><strong>{formatBudgetRatio(budgetSnapshot.thresholds.warning)} / {formatBudgetRatio(budgetSnapshot.thresholds.exceeded)}</strong></div>
+          <div className="cost-stat"><span>执行方式</span><strong>{budgetSnapshot.enforcement === 'advisory' ? '仅告警，不阻断' : budgetSnapshot.enforcement}</strong></div>
+          <div className="cost-stat"><span>已指定对象</span><strong>{learnerId ? 'learnerId 已填写' : 'learnerId 待填写'} / {topicId ? 'topicId 已填写' : 'topicId 待填写'}</strong></div>
+        </div>
+
+        <div className="budget-grid">
+          <BudgetScopeCard
+            title="learner / day"
+            scope="learner_day"
+            entityLabel={learnerId ? `learnerId: ${learnerId}` : '未指定 learnerId'}
+            limits={budgetSnapshot.scopes.learnerDay.limits}
+            evaluation={learnerBudget}
+            loading={budgetState === 'loading'}
+            error={learnerBudgetError}
+            missingHint="在筛选区填写 learnerId 并应用筛选后，读取该学习者当前 UTC 自然日的用量。"
+            onRetry={() => void load()}
+          />
+          <BudgetScopeCard
+            title="topic / month"
+            scope="topic_month"
+            entityLabel={topicId ? `topicId: ${topicId}` : '未指定 topicId'}
+            limits={budgetSnapshot.scopes.topicMonth.limits}
+            evaluation={topicBudget}
+            loading={budgetState === 'loading'}
+            error={topicBudgetError}
+            missingHint="在筛选区填写 topicId 并应用筛选后，读取该主题当前 UTC 自然月的用量。"
+            onRetry={() => void load()}
+          />
+        </div>
+
+        <p className="helper">预算窗口固定为当前 UTC 自然日 / 自然月，不受上方账本日期范围影响。存在未计价调用或未配置金额上限时，预算卡只展示字符/秒/次数；advisory 状态下 100% 也只告警。</p>
       </section>
 
       <div className="cost-columns">
