@@ -69,6 +69,12 @@ export interface GatewayCallResult<T> {
   latencyMs: number;
 }
 
+/** ASR 一次逻辑调用中实际发生的 pass 轨迹（suspect 时可能包含第二次高质量识别）。 */
+export interface AsrTrace {
+  result: AsrResponse;
+  passes: GatewayCallResult<AsrResponse>[];
+}
+
 /** 缓存键版本。升位即让旧格式索引整体逻辑失效，无需物理删除。 */
 const TTS_KEY_VERSION = 'tts-v3-course';
 /** PRIVATE_DYNAMIC 资产的短 TTL（毫秒），到期后索引与音频都视为 miss。 */
@@ -712,6 +718,16 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
    * M1 的双层由 Gateway 内部完成：先调主适配器，命中 suspect 才调 fallback。
    */
   async asr(request: AsrRequest, decision: RoutingDecision): Promise<AsrResponse> {
+    return (await this.asrWithTrace(request, decision)).result;
+  }
+
+  /**
+   * 与 asr 相同，但额外返回实际发生的 pass，供直连接口按真实调用次数入账。
+   *
+   * suspect 触发第二次高质量识别时，两次 pass 都真实消耗了供应商额度，
+   * 不能只按最终结果记一条。编排器仍使用 asr()，保持原有单条逻辑入账路径。
+   */
+  async asrWithTrace(request: AsrRequest, decision: RoutingDecision): Promise<AsrTrace> {
     const first = await this.callWithFallback<AsrResponse>(
       'asr',
       decision,
@@ -723,11 +739,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     );
 
     if (!first.result.suspect || request.highQuality) {
-      return first.result;
+      return { result: first.result, passes: [first] };
     }
     // Router 判定 L0（预算熔断）时不得为了「二次高质量识别」把请求升级到付费供应商。
     if (decision.level === 'L0') {
-      return first.result;
+      return { result: first.result, passes: [first] };
     }
 
     // suspect：升级到高质量识别
@@ -742,10 +758,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       'mock_asr',
     );
 
-    if (upgraded.result.transcript) {
-      return upgraded.result;
-    }
-    return first.result;
+    const passes = [first, upgraded];
+    return {
+      result: upgraded.result.transcript ? upgraded.result : first.result,
+      passes,
+    };
   }
 
   // ——————————————————— 发音评估 ———————————————————

@@ -63,8 +63,8 @@ SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，
 | --- | --- | --- | --- |
 | `POST /speech/synthesize` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | Gateway TTS 结果，课程级缓存可避免重复计费；`scope` 仅接受内容身份，服务端按 `PRIVATE_DYNAMIC` 处理，不信任客户端声明的归属 | Bearer + `X-Learner-Id` + 额度租约 |
 | `POST /speech/cache/lookup` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | 只读查服务端缓存，不触发供应商、不需租约；命中返回可播放 `speech`，未命中返回 `{ cached:false, speech:null }` | Bearer + `X-Learner-Id` |
-| `POST /speech/recognize` | `{ audioRef, highQuality? }` | ASR 转写结果；ASR 不等于发音准确度评估 | 无 |
-| `POST /speech/evaluate` | `{ audioRef, targetText, granularity?: word\|syllable\|phoneme }` | 发音评测结果 | 无 |
+| `POST /speech/recognize` | `{ audioRef, highQuality?, lessonSessionId? }` | ASR 转写结果；ASR 不等于发音准确度评估；成功调用写 `ai_usage_logs`（`asrSeconds`），suspect 二次识别按两次 pass 各写一条；`lessonSessionId` 提供时必须属于该学习者 | Bearer + `X-Learner-Id` + 额度租约 |
+| `POST /speech/evaluate` | `{ audioRef, targetText, granularity?: word\|syllable\|phoneme, lessonSessionId? }` | 发音评测结果；成功调用写 `ai_usage_logs`（`pronunciationCalls=1`）；`lessonSessionId` 提供时必须属于该学习者 | Bearer + `X-Learner-Id` + 额度租约 |
 | `GET /usage/summary?learnerId=...&lessonSessionId=...` | 可选筛选 | 持久化用量与 `pricingStatus: unpriced`；`costCny=0` 表示未计价，不代表免费 | 无 |
 | `GET /health` | 无 | 状态、Gateway 模式、未校准标记、时间戳 | 无 |
 | `GET /admin/tts-cache` | 管理员 Cookie | TTS 缓存命中率、single-flight 合并数、合成字符数与最近一次清理统计；不返回音频路径或文本 | 管理员会话 |
