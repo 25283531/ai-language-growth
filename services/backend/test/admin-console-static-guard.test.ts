@@ -166,6 +166,17 @@ describe('管理端模型接入页：静态守卫', () => {
     assert.match(providers, /重试读取目录/, '缺少目录读取重试入口');
     assert.match(providers, /visibilitychange|focus/, '会话过期后缺少重新聚焦自动重试');
   });
+
+  it('11. 模型接入页提供 Benchmark 运行按钮、最近结果与生产准入提示', () => {
+    assert.match(providers, /\/model-providers\/benchmarks\?serviceKind=/, '缺少最近 Benchmark 只读查询');
+    assert.match(providers, /\/model-providers\/benchmarks\/run/, '缺少 Benchmark 运行端点');
+    assert.match(providers, /运行 Benchmark/, '缺少运行 Benchmark 按钮');
+    assert.match(providers, /latestBenchmark/, '缺少最近一次 Benchmark 展示');
+    assert.match(providers, /benchmarkType/, '最近结果未展示 Benchmark 类型');
+    assert.match(providers, /productionReady/, '缺少生产准入状态展示');
+    assert.match(providers, /AI_GATEWAY_MODE=live/, '页面未说明 live 模式的生产门禁');
+    assert.match(providers, /method:\s*'POST'[\s\S]{0,300}benchmarks\/run|benchmarks\/run[\s\S]{0,300}method:\s*'POST'/, '运行按钮未使用 POST');
+  });
 });
 
 describe('Android：功能锚点零回归（静态）', () => {

@@ -119,6 +119,7 @@ jobs:
             services/backend/test/textbook-skill-mapping.test.ts \
             services/backend/test/planner-track-band.test.ts \
             services/backend/test/planner-adaptive-choice.test.ts \
+            services/backend/test/provider-benchmark.test.ts \
             services/backend/test/ai-gateway-budget.test.ts \
             services/backend/test/tts-cache.test.ts \
             services/backend/test/tts-scope.test.ts \
@@ -148,6 +149,11 @@ jobs:
           P1_6_DB_INTEGRATION: '1'
           P1_6_EXPECT_LLM_CALLS: '1'
         run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/p1-6-adaptive-ledger.integration.test.ts
+
+      - name: P1-7 benchmark readiness persistence
+        env:
+          P1_7_DB_INTEGRATION: '1'
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/p1-7-benchmark.integration.test.ts
 
       - name: Disposable queue Redis integration
         env:

@@ -152,8 +152,9 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 | `GET /admin/model-providers/catalog` | 无 | 读取预置供应商/模型目录（当前公开） |
 | `GET /admin/model-providers/configs` | 无 | 列出已保存配置，Secret 脱敏 |
 | `PUT /admin/model-providers/configs` | `ProviderConfigInput`，见 `provider-config.service.ts` | 保存模型接入并刷新对应运行时 provider |
-| `GET /admin/model-providers/benchmarks?serviceKind=...` | 服务类型 | 查询性能/价格基准 |
-| `POST /admin/model-providers/benchmarks` | benchmark JSON | 校验并记录基准，刷新 provider |
+| `GET /admin/model-providers/benchmarks?serviceKind=...&configId=...` | 服务类型、可选配置 ID | 查询最近 Benchmark 结果；返回 `latest` 与 `productionReady` |
+| `POST /admin/model-providers/benchmarks/run` | `{ serviceKind, configId }` | 基于近 30 天真实账本运行一次运行准入 Benchmark 并写入 `ai_model_benchmarks`；mock 模式不调用供应商 |
+| `POST /admin/model-providers/benchmarks` | benchmark JSON | 校验并记录手工 Benchmark，刷新 provider；生产门禁只认最近一次结果 |
 | `GET /admin/learning/learners/{learnerId}/memories` | 无 | 列出记忆 |
 | `PUT /admin/learning/learners/{learnerId}/memories/{memoryId}` | `{ memoryType, content, importance?, expiresAt? }` | 修正记忆，标记来源为 `admin_corrected` |
 | `DELETE /admin/learning/learners/{learnerId}/memories/{memoryId}` | 无 | 删除单条记忆 |

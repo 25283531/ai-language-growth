@@ -26,6 +26,7 @@ import { MediaController } from './media/media.controller';
 import { ImageCacheService } from './media/image-cache.service';
 import { ProviderConfigController } from './providers/provider-config.controller';
 import { ProviderConfigService } from './providers/provider-config.service';
+import { ProviderBenchmarkService } from './providers/provider-benchmark.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
 import { UsageCostService } from './usage/usage-cost.service';
 import { UsageAdminController } from './usage/usage-admin.controller';
@@ -81,6 +82,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
   providers: [
     PrismaService,
     ProviderConfigService,
+    ProviderBenchmarkService,
     ImageCacheService,
     CurriculumGeneratorService,
     CurriculumWarmupService,

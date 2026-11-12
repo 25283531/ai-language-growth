@@ -151,7 +151,7 @@ export default function RoutingPage() {
         }}>{routing.fallbackOrder.map((item, index) => <option key={item} value={index}>第 {index + 1} 优先：{levelNames[item]}</option>)}</select></label>)}</div>
       </section>
       <section className="panel" style={{ marginTop: 24 }}>
-        <div className="panel-head"><div><p className="eyebrow">TASK ROUTES</p><h2>任务模型安排</h2><p className="muted">模型来自“模型接入”中保存的配置。先在那里添加并启用供应商，再返回此处选择。</p></div></div>
+        <div className="panel-head"><div><p className="eyebrow">TASK ROUTES</p><h2>任务模型安排</h2><p className="muted">模型来自“模型接入”中保存的配置。先在那里添加并启用供应商，再返回此处选择。生产模式（AI_GATEWAY_MODE=live）下，最近一次 Benchmark 未通过的配置不能保存为已启用路由；mock 模式不阻断。</p></div></div>
         {routing.rules.map((rule, index) => {
           const serviceKind = rule.taskRoute.split('.')[0] || '';
           return <article className="panel" key={rule.taskRoute} style={{ marginTop: 14, padding: 18 }}>

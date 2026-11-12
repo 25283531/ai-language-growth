@@ -200,9 +200,21 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       this.providerTimeouts.delete(alias);
     }
     const configs = (await this.providerConfigs.listEnabledRuntimeConfigs()).filter((item) => item.serviceKind === serviceKind);
-    const enabled: RuntimeProviderConfig[] = [];
-    if (configs.length) {
+    const eligible: RuntimeProviderConfig[] = [];
+    if ((process.env.AI_GATEWAY_MODE ?? 'mock') === 'live') {
       for (const config of configs) {
+        if (await this.providerConfigs.hasPassingBenchmark(config.serviceKind, config.modelAlias, config.id)) {
+          eligible.push(config);
+        } else {
+          this.logger.warn(`生产模式已跳过未通过 Benchmark 的模型：${config.serviceKind}/${config.id}`);
+        }
+      }
+    } else {
+      eligible.push(...configs);
+    }
+    const enabled: RuntimeProviderConfig[] = [];
+    if (eligible.length) {
+      for (const config of eligible) {
         await this.applyRuntimeProvider(config);
         enabled.push(config);
       }

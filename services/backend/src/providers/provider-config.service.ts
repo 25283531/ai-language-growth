@@ -154,6 +154,19 @@ export class ProviderConfigService {
     };
   }
 
+  /** Benchmark 允许对尚未启用的已保存配置做准入评估；凭据只在服务端解密使用。 */
+  async getRuntimeConfigForBenchmark(serviceKind: ServiceKind, configId: string): Promise<RuntimeProviderConfig> {
+    const row = await this.prisma.ai_provider_configs.findFirst({
+      where: { id: configId, serviceKind },
+    });
+    if (!row) throw new BadRequestException('模型配置不存在或服务类型不匹配');
+    return {
+      ...this.toPublic(row),
+      serviceKind,
+      credentials: row.credentialsCiphertext ? this.decrypt(row.credentialsCiphertext) : {},
+    };
+  }
+
   async save(input: ProviderConfigInput): Promise<PublicProviderConfig> {
     const parsed = configInput.safeParse(input);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
@@ -168,6 +181,12 @@ export class ProviderConfigService {
       ? await this.prisma.ai_provider_configs.findFirst({ where: { id: value.id, serviceKind: value.serviceKind } })
       : undefined;
     if (value.id && !existing) throw new BadRequestException('模型配置不存在或服务类型不匹配');
+    if (value.enabled && value.serviceKind !== 'embedding' && (process.env.AI_GATEWAY_MODE ?? 'mock') === 'live') {
+      if (!existing) {
+        throw new BadRequestException('生产模式（AI_GATEWAY_MODE=live）下新增模型必须先保存为停用并运行通过的 Benchmark，再启用。');
+      }
+      await this.assertProductionReady(value.serviceKind, value.modelAlias, existing.id, false);
+    }
     const credentials = { ...value.credentials };
     if (value.apiKey?.trim()) credentials.apiKey = value.apiKey.trim();
     const requiredCredentialFields: Record<string, string[]> = {
@@ -364,12 +383,21 @@ export class ProviderConfigService {
       include: { benchmarks: { orderBy: { testedAt: 'desc' }, take: 10 } },
       orderBy: { createdAt: 'desc' },
     });
-    return models.map((model) => ({
-      modelAlias: model.alias,
-      level: model.level,
-      enabled: model.enabled,
-      benchmarks: model.benchmarks,
-    }));
+    return models.map((model) => {
+      const acceptedTypes = new Set([
+        `${serviceKind}_child_english`,
+        `${serviceKind}_runtime_readiness`,
+      ]);
+      const latest = model.benchmarks.find((item) => acceptedTypes.has(item.benchmarkType)) ?? null;
+      return {
+        modelAlias: model.alias,
+        level: model.level,
+        enabled: model.enabled,
+        benchmarks: model.benchmarks,
+        latest,
+        productionReady: model.enabled && latest?.passed === true && latest.sampleCount > 0,
+      };
+    });
   }
 
   async listRuntimeScores(serviceKind: ServiceKind) {
@@ -418,16 +446,7 @@ export class ProviderConfigService {
     const parsed = benchmarkInput.safeParse(input);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const value = parsed.data;
-    const provider = await this.prisma.ai_providers.findUnique({
-      where: { alias: this.providerAlias(value.serviceKind, value.configId) },
-      select: { id: true },
-    });
-    if (!provider) throw new BadRequestException('请先保存该服务的模型接入配置');
-    const model = await this.prisma.ai_models.findUnique({
-      where: { providerId_alias: { providerId: provider.id, alias: value.modelAlias } },
-      select: { id: true },
-    });
-    if (!model) throw new BadRequestException('当前服务配置中没有该模型');
+    const model = await this.findBenchmarkModel(value.serviceKind, value.modelAlias, value.configId);
     const benchmark = await this.prisma.ai_model_benchmarks.create({
       data: {
         modelId: model.id,
@@ -439,6 +458,43 @@ export class ProviderConfigService {
       },
     });
     return { ...benchmark, serviceKind: value.serviceKind, configId: value.configId };
+  }
+
+  /** 记录一次基于真实账本的运行准入评估；不接收调用方伪造的分数。 */
+  async recordRuntimeBenchmark(input: {
+    serviceKind: ServiceKind;
+    configId: string;
+    modelAlias: string;
+    score: number;
+    sampleCount: number;
+    passed: boolean;
+    notes: string;
+  }) {
+    const model = await this.findBenchmarkModel(input.serviceKind, input.modelAlias, input.configId);
+    return this.prisma.ai_model_benchmarks.create({
+      data: {
+        modelId: model.id,
+        benchmarkType: `${input.serviceKind}_runtime_readiness`,
+        score: input.score,
+        sampleCount: input.sampleCount,
+        passed: input.passed,
+        notes: input.notes.slice(0, 2000),
+      },
+    });
+  }
+
+  private async findBenchmarkModel(serviceKind: ServiceKind, modelAlias: string, configId?: string) {
+    const provider = await this.prisma.ai_providers.findUnique({
+      where: { alias: this.providerAlias(serviceKind, configId) },
+      select: { id: true },
+    });
+    if (!provider) throw new BadRequestException('请先保存该服务的模型接入配置');
+    const model = await this.prisma.ai_models.findUnique({
+      where: { providerId_alias: { providerId: provider.id, alias: modelAlias } },
+      select: { id: true },
+    });
+    if (!model) throw new BadRequestException('当前服务配置中没有该模型');
+    return model;
   }
 
   async listPrices(serviceKind: ProviderServiceKind, configId?: string) {
@@ -495,7 +551,12 @@ export class ProviderConfigService {
     return this.listPrices(value.serviceKind, value.configId);
   }
 
-  async hasPassingBenchmark(serviceKind: ServiceKind, modelAlias: string, configId?: string): Promise<boolean> {
+  async hasPassingBenchmark(
+    serviceKind: ServiceKind,
+    modelAlias: string,
+    configId?: string,
+    requireModelEnabled = true,
+  ): Promise<boolean> {
     const provider = await this.prisma.ai_providers.findUnique({
       where: { alias: this.providerAlias(serviceKind, configId) },
       select: { id: true },
@@ -506,15 +567,36 @@ export class ProviderConfigService {
       include: {
         benchmarks: {
           where: {
-            benchmarkType: `${serviceKind}_child_english`,
-            passed: true,
-            sampleCount: { gt: 0 },
+            benchmarkType: {
+              in: [`${serviceKind}_child_english`, `${serviceKind}_runtime_readiness`],
+            },
           },
+          orderBy: { testedAt: 'desc' },
           take: 1,
         },
       },
     });
-    return model?.enabled === true && model.benchmarks.length > 0;
+    if (!model) return false;
+    if (requireModelEnabled && model.enabled !== true) return false;
+    const latest = model.benchmarks[0];
+    return latest?.passed === true && latest.sampleCount > 0;
+  }
+
+  /**
+   * 生产模式门禁：最近一次 Benchmark 未通过时，禁止启用配置或把配置写入已启用路由。
+   * mock 模式（当前生产与 CI）不阻断，便于本地开发和演示；它不会调用真实供应商。
+   */
+  async assertProductionReady(
+    serviceKind: ServiceKind,
+    modelAlias: string,
+    configId?: string,
+    requireModelEnabled = true,
+  ): Promise<void> {
+    if ((process.env.AI_GATEWAY_MODE ?? 'mock') !== 'live') return;
+    if (await this.hasPassingBenchmark(serviceKind, modelAlias, configId, requireModelEnabled)) return;
+    throw new BadRequestException(
+      '生产模式（AI_GATEWAY_MODE=live）下，该模型最近一次 Benchmark 未通过或样本不足；请先运行 Benchmark 并确认通过。',
+    );
   }
 
   // 管理路由由 main.ts 的 AdminAuthService 会话中间件统一保护。
