@@ -69,6 +69,8 @@ SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，
 | `GET /health` | 无 | 状态、Gateway 模式、未校准标记、时间戳 | 无 |
 | `GET /admin/tts-cache` | 管理员 Cookie | TTS 缓存命中率、single-flight 合并数、合成字符数与最近一次清理统计；不返回音频路径或文本 | 管理员会话 |
 | `GET /admin/usage/cost?from=...&to=...&learnerId=...&lessonSessionId=...&topicId=...` | 可选筛选；`from`/`to` 为 ISO 时间，默认最近 30 天，范围最大 366 天 | 按 learner/topic/day 汇总 TTS 字符、ASR 秒、发音次数、估算金额与 `unpricedCalls`；topic 取 `lesson_sessions.topicId`，未关联会话单列 null；只读 | 管理员会话 |
+| `GET /admin/usage/budget` | 无 | 返回环境变量 `USAGE_BUDGET_CONFIG_JSON` 的生效快照：`learner_day` / `topic_month` 限额、80%/100% 阈值、`enforcement=advisory` | 管理员会话 |
+| `GET /admin/usage/budget/evaluate?scope=learner_day&learnerId=...` 或 `?scope=topic_month&topicId=...` | `scope` 必填；对应作用域标识必填 | 只读聚合当前窗口并评估；80% `warning`、100% `exceeded`，均不阻断；未计价或未配置金额时 `displayMode=usage`，只返回字符/秒/次数 | 管理员会话 |
 | `GET /config/audit` | 无 | 脱敏供应商配置摘要；`NODE_ENV=production` 时 404 | 仅开发环境门槛，不是认证 |
 | `GET /media/audio/{file}` | 内容指纹文件名 + Bearer + `X-Learner-Id` + 额度租约 | 流式返回本地 TTS 文件；扩展名白名单 + `media_assets` 归属校验：`PUBLIC_CURRICULUM` / 旧资产按租约可读，`PRIVATE_DYNAMIC` / `PRIVATE_UPLOAD` 仅归属学习者可读，过期按 404 | 学习者归属 + 租约 |
 | `POST /media/audio/uploads` | 已停用 | 返回 `410 AUDIO_UPLOAD_DISABLED`；录音改为 `POST /lessons/:id/turn` 的 `learnerResponse.audioBase64`（最大 20,000,000 字符），服务端不落盘 | — |
@@ -113,6 +115,13 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 - 响应为 `{ from, to, totals, byLearner, byTopic, byDay, note }`。每个桶包含 `calls`、`ttsCharacters`、`asrSeconds`、`pronunciationCalls`、`estimatedCostCny`、`unpricedCalls`；`byDay.date` 为 UTC 日期 `YYYY-MM-DD`。
 - `topic` 维度取 `lesson_sessions.topicId`，未关联会话的账本行在 `byTopic` 中以 `topicId: null` 单列；不伪造 `courseId` / `lessonId`。
 - `estimatedCostCny = 0` 可能是未计价而不是免费；`unpricedCalls > 0` 表示有计量单位但缺少模型或对应价格类型。接口不返回原始文本、音频或供应商凭据。
+
+### 用量预算（管理员只读，P2-2D）
+
+- 配置来源：环境变量 `USAGE_BUDGET_CONFIG_JSON`，JSON 对象包含 `learnerDay` 与 `topicMonth`；可配置 `ttsCharacters`、`asrSeconds`、`pronunciationCalls`、可选 `estimatedCostCny`。示例见 `deploy/docker/.env.example`。
+- `GET /api/v1/admin/usage/budget` 返回生效快照，不返回环境变量原文或凭据。
+- `GET /api/v1/admin/usage/budget/evaluate` 按 UTC 自然日 (`learner_day`) 或 UTC 自然月 (`topic_month`) 聚合 `ai_usage_logs`。80% 为 `warning`，100% 为 `exceeded`；当前 `enforcement=advisory`、`blocked=false`，不接 router 阻断。
+- 未配置 `estimatedCostCny`，或窗口内存在 `unpricedCalls` 时，`displayMode=usage`，`cost=null`，只展示字符/秒/次数，不把 0 元当免费。
 
 ### 会员管理
 

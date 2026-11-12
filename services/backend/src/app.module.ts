@@ -29,6 +29,8 @@ import { ProviderConfigService } from './providers/provider-config.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
 import { UsageCostService } from './usage/usage-cost.service';
 import { UsageAdminController } from './usage/usage-admin.controller';
+import { UsageBudgetService } from './usage/usage-budget.service';
+import { UsageBudgetAdminController } from './usage/usage-budget-admin.controller';
 import { MemoryAdminController } from './memory/memory-admin.controller';
 import { SpeechQuotaService } from './usage/speech-quota.service';
 import { RoutingConfigController } from './routing/routing-config.controller';
@@ -60,6 +62,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     UsageController,
     TtsCacheAdminController,
     UsageAdminController,
+    UsageBudgetAdminController,
     HealthController,
     MediaController,
     ProviderConfigController,
@@ -88,6 +91,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     SpeechQuotaService,
     TtsCacheMaintenanceService,
     UsageCostService,
+    UsageBudgetService,
     RoutingConfigService,
     AuthService,
     AdminAuthService,
