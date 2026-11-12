@@ -32,6 +32,7 @@ const read = (relative: string): string => readFileSync(join(ROOT, relative), 'u
 const providers = read('apps/admin-web/app/providers-page.tsx');
 const settings = read('apps/admin-web/app/settings/page.tsx');
 const learning = read('apps/admin-web/app/learning/page.tsx');
+const costs = read('apps/admin-web/app/costs/page.tsx');
 const adminAuth = read('apps/admin-web/app/admin-auth.tsx');
 
 const ANDROID_DIR = join(ROOT, 'apps/android/app/src/main/java/com/alg/languagegrowth');
@@ -259,5 +260,16 @@ describe('R2 必修：换平台后不得继续渲染「已有凭据」误导提�
         '平台切换守卫的真分支仍然渲染「已有凭据」提示（换平台时会误导用户）',
       );
     }
+  });
+});
+
+describe('管理端成本与缓存页：只读静态守卫', () => {
+  it('8. 只读取 /tts-cache，不发送写请求，并展示命中率与合成量', () => {
+    assert.match(costs, /adminFetch<TtsCacheResponse>\('\/tts-cache'\)/, '成本页未通过 adminFetch 读取 /tts-cache');
+    assert.match(costs, /hitRate/, '成本页未展示命中率');
+    assert.match(costs, /charactersSynthesized/, '成本页未展示实际合成字符');
+    assert.match(costs, /misses/, '成本页未展示未命中次数');
+    assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '成本页不应发送写请求');
+    assert.match(costs, /void\s+load\(\)/, '成本页挂载后未自动读取指标');
   });
 });

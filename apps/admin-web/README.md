@@ -8,6 +8,10 @@ The page never reads saved secret values back from the API. Secret fields left b
 
 Future parent progress, curriculum, and cost dashboards remain separate from this operator screen.
 
+### 成本与缓存（只读）
+
+`/costs` 读取 `GET /api/v1/admin/tts-cache`，展示当前后端进程的 TTS 缓存命中率、请求/命中/合并/未命中次数、实际合成字符、单次合成字符均摊，以及最近一次缓存清理结果。该接口没有 `lessonId` 或课程维度，页面不伪造整课金额；「单课成本（估算）」仅按实际合成字符 ÷ 合成次数展示，真实整课成本需课程账本接入。页面没有清理、改价或写入按钮。
+
 ## 操作说明
 
 ### 打开页面即读取配置
