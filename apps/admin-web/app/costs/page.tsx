@@ -632,7 +632,8 @@ function BudgetScopeCard({
       {metrics.length > 0
         ? <div className="budget-metrics">{metrics.map((metric) => <BudgetMetricRow key={metric.key} metric={metric} />)}</div>
         : <p className="empty-state">该作用域未配置字符/秒/次数上限。</p>}
-      {evaluation.unpricedCalls > 0 && <div className="feedback warn" role="status">
+      {evaluation.unpricedCalls > 0 &&
+        !evaluation.notices.some((notice) => notice.includes('未计价')) && <div className="feedback warn" role="status">
         有 {formatInteger(evaluation.unpricedCalls)} 次未计价调用；金额预算未参与判定，本卡只展示字符/秒/次数。
       </div>}
       {evaluation.notices.length > 0 && <ul className="budget-notices">

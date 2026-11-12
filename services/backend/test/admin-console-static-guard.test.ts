@@ -309,6 +309,11 @@ describe('管理端成本与缓存页：只读静态守卫', () => {
     }
     assert.match(costs, /displayMode/, '成本页未消费 displayMode');
     assert.match(costs, /unpricedCalls/, '成本页未展示未计价调用');
+    assert.match(
+      costs,
+      /notices\.some\(\(notice\) => notice\.includes\('未计价'\)\)/,
+      '未计价提示在 notices 已包含时仍会重复渲染卡片警示',
+    );
     assert.match(costs, /只(?:展示|显示)字符\/秒\/次数/, '成本页未说明未计价时只展示用量');
     assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '预算接入不应发送写请求');
   });
