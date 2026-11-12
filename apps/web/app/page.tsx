@@ -33,6 +33,7 @@ import type {
   UsageSummary,
   SpeechPayload,
 } from './types';
+import { LESSON_START_ENABLED } from './runtime-config';
 
 const TOPICS = [
   { id: 'topic-greetings', label: '问候' },
@@ -276,7 +277,7 @@ export default function WorkbenchPage() {
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [classroomMode, setClassroomMode] = useState(true);
+  const [classroomMode, setClassroomMode] = useState(LESSON_START_ENABLED);
   const isBusy = busy !== null;
 
   const pushLog = useCallback((kind: LogKind, title: string, detail?: string) => {
@@ -361,6 +362,10 @@ export default function WorkbenchPage() {
   };
 
   const onStart = async () => {
+    if (!LESSON_START_ENABLED) {
+      pushLog('err', 'Web 开课入口已关闭', '生产评估模式只读；正式课堂请在 Android 客户端进行。');
+      return;
+    }
     setBusy('start');
     try {
       const r = await startLesson(effectiveLearnerId, topicId);
@@ -522,9 +527,10 @@ export default function WorkbenchPage() {
   return (
     <main className="app">
       <header>
-        <nav className="account-nav"><button className="btn ghost sm" onClick={() => setClassroomMode(true)}>课堂联调预览</button><Link href="/account">账户中心</Link><Link href="/login">登录</Link><Link href="/register">注册</Link></nav>
+        <nav className="account-nav">{LESSON_START_ENABLED && <button className="btn ghost sm" onClick={() => setClassroomMode(true)}>课堂联调预览</button>}<Link href="/account">账户中心</Link><Link href="/login">登录</Link><Link href="/register">注册</Link></nav>
         <div className="notice" role="status">
           <b>内部评估专用</b>：Web 不是孩子实际使用的学习端；正式学习在 Android 客户端完成。本页仅用于检查教学指令、证据与成本，不对外投放。
+          {!LESSON_START_ENABLED && <div className="notice-text">当前为<b>生产评估模式</b>，Web 开课入口已关闭；如需本地联调，请以 <span className="mono">NEXT_PUBLIC_ENABLE_LESSON_START=true</span> 重新构建。</div>}
         </div>
         <h1>M1 教学评估台 · 成长型 AI 儿童英语语言习得平台</h1>
         <p className="brand-sub">
@@ -535,7 +541,7 @@ export default function WorkbenchPage() {
 
       {/* 顶部控制区 */}
       <div className="topbar">
-        <div className="field grow" style={{ maxWidth: 210 }}>
+        {LESSON_START_ENABLED && <div className="field grow" style={{ maxWidth: 210 }}>
           <label htmlFor="topic">主题 topicId</label>
           <select id="topic" value={topicId} onChange={(e) => setTopicId(e.target.value)}>
             {TOPICS.map((t) => (
@@ -544,15 +550,19 @@ export default function WorkbenchPage() {
               </option>
             ))}
           </select>
-        </div>
+        </div>}
         <div className="field grow" style={{ maxWidth: 230 }}>
           <label htmlFor="learner">学习者 learnerId</label>
           <input id="learner" value={learnerId} onChange={(e) => setLearnerId(e.target.value)} />
         </div>
         <div className="row-actions">
-          <button className="btn primary" onClick={() => void onStart()} disabled={isBusy}>
-            开课 /lessons/start
-          </button>
+          {LESSON_START_ENABLED ? (
+            <button className="btn primary" onClick={() => void onStart()} disabled={isBusy}>
+              开课 /lessons/start
+            </button>
+          ) : (
+            <span className="hint">生产评估模式 · 已关闭 Web 开课</span>
+          )}
           <button className="btn warn" onClick={() => void onFinish()} disabled={isBusy || !sessionId}>
             结课 /finish
           </button>

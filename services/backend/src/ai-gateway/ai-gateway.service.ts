@@ -69,6 +69,12 @@ export interface GatewayCallResult<T> {
   latencyMs: number;
 }
 
+/** ASR 一次逻辑调用中实际发生的 pass 轨迹（suspect 时可能包含第二次高质量识别）。 */
+export interface AsrTrace {
+  result: AsrResponse;
+  passes: GatewayCallResult<AsrResponse>[];
+}
+
 /** 缓存键版本。升位即让旧格式索引整体逻辑失效，无需物理删除。 */
 const TTS_KEY_VERSION = 'tts-v3-course';
 /** PRIVATE_DYNAMIC 资产的短 TTL（毫秒），到期后索引与音频都视为 miss。 */
@@ -151,6 +157,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   /** Coalesce simultaneous requests for the same utterance within this process. */
   private readonly ttsInFlight = new Map<string, Promise<GatewayCallResult<TtsResponse>>>();
   private readonly providerTimeouts = new Map<string, number>();
+  /** TTS 成本可观测指标；只在进程内累计，重启归零。 */
+  private ttsRequests = 0;
+  private ttsCacheHits = 0;
+  private ttsCacheMisses = 0;
+  private ttsCoalesced = 0;
+  private ttsCharactersSynthesized = 0;
   private pronunciationCandidates: string[] = [];
   private readonly runtimeCandidates: Record<'llm' | 'tts' | 'asr', string[]> = {
     llm: [],
@@ -188,9 +200,21 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       this.providerTimeouts.delete(alias);
     }
     const configs = (await this.providerConfigs.listEnabledRuntimeConfigs()).filter((item) => item.serviceKind === serviceKind);
-    const enabled: RuntimeProviderConfig[] = [];
-    if (configs.length) {
+    const eligible: RuntimeProviderConfig[] = [];
+    if ((process.env.AI_GATEWAY_MODE ?? 'mock') === 'live') {
       for (const config of configs) {
+        if (await this.providerConfigs.hasPassingBenchmark(config.serviceKind, config.modelAlias, config.id)) {
+          eligible.push(config);
+        } else {
+          this.logger.warn(`生产模式已跳过未通过 Benchmark 的模型：${config.serviceKind}/${config.id}`);
+        }
+      }
+    } else {
+      eligible.push(...configs);
+    }
+    const enabled: RuntimeProviderConfig[] = [];
+    if (eligible.length) {
+      for (const config of eligible) {
         await this.applyRuntimeProvider(config);
         enabled.push(config);
       }
@@ -333,8 +357,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   ): Promise<GatewayCallResult<TtsResponse>> {
     const normalizedRequest = this.normalizeTtsRequest(request);
     const cacheKey = this.ttsCacheKey(normalizedRequest);
+    this.ttsRequests += 1;
     const pending = this.ttsInFlight.get(cacheKey);
-    if (pending) return this.cachedTtsOutcome(await pending);
+    if (pending) {
+      this.ttsCoalesced += 1;
+      return this.cachedTtsOutcome(await pending);
+    }
     const work = this.resolveTts(normalizedRequest, decision, cacheKey);
     this.ttsInFlight.set(cacheKey, work);
     try { return await work; }
@@ -353,7 +381,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   ): Promise<GatewayCallResult<TtsResponse>> {
     // —— 缓存命中：反复播放不重新消耗 TTS ——
     const cached = await this.findTtsCache(cacheKey, normalizedRequest);
-    if (cached) return this.cachedTtsOutcome(cached.outcome);
+    if (cached) {
+      this.ttsCacheHits += 1;
+      return this.cachedTtsOutcome(cached.outcome);
+    }
+    this.ttsCacheMisses += 1;
 
     const outcome = await this.callWithFallback<TtsResponse>(
       'tts',
@@ -365,6 +397,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       'mock_tts',
     );
     Object.assign(outcome.result, this.ttsSpeedMetadata(normalizedRequest, outcome.providerAlias));
+    if (!outcome.result.cached) this.ttsCharactersSynthesized += outcome.result.characters || 0;
 
     // 只要拿到可用音频就缓存：降级到兜底适配器同样是有效音频，
     // 若因 degraded 而不缓存，Mock 模式下重复播放会永远重新计费。
@@ -697,6 +730,16 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
    * M1 的双层由 Gateway 内部完成：先调主适配器，命中 suspect 才调 fallback。
    */
   async asr(request: AsrRequest, decision: RoutingDecision): Promise<AsrResponse> {
+    return (await this.asrWithTrace(request, decision)).result;
+  }
+
+  /**
+   * 与 asr 相同，但额外返回实际发生的 pass，供直连接口按真实调用次数入账。
+   *
+   * suspect 触发第二次高质量识别时，两次 pass 都真实消耗了供应商额度，
+   * 不能只按最终结果记一条。编排器仍使用 asr()，保持原有单条逻辑入账路径。
+   */
+  async asrWithTrace(request: AsrRequest, decision: RoutingDecision): Promise<AsrTrace> {
     const first = await this.callWithFallback<AsrResponse>(
       'asr',
       decision,
@@ -708,11 +751,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     );
 
     if (!first.result.suspect || request.highQuality) {
-      return first.result;
+      return { result: first.result, passes: [first] };
     }
     // Router 判定 L0（预算熔断）时不得为了「二次高质量识别」把请求升级到付费供应商。
     if (decision.level === 'L0') {
-      return first.result;
+      return { result: first.result, passes: [first] };
     }
 
     // suspect：升级到高质量识别
@@ -727,10 +770,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       'mock_asr',
     );
 
-    if (upgraded.result.transcript) {
-      return upgraded.result;
-    }
-    return first.result;
+    const passes = [first, upgraded];
+    return {
+      result: upgraded.result.transcript ? upgraded.result : first.result,
+      passes,
+    };
   }
 
   // ——————————————————— 发音评估 ———————————————————
@@ -751,7 +795,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         ...request,
         ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
       }),
-      undefined,
+      // 与 ASR/TTS 一致：Router 判 L0 时仍可用零成本 Mock 发音评估，
+      // 不能因缺少兜底别名把本地 mock 链路打成 500。
+      'mock_pronunciation',
     );
     return outcome.result;
   }
@@ -870,12 +916,31 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     }
   }
 
-  /** 缓存统计，供成本与用量接口展示。 */
-  ttsCacheStats(): { entries: number; hitCharactersSaved: number } {
+  /** 缓存统计，供管理端与成本看板展示；命中率包含 single-flight 合并请求。 */
+  ttsCacheStats(): {
+    entries: number;
+    hitCharactersSaved: number;
+    requests: number;
+    cacheHits: number;
+    coalesced: number;
+    misses: number;
+    hitRate: number;
+    charactersSynthesized: number;
+  } {
     let saved = 0;
     for (const v of this.ttsCache.values()) {
       saved += v.characters;
     }
-    return { entries: this.ttsCache.size, hitCharactersSaved: saved };
+    const avoided = this.ttsCacheHits + this.ttsCoalesced;
+    return {
+      entries: this.ttsCache.size,
+      hitCharactersSaved: saved,
+      requests: this.ttsRequests,
+      cacheHits: this.ttsCacheHits,
+      coalesced: this.ttsCoalesced,
+      misses: this.ttsCacheMisses,
+      hitRate: this.ttsRequests ? Number((avoided / this.ttsRequests).toFixed(4)) : 0,
+      charactersSynthesized: this.ttsCharactersSynthesized,
+    };
   }
 }

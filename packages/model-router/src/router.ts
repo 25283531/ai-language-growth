@@ -95,6 +95,16 @@ export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
       enabled: true,
     },
     {
+      // Planner 的候选活动排序默认由规则完成；只有同层、不同任务类型
+      // 无法用规则稳定裁决时，才用 L1 轻量模型做一次边界选择。
+      taskRoute: 'llm.learning_plan_tiebreak',
+      primary: { providerAlias: 'free_llm', modelAlias: 'free_llm_01', level: 'L1' },
+      fallback: [{ providerAlias: 'lowcost_llm', modelAlias: 'lowcost_llm_01', level: 'L1' }],
+      maxConcurrency: 2,
+      dailyBudgetCny: 20,
+      enabled: true,
+    },
+    {
       taskRoute: 'llm.growth_report',
       primary: { providerAlias: 'lowcost_llm', modelAlias: 'lowcost_llm_01', level: 'L1' },
       fallback: [{ providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' }],

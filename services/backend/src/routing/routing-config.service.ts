@@ -14,6 +14,7 @@ import {
   type ServiceKind,
 } from '@alg/shared-contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { ProviderConfigService } from '../providers/provider-config.service';
 
 const endpointSchema = z.object({
   providerAlias: z.string().trim().min(1).max(120),
@@ -42,6 +43,7 @@ export class RoutingConfigService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly router: ModelRouterImpl,
+    private readonly providerConfigs: ProviderConfigService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -70,6 +72,20 @@ export class RoutingConfigService implements OnModuleInit {
     for (const route of value.rules) {
       const serviceKind = route.taskRoute.split('.')[0] as ServiceKind;
       serviceByRoute.set(route.taskRoute, serviceKind);
+    }
+
+    // production 门禁只作用于显式配置的供应商模型；mock/L0 和默认别名不阻断。
+    // 最近一次 Benchmark 未通过时，禁止把该模型写入已启用路由。
+    if ((process.env.AI_GATEWAY_MODE ?? 'mock') === 'live') {
+      for (const route of value.rules.filter((item) => item.enabled)) {
+        const serviceKind = serviceByRoute.get(route.taskRoute)!;
+        const prefix = `configured_${serviceKind}_`;
+        for (const endpoint of [route.primary, ...route.fallback]) {
+          if (!endpoint.providerAlias.startsWith(prefix)) continue;
+          const configId = endpoint.providerAlias.slice(prefix.length);
+          await this.providerConfigs.assertProductionReady(serviceKind, endpoint.modelAlias, configId);
+        }
+      }
     }
 
     await this.prisma.$transaction(async (tx) => {

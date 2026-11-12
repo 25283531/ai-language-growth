@@ -92,6 +92,13 @@ describe('服务端 TTS 缓存', () => {
     assert.equal(results.filter((item) => item.result.cached).length, 7);
     assert.ok(results.every((item) => item.result.audioRef === 'https://media.example/tts/audio.mp3'));
     assert.ok(results.every((item) => item.result.providerAlias === 'configured_tts_paid'));
+    const stats = gateway.ttsCacheStats();
+    assert.equal(stats.requests, 8);
+    assert.equal(stats.misses, 1);
+    assert.equal(stats.coalesced, 7);
+    assert.equal(stats.cacheHits, 0);
+    assert.equal(stats.hitRate, 0.875, '命中率必须包含 single-flight 合并请求');
+    assert.equal(stats.charactersSynthesized, 5);
   });
 
   it('合成后播放前探测命中缓存，且命中不重新计费', async () => {
@@ -103,6 +110,10 @@ describe('服务端 TTS 缓存', () => {
     assert.equal(hit?.cached, true);
     assert.equal(hit?.characters, 0);
     assert.equal(hit?.audioRef, 'https://media.example/tts/audio.mp3');
+    await gateway.ttsWithResult(request, decision);
+    const stats = gateway.ttsCacheStats();
+    assert.equal(stats.cacheHits, 1);
+    assert.equal(stats.hitRate, 0.5);
   });
 
   it('语速、音色或文本变化使用不同缓存键', async () => {

@@ -116,8 +116,11 @@ jobs:
             services/backend/test/growth-followup.test.ts \
             services/backend/test/prisma-usage-ledger.test.ts \
             services/backend/test/learners-auth.test.ts \
+            services/backend/test/parent-report.test.ts \
             services/backend/test/textbook-skill-mapping.test.ts \
             services/backend/test/planner-track-band.test.ts \
+            services/backend/test/planner-adaptive-choice.test.ts \
+            services/backend/test/provider-benchmark.test.ts \
             services/backend/test/ai-gateway-budget.test.ts \
             services/backend/test/tts-cache.test.ts \
             services/backend/test/tts-scope.test.ts \
@@ -125,6 +128,9 @@ jobs:
             services/backend/test/prosody-contract.test.ts \
             services/backend/test/tts-public-scope.test.ts \
             services/backend/test/pronunciation-coach.test.ts \
+            services/backend/test/speech-usage.test.ts \
+            services/backend/test/usage-cost.test.ts \
+            services/backend/test/usage-budget.test.ts \
             services/backend/test/admin-console-static-guard.test.ts \
             services/backend/test/web-client-auth-guard.test.ts \
             services/backend/test/queue-runtime.test.ts \
@@ -133,6 +139,22 @@ jobs:
             packages/model-router/test/router.test.ts \
             packages/shared-contracts/test/cefr.test.ts \
             packages/ai-provider-sdk/test/*.test.ts
+
+      - name: Usage cost aggregation DB integration
+        env:
+          USAGE_COST_DB_INTEGRATION: '1'
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/usage-cost.integration.test.ts
+
+      - name: P1-6 adaptive planner LLM call budget
+        env:
+          P1_6_DB_INTEGRATION: '1'
+          P1_6_EXPECT_LLM_CALLS: '1'
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/p1-6-adaptive-ledger.integration.test.ts
+
+      - name: P1-7 benchmark readiness persistence
+        env:
+          P1_7_DB_INTEGRATION: '1'
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/p1-7-benchmark.integration.test.ts
 
       - name: Disposable queue Redis integration
         env:
@@ -143,6 +165,9 @@ jobs:
       - name: Start mock API for M1 integration acceptance
         env:
           NODE_ENV: development
+          # 一次性测试管理员；仅用于本地/CI mock 链路，不是生产凭据。
+          ADMIN_USERNAME: ci-admin
+          ADMIN_PASSWORD: ci-admin-only
         run: |
           nohup node services/backend/dist/main.js >/tmp/alg-backend.log 2>&1 &
           for attempt in $(seq 1 30); do
@@ -154,3 +179,11 @@ jobs:
 
       - name: M1 API flow, TTS cache, idempotency, and growth archive
         run: npx tsx --test services/backend/test/m1-api.integration.test.ts
+
+      - name: P2-2E speech usage flow and ledger reconciliation
+        env:
+          P2_2E_DB_INTEGRATION: '1'
+          P2_2E_API_URL: http://127.0.0.1:3100/api/v1
+          ADMIN_USERNAME: ci-admin
+          ADMIN_PASSWORD: ci-admin-only
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/p2-2e-usage-flow.integration.test.ts

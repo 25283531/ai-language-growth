@@ -28,6 +28,22 @@
 | `GET /learners/{id}/abilities` | 无 | 能力状态与未校准提示 | 无 |
 | `GET /learners/{id}/evidence?skillNodeId=...` | 可选筛选 | 最近最多 100 条学习证据 | 无 |
 | `GET /learners/{id}/growth` | 无 | 最近成长快照、最多 30 条未过期记忆、最多 30 条待复习计划及未校准提示 | 无 |
+| `GET /learners/{id}/reports/weekly?weekStart=YYYY-MM-DD` | 可选周一，默认本周，最多回看 8 周 | 家长周报：课堂数、学习时长估算、独立完成数、覆盖能力数、本周亮点、待巩固点、到期复习与下周确定性建议 | 会话（Bearer / Cookie） |
+
+### 家长周报
+
+`GET /learners/{id}/reports/weekly` 是只读周报，不生成诊断、不调用 LLM，也不写数据库。固定使用 `Asia/Shanghai` 时区、周一 00:00 为周起点，返回：
+
+- `summary`：完成课堂数、未完成课堂数、学习时长、活跃天数、独立成功次数、覆盖能力数；
+- `topics`：本周完成的主题及次数；
+- `highlights`：按独立成功次数汇总的亮点（最多 3 项）；
+- `needsPractice`：本周需要再练的能力、错误单元计数，以及 `priorIndependentSuccess`（此前独立完成过）；
+- `reviews`：到期待复习数量、逾期数量、下一次复习时间与最多 3 个复习项；
+- `nextWeek.suggestions`：最多 3 条确定性建议；
+- `privacy`：`includesRawAudio` / `includesTranscript` / `includesProviderData` / `includesInternalCost` 固定为 `false`；
+- `calibrationNotice`：说明周报只是学习记录，不构成能力结论。
+
+`learningMinutes` 是按课堂 `startedAt` / `finishedAt` 计算的自然时长（wall-clock）估算，单节封顶 60 分钟，不是精确活跃时长。独立成功只取 `learning_evidence` 中 `succeeded && independent && contributesToPromotion` 且来源不是 `llm_judgement` 的记录；响应不返回原始音频、转写、供应商别名、成本、`skillNodeId` 或 `masteryCode`。
 
 ## 账户与会员
 
@@ -61,12 +77,16 @@ SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，
 
 | Method / path | 请求 | 成功响应 / 行为 | 认证 |
 | --- | --- | --- | --- |
-| `POST /speech/synthesize` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | Gateway TTS 结果，课程级缓存可避免重复计费；`scope` 仅接受内容身份，服务端按 `PRIVATE_DYNAMIC` 处理，不信任客户端声明的归属 | Bearer + `X-Learner-Id` + 额度租约 |
+| `POST /speech/synthesize` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | Gateway TTS 结果，课程级缓存可避免重复合成；成功调用写 `ai_usage_logs`（`ttsCharacters`），缓存重播写 0 字符但仍保留一行，保证调用次数可对账；`scope.lessonSessionId` 提供时必须属于该学习者，用于归集课程主题；`scope` 仅接受内容身份，服务端按 `PRIVATE_DYNAMIC` 处理，不信任客户端声明的归属 | Bearer + `X-Learner-Id` + 额度租约 |
 | `POST /speech/cache/lookup` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | 只读查服务端缓存，不触发供应商、不需租约；命中返回可播放 `speech`，未命中返回 `{ cached:false, speech:null }` | Bearer + `X-Learner-Id` |
-| `POST /speech/recognize` | `{ audioRef, highQuality? }` | ASR 转写结果；ASR 不等于发音准确度评估 | 无 |
-| `POST /speech/evaluate` | `{ audioRef, targetText, granularity?: word\|syllable\|phoneme }` | 发音评测结果 | 无 |
+| `POST /speech/recognize` | `{ audioRef, highQuality?, lessonSessionId? }` | ASR 转写结果；ASR 不等于发音准确度评估；成功调用写 `ai_usage_logs`（`asrSeconds`），suspect 二次识别按两次 pass 各写一条；`lessonSessionId` 提供时必须属于该学习者 | Bearer + `X-Learner-Id` + 额度租约 |
+| `POST /speech/evaluate` | `{ audioRef, targetText, granularity?: word\|syllable\|phoneme, lessonSessionId? }` | 发音评测结果；成功调用写 `ai_usage_logs`（`pronunciationCalls=1`）；`lessonSessionId` 提供时必须属于该学习者 | Bearer + `X-Learner-Id` + 额度租约 |
 | `GET /usage/summary?learnerId=...&lessonSessionId=...` | 可选筛选 | 持久化用量与 `pricingStatus: unpriced`；`costCny=0` 表示未计价，不代表免费 | 无 |
 | `GET /health` | 无 | 状态、Gateway 模式、未校准标记、时间戳 | 无 |
+| `GET /admin/tts-cache` | 管理员 Cookie | TTS 缓存命中率、single-flight 合并数、合成字符数与最近一次清理统计；不返回音频路径或文本 | 管理员会话 |
+| `GET /admin/usage/cost?from=...&to=...&learnerId=...&lessonSessionId=...&topicId=...` | 可选筛选；`from`/`to` 为 ISO 时间，默认最近 30 天，范围最大 366 天 | 按 learner/topic/day 汇总 TTS 字符、ASR 秒、发音次数、估算金额与 `unpricedCalls`；topic 取 `lesson_sessions.topicId`，未关联会话单列 null；只读 | 管理员会话 |
+| `GET /admin/usage/budget` | 无 | 返回环境变量 `USAGE_BUDGET_CONFIG_JSON` 的生效快照：`learner_day` / `topic_month` 限额、80%/100% 阈值、`enforcement=advisory` | 管理员会话 |
+| `GET /admin/usage/budget/evaluate?scope=learner_day&learnerId=...` 或 `?scope=topic_month&topicId=...` | `scope` 必填；对应作用域标识必填 | 只读聚合当前窗口并评估；80% `warning`、100% `exceeded`，均不阻断；未计价或未配置金额时 `displayMode=usage`，只返回字符/秒/次数 | 管理员会话 |
 | `GET /config/audit` | 无 | 脱敏供应商配置摘要；`NODE_ENV=production` 时 404 | 仅开发环境门槛，不是认证 |
 | `GET /media/audio/{file}` | 内容指纹文件名 + Bearer + `X-Learner-Id` + 额度租约 | 流式返回本地 TTS 文件；扩展名白名单 + `media_assets` 归属校验：`PUBLIC_CURRICULUM` / 旧资产按租约可读，`PRIVATE_DYNAMIC` / `PRIVATE_UPLOAD` 仅归属学习者可读，过期按 404 | 学习者归属 + 租约 |
 | `POST /media/audio/uploads` | 已停用 | 返回 `410 AUDIO_UPLOAD_DISABLED`；录音改为 `POST /lessons/:id/turn` 的 `learnerResponse.audioBase64`（最大 20,000,000 字符），服务端不落盘 | — |
@@ -98,6 +118,27 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 - `PRIVATE_DYNAMIC`：默认 fail-closed；键中含学习者与课堂标识，音频文件与媒体资产按归属隔离，按 24 小时 TTL 失效。
 - 缓存键包含 `contentVersion`、`voiceParamsHash`、`voiceProfileVersion`、`modelFamily`；发布内容、音色档案或模型族变更时旧音频不再命中。`pauseAfterSentenceMs` 属播放端行为，不进缓存键。
 
+### TTS 缓存清理与可观测性
+
+- `TtsCacheMaintenanceService` 默认每 6 小时执行一次，启动 10 分钟后首跑；只清理两类资源：`expiresAt` 已过的资产/索引，以及无任何活跃 `media_assets` / `.tts-*.json` 引用且超过宽限期的顶层音频文件。
+- `PUBLIC_CURRICULUM` / `PRONUNCIATION` 永不按 TTL 删除；索引损坏、数据库删除失败时本轮不删音频；只识别 `24-hex.mp3|wav|m4a`，不碰 `uploads/` 与未知文件。
+- 环境变量：`TTS_CACHE_CLEANUP_ENABLED`（默认 `true`）、`TTS_CACHE_CLEANUP_INTERVAL_MS`（默认 21600000）、`TTS_CACHE_CLEANUP_INITIAL_DELAY_MS`（默认 600000）、`TTS_CACHE_ORPHAN_GRACE_MS`（默认 604800000）。
+- `GET /api/v1/admin/tts-cache` 返回进程内 TTS 缓存指标（请求、命中、single-flight 合并、miss、命中率、合成字符数）与最近一次清理统计；需要管理员 Cookie。
+
+### 用量成本聚合（管理员只读）
+
+- `GET /api/v1/admin/usage/cost`：需要管理员会话；`from` / `to` 为 ISO 时间，缺省为最近 30 天，区间必须小于等于 366 天；可选 `learnerId`、`lessonSessionId`、`topicId` 过滤。
+- 响应为 `{ from, to, totals, byLearner, byTopic, byDay, note }`。每个桶包含 `calls`、`ttsCharacters`、`asrSeconds`、`pronunciationCalls`、`estimatedCostCny`、`unpricedCalls`；`byDay.date` 为 UTC 日期 `YYYY-MM-DD`。
+- `topic` 维度取 `lesson_sessions.topicId`，未关联会话的账本行在 `byTopic` 中以 `topicId: null` 单列；不伪造 `courseId` / `lessonId`。
+- `estimatedCostCny = 0` 可能是未计价而不是免费；`unpricedCalls > 0` 表示有计量单位但缺少模型或对应价格类型。接口不返回原始文本、音频或供应商凭据。
+
+### 用量预算（管理员只读，P2-2D）
+
+- 配置来源：环境变量 `USAGE_BUDGET_CONFIG_JSON`，JSON 对象包含 `learnerDay` 与 `topicMonth`；可配置 `ttsCharacters`、`asrSeconds`、`pronunciationCalls`、可选 `estimatedCostCny`。示例见 `deploy/docker/.env.example`。
+- `GET /api/v1/admin/usage/budget` 返回生效快照，不返回环境变量原文或凭据。
+- `GET /api/v1/admin/usage/budget/evaluate` 按 UTC 自然日 (`learner_day`) 或 UTC 自然月 (`topic_month`) 聚合 `ai_usage_logs`。80% 为 `warning`，100% 为 `exceeded`；当前 `enforcement=advisory`、`blocked=false`，不接 router 阻断。
+- 未配置 `estimatedCostCny`，或窗口内存在 `unpricedCalls` 时，`displayMode=usage`，`cost=null`，只展示字符/秒/次数，不把 0 元当免费。
+
 ### 会员管理
 
 管理端登录后通过 HttpOnly 会话 Cookie 调用以下接口，等级由服务端读取和保存，客户端不能自行传入等级：
@@ -127,8 +168,9 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 | `GET /admin/model-providers/catalog` | 无 | 读取预置供应商/模型目录（当前公开） |
 | `GET /admin/model-providers/configs` | 无 | 列出已保存配置，Secret 脱敏 |
 | `PUT /admin/model-providers/configs` | `ProviderConfigInput`，见 `provider-config.service.ts` | 保存模型接入并刷新对应运行时 provider |
-| `GET /admin/model-providers/benchmarks?serviceKind=...` | 服务类型 | 查询性能/价格基准 |
-| `POST /admin/model-providers/benchmarks` | benchmark JSON | 校验并记录基准，刷新 provider |
+| `GET /admin/model-providers/benchmarks?serviceKind=...&configId=...` | 服务类型、可选配置 ID | 查询最近 Benchmark 结果；返回 `latest` 与 `productionReady` |
+| `POST /admin/model-providers/benchmarks/run` | `{ serviceKind, configId }` | 基于近 30 天真实账本运行一次运行准入 Benchmark 并写入 `ai_model_benchmarks`；mock 模式不调用供应商 |
+| `POST /admin/model-providers/benchmarks` | benchmark JSON | 校验并记录手工 Benchmark，刷新 provider；生产门禁只认最近一次结果 |
 | `GET /admin/learning/learners/{learnerId}/memories` | 无 | 列出记忆 |
 | `PUT /admin/learning/learners/{learnerId}/memories/{memoryId}` | `{ memoryType, content, importance?, expiresAt? }` | 修正记忆，标记来源为 `admin_corrected` |
 | `DELETE /admin/learning/learners/{learnerId}/memories/{memoryId}` | 无 | 删除单条记忆 |
@@ -163,6 +205,18 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 
 推导规则（服务端纯函数，客户端只展示）：`S = Σ clamp(abilities[].stage, 0, 4)`（7 类，缺失按 0），`tier = clamp(floor(S / 2), 0, 14)`，`level = CEFR_BUCKETS[tier]`（0-2 Pre-A1 / 3-5 A1 / 6-8 A2 / 9-11 B1 / 12-14 B2），`extrasUnlocked = min(2 * ceil(tier / 3), 10)`，`unlockedCount = 24 + extrasUnlocked`。并非每档都新增头像（每 3 档才 +2），客户端应使用 `next.unlockAhead` 而不是假定 `next` 一定解锁 2 个。`calibrated` 不作为解锁开关，只影响展示措辞；客户端不保存任何解锁状态，推导幂等。契约与纯函数单测见 `packages/shared-contracts/src/cefr.ts`。
 
+### 课程生成与级别媒体预热（本轮补充登记）
+
+| 接口 | 请求 | 行为 |
+|---|---|---|
+| `POST /admin/curriculum/textbook/generate` | `{ title, level, words, unitSize?, useAi?, persist? }` | 词表生成完整 `schemaVersion 2` JSON；默认按单元写入草稿；不生成图片/语音 |
+| `GET /admin/curriculum/preset?level=A1` | 可选 `level` | 返回服务端预置 CEFR 纯 JSON；只读，不触库、不调用模型 |
+| `POST /admin/curriculum/preset/import` | `{ level? }` | 预置课程按单元写入审核队列；不自动发布 |
+| `POST /admin/curriculum/preset/warmup` | `{ level, maxImages?, maxSpeech? }` | 只处理该级别已发布课程；Openverse + Wikimedia Commons 搜索并缓存最合适的单词/短句/场景图，回填后预生成公共 TTS；返回 `missingImages`，`mock` 模式跳过语音 |
+| `POST /admin/curriculum/images/upload` | multipart：`file`、`key`、`kind`、`targetText`，可选 `targetWord`/`license`/`attribution` | 管理员补传缺失图片；写入 `media_assets` 并挂到已发布活动，返回 `attached` |
+
+完整结构与运维说明见 `docs/curriculum-generation.md`。
+
 ## 当前契约缺口
 
 1. OpenAPI 3 文档尚未生成；管理配置、结课和数据库响应仍缺统一的 Zod schema 与字段级响应约束。
@@ -170,7 +224,7 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 3. 学习者教学 API 仍需把已登录用户与 `guardianId` 归属校验接入所有读写路径；当前账户认证接口已具备。
 4. 原型音频上传已实现，但短期保留、自动删除、对象存储和正式访问控制尚未实现。
 5. 本 API 快照与 M0 冻结验收记录尚未建立，不能称为“contracts are locked in M0”。
-6. 管理端 `admin/auth/*`（登录 / 登出 / 会话查询）、`admin/model-routing`、`admin/curriculum/*`、`admin/backups/*` 尚未在本快照逐条登记；Android 侧 `/user/*` 等接口同样未登记。以上如实记为已知登记缺口：本文仍保持「M0 冻结快照（原型范围）」定位，不改写为完整 API 手册。
+6. 管理端 `admin/auth/*`（登录 / 登出 / 会话查询）、`admin/model-routing`、`admin/curriculum/*`（本轮已登记词表生成、预置读取/导入、预热、缺失图片上传五接口，其余仍待登记）、`admin/backups/*` 尚未在本快照逐条登记；Android 侧 `/user/*` 等接口同样未登记。以上如实记为已知登记缺口：本文仍保持「M0 冻结快照（原型范围）」定位，不改写为完整 API 手册。
 
 ## 代码来源
 

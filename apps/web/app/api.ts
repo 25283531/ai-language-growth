@@ -14,6 +14,7 @@ import type {
   GrowthArchiveResponse,
 } from './types';
 import { authRequest } from './auth-api';
+import { LESSON_START_ENABLED } from './runtime-config';
 
 /** 后端已 enableCors，Web 直连；可用 NEXT_PUBLIC_API_BASE 覆盖。 */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api/v1';
@@ -109,6 +110,9 @@ export function buildTurnRequestBody(
 export const getHealth = (): Promise<HealthResponse> => apiRequest<HealthResponse>('/health');
 
 export function startLesson(learnerId: string, topicId: string): Promise<LessonStartResponse> {
+  if (!LESSON_START_ENABLED) {
+    return Promise.reject(new Error('生产评估模式已关闭 Web 开课入口；正式课堂请在 Android 客户端进行。'));
+  }
   return apiRequest<LessonStartResponse>('/lessons/start', {
     method: 'POST',
     body: JSON.stringify({ learnerId, topicId }),

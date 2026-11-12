@@ -20,7 +20,7 @@ export const TEACHING_AGENTS = {
       'adaptive_candidate_set_has_multiple_eligible_activities',
       'lesson_finish_long_term_focus',
     ],
-    taskRoutes: ['llm.learning_plan'],
+    taskRoutes: ['llm.learning_plan', 'llm.learning_plan_tiebreak'],
     authoritativeInputs: ['published_activities', 'skill_states', 'learning_evidence', 'review_schedule', 'textbook_mapping'],
     outputs: ['candidate_activity_id', 'rationale', 'next_focus_skill_node_ids'],
     mayChangeMastery: false,

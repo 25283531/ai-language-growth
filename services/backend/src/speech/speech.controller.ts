@@ -8,10 +8,11 @@
  * GET  /api/v1/health               健康检查
  */
 import { Body, Controller, Get, HttpException, Inject, Post, Query, Req } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { ModelRouterImpl } from '@alg/model-router';
+import type { UsageRecord } from '@alg/shared-contracts';
 import { resolveLiveServices, resolveTtsProtocol } from '@alg/ai-provider-sdk';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
@@ -44,12 +45,16 @@ const synthesizeSchema = z.object({
 const recognizeSchema = z.object({
   audioRef: z.string().min(1),
   highQuality: z.boolean().default(false),
+  /** 可选课堂会话；提供时校验归属，用于按课程归集 ASR 成本。 */
+  lessonSessionId: z.string().min(1).max(100).optional(),
 });
 
 const evaluateSchema = z.object({
   audioRef: z.string().min(1),
   targetText: z.string().min(1),
   granularity: z.enum(['word', 'syllable', 'phoneme']).default('phoneme'),
+  /** 可选课堂会话；提供时校验归属，用于按课程归集发音成本。 */
+  lessonSessionId: z.string().min(1).max(100).optional(),
 });
 
 @Controller('api/v1/speech')
@@ -71,6 +76,13 @@ export class SpeechController {
     // 一律 fail-closed 到 PRIVATE_DYNAMIC，用请求方 learnerId 作 owner。
     await this.assertClientReservation(request, 'tts');
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
+    // 重播请求会原样带回开课时下发的 scope；带 lessonSessionId 时必须校验归属，
+    // 既用于缓存键，也用于把重播 TTS 归到对应课程主题。
+    const lessonSessionId = await this.optionalLessonSessionId(
+      request,
+      learnerId,
+      parsed.data.scope?.lessonSessionId,
+    );
     const decision = await this.router.route({
       serviceKind: 'tts',
       taskRoute: 'tts.dynamic_teaching',
@@ -89,6 +101,19 @@ export class SpeechController {
       },
       decision,
     );
+    // 每次成功请求都留一行：缓存命中写 0 字符，保持「调用次数 = 账本行数」，
+    // 但绝不把缓存命中重复算成合成字符或费用。
+    await this.recordSpeechUsage({
+      learnerId,
+      lessonSessionId,
+      serviceKind: 'tts',
+      taskRoute: 'tts.dynamic_teaching',
+      level: result.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
+      providerAlias: result.providerAlias,
+      modelAlias: result.modelAlias,
+      ttsCharacters: result.characters,
+      latencyMs: result.latencyMs,
+    });
     return result;
   }
 
@@ -133,15 +158,35 @@ export class SpeechController {
     if (!parsed.success) {
       throw new HttpException({ message: '参数不合法', detail: parsed.error.flatten() }, 400);
     }
-    await this.assertClientReservation(request, 'asr');
+    const learnerId = await this.assertClientReservation(request, 'asr');
+    const lessonSessionId = await this.optionalLessonSessionId(
+      request,
+      learnerId,
+      parsed.data.lessonSessionId,
+    );
     const decision = await this.router.route({
       serviceKind: 'asr',
       taskRoute: 'asr.free_speech',
     });
-    return this.gateway.asr(
+    const trace = await this.gateway.asrWithTrace(
       { audioRef: parsed.data.audioRef, highQuality: parsed.data.highQuality },
       decision,
     );
+    // 直连接口按真实 pass 入账；suspect 二次识别会有两条，不与编排器路径重复。
+    for (const pass of trace.passes) {
+      await this.recordSpeechUsage({
+        learnerId,
+        lessonSessionId,
+        serviceKind: 'asr',
+        taskRoute: 'asr.free_speech',
+        level: pass.result.providerAlias.startsWith('mock_') ? 'L0' : pass.effectiveLevel,
+        providerAlias: pass.result.providerAlias,
+        modelAlias: pass.result.modelAlias,
+        asrSeconds: pass.result.seconds,
+        latencyMs: pass.result.latencyMs,
+      });
+    }
+    return trace.result;
   }
 
   @Post('evaluate')
@@ -150,12 +195,17 @@ export class SpeechController {
     if (!parsed.success) {
       throw new HttpException({ message: '参数不合法', detail: parsed.error.flatten() }, 400);
     }
-    await this.assertClientReservation(request, 'pronunciation');
+    const learnerId = await this.assertClientReservation(request, 'pronunciation');
+    const lessonSessionId = await this.optionalLessonSessionId(
+      request,
+      learnerId,
+      parsed.data.lessonSessionId,
+    );
     const decision = await this.router.route({
       serviceKind: 'pronunciation',
       taskRoute: 'pronunciation.phoneme',
     });
-    return this.gateway.pronunciation(
+    const result = await this.gateway.pronunciation(
       {
         audioRef: parsed.data.audioRef,
         targetText: parsed.data.targetText,
@@ -163,6 +213,66 @@ export class SpeechController {
       },
       decision,
     );
+    await this.recordSpeechUsage({
+      learnerId,
+      lessonSessionId,
+      serviceKind: 'pronunciation',
+      taskRoute: 'pronunciation.phoneme',
+      level: result.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
+      providerAlias: result.providerAlias,
+      modelAlias: result.modelAlias,
+      pronunciationCalls: 1,
+      latencyMs: result.latencyMs,
+    });
+    return result;
+  }
+
+  private async optionalLessonSessionId(
+    request: Request,
+    learnerId: string,
+    lessonSessionId: string | undefined,
+  ): Promise<string | null> {
+    if (!lessonSessionId) return null;
+    await this.auth.assertLessonSessionOwnership(
+      extractBearerToken(request.headers.authorization, request.headers.cookie),
+      learnerId,
+      lessonSessionId,
+    );
+    return lessonSessionId;
+  }
+
+  /** 只在直连接口写账；编排器通过 gateway 调用后自行写账，二者不共用这条路径。 */
+  private async recordSpeechUsage(input: {
+    learnerId: string;
+    lessonSessionId: string | null;
+    serviceKind: 'asr' | 'tts' | 'pronunciation';
+    taskRoute: string;
+    level: UsageRecord['level'];
+    providerAlias: string;
+    modelAlias: string;
+    ttsCharacters?: number;
+    asrSeconds?: number;
+    pronunciationCalls?: number;
+    latencyMs: number;
+  }): Promise<void> {
+    await this.router.recordUsage({
+      id: `usage-${input.serviceKind}-${randomUUID()}`,
+      learnerId: input.learnerId,
+      lessonSessionId: input.lessonSessionId,
+      serviceKind: input.serviceKind,
+      taskRoute: input.taskRoute,
+      level: input.level,
+      providerAlias: input.providerAlias,
+      modelAlias: input.modelAlias,
+      inputTokens: 0,
+      outputTokens: 0,
+      ttsCharacters: input.ttsCharacters ?? 0,
+      asrSeconds: input.asrSeconds ?? 0,
+      pronunciationCalls: input.pronunciationCalls ?? 0,
+      estimatedCostCny: 0,
+      latencyMs: input.latencyMs,
+      createdAt: new Date().toISOString(),
+    });
   }
 
   /**
@@ -188,7 +298,7 @@ export class SpeechController {
   private async assertClientReservation(
     request: Request,
     serviceKind: 'asr' | 'tts' | 'pronunciation',
-  ): Promise<void> {
+  ): Promise<string> {
     const reservationId = String(request.headers['x-speech-quota-reservation'] ?? '').trim();
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
     if (!reservationId || !learnerId) {
@@ -199,6 +309,7 @@ export class SpeechController {
       learnerId,
     );
     await this.quota.assertReservation({ reservationId, learnerId, serviceKind });
+    return learnerId;
   }
 }
 

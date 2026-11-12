@@ -73,6 +73,15 @@ export default function CurriculumPage() {
   const [generatedPackage, setGeneratedPackage] = useState('');
   const [textbook, setTextbook] = useState({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
   const [draft, setDraft] = useState({ title: '', level: 'pre-A', outline: '', objectives: '', words: '', textbookId: '', textbookUnitId: '' });
+  const [wordListText, setWordListText] = useState('');
+  const [curriculumTitle, setCurriculumTitle] = useState('');
+  const [curriculumLevel, setCurriculumLevel] = useState('pre-A1');
+  const [generatedJson, setGeneratedJson] = useState('');
+  const [generatedSummary, setGeneratedSummary] = useState('');
+  const [presetSummary, setPresetSummary] = useState('');
+  const [warmupLevel, setWarmupLevel] = useState('pre-A1');
+  const [missingImages, setMissingImages] = useState<Array<{ key: string; kind: string; targetText: string; query: string; reason: string }>>([]);
+  const [uploadingKey, setUploadingKey] = useState('');
 
   function headers() { return {}; }
   async function request(path: string, init?: RequestInit) {
@@ -157,6 +166,103 @@ export default function CurriculumPage() {
     } catch (error) { setMessage(error instanceof Error ? error.message : '课程包生成失败'); }
     finally { setBusy(false); }
   }
+  async function generateFromWordList() {
+    setBusy(true);
+    try {
+      const result = await request('/api/v1/admin/curriculum/textbook/generate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: curriculumTitle.trim() || `${curriculumLevel} 教材课程`,
+          level: curriculumLevel,
+          words: wordListText,
+          unitSize: 6,
+          useAi: true,
+          persist: true,
+        }),
+      });
+      setGeneratedJson(JSON.stringify(result.package, null, 2));
+      setGeneratedSummary(`已生成 ${result.levels.map((item: { code: string; units: number; lessons: number }) => `${item.code} ${item.units} 单元/${item.lessons} 活动`).join('；')}；写入草稿 ${result.draftCount} 个${result.aiEnriched ? '，已用 AI 润色词义与例句' : '，AI 润色未启用或失败，已保留确定性结构'}。`);
+      await load();
+      setMessage('完整课程 JSON 已生成并写入审核队列。' + (result.aiEnriched ? '' : ' AI 润色未生效，可在审核时人工补齐音标/释义。'));
+    } catch (error) { setMessage(error instanceof Error ? error.message : '词表生成失败'); }
+    finally { setBusy(false); }
+  }
+  async function loadPresetJson() {
+    setBusy(true);
+    try {
+      const preset = await request(`/api/v1/admin/curriculum/preset?level=${encodeURIComponent(curriculumLevel)}`);
+      setGeneratedJson(JSON.stringify(preset, null, 2));
+      setPresetSummary(preset.levels.map((level: { code: string; units: Array<{ lessons: unknown[] }> }) => `${level.code} · ${level.units.length} 单元 · ${level.units.reduce((sum, unit) => sum + unit.lessons.length, 0)} 活动`).join('；'));
+      setMessage('已读取服务端预置 CEFR 纯 JSON 内容；未下载图片，也未合成语音。');
+    } catch (error) { setMessage(error instanceof Error ? error.message : '读取预置课程失败'); }
+    finally { setBusy(false); }
+  }
+  async function importPreset() {
+    setBusy(true);
+    try {
+      const result = await request('/api/v1/admin/curriculum/preset/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ level: curriculumLevel }),
+      });
+      await load();
+      setMessage(`预置课程已导入：新增 ${result.created.length} 个草稿，跳过 ${result.skipped} 个重复单元。`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : '导入预置课程失败'); }
+    finally { setBusy(false); }
+  }
+  async function warmLevelMedia() {
+    setBusy(true);
+    try {
+      const result = await request('/api/v1/admin/curriculum/preset/warmup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ level: warmupLevel, maxImages: 24, maxSpeech: 30 }),
+      });
+      setMissingImages(Array.isArray(result.missingImages) ? result.missingImages : []);
+      setMessage(`级别 ${result.level} 预热：图片已下载 ${result.imagesResolved} 张 / 排队 ${result.imagesQueued} 张，语音 ${result.speechGenerated} 条，跳过 ${result.speechSkipped} 条，失败 ${result.speechFailed} 条。${result.reason || ''}`);
+      await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : '级别媒体预热失败'); }
+    finally { setBusy(false); }
+  }
+  async function uploadMissingImage(missing: { key: string; kind: string; targetText: string }, file: File) {
+    setUploadingKey(missing.key);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('key', missing.key);
+      form.append('kind', missing.kind);
+      form.append('targetText', missing.targetText);
+      form.append('license', 'admin-uploaded');
+      const response = await fetch(`${apiRoot()}/api/v1/admin/curriculum/images/upload`, { method: 'POST', body: form });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message || `上传失败 (${response.status})`);
+      setMissingImages((old) => old.filter((item) => item.key !== missing.key));
+      setMessage(`图片已上传并挂到 ${body.attached} 个已发布活动；如已生成过语音，需重新预热以更新内容版本。`);
+      await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : '图片上传失败'); }
+    finally { setUploadingKey(''); }
+  }
+  function downloadMissingImages() {
+    if (!missingImages.length) return;
+    const blob = new Blob([JSON.stringify(missingImages, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `missing-images-${warmupLevel}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  function downloadGeneratedJson() {
+    if (!generatedJson) return;
+    const blob = new Blob([generatedJson], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `curriculum-${curriculumLevel}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
   async function draftAction(id: string, action: 'generate' | 'submit' | 'approve' | 'reject' | 'publish') {
     setPendingAction(`${id}:${action}`);
     setDraftErrors((old) => ({ ...old, [id]: '' }));
@@ -229,6 +335,36 @@ export default function CurriculumPage() {
       <div><p className="eyebrow">CURRICULUM STUDIO</p><h1>课程管理</h1><p className="muted">教材目录、AI 草稿、人工审核和发布分开管理。</p></div>
       <button className="secondary" onClick={() => void load().catch((error) => setMessage(error.message))}>刷新课程数据</button>
     </header>
+    <section className="panel">
+      <div className="panel-head"><div><p className="eyebrow">WORDLIST → FULL CURRICULUM</p><h2>教材词表一键补全</h2><p className="muted">粘贴课本单词表，服务端生成完整 JSON（词汇、句型、逐词活动、评估规则、媒体需求），默认写入审核队列。图片与语音不在这一步生成。</p></div></div>
+      <div className="fields">
+        <label>课程标题<input value={curriculumTitle} onChange={(event) => setCurriculumTitle(event.target.value)} placeholder="例如：三年级上册 Unit 3" /></label>
+        <label>目标等级<select value={curriculumLevel} onChange={(event) => setCurriculumLevel(event.target.value)}><option>pre-A1</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select></label>
+      </div>
+      <label>课本单词表（每行一个，或用逗号分隔）<textarea className="routing-editor" style={{ minHeight: 110 }} value={wordListText} onChange={(event) => setWordListText(event.target.value)} placeholder={'apple\nbanana\norange'} /></label>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+        <button disabled={busy || !wordListText.trim()} onClick={() => void generateFromWordList()}>生成完整课程 JSON</button>
+        <button className="secondary" disabled={busy} onClick={() => void loadPresetJson()}>查看服务端预置 CEFR JSON</button>
+        <button className="secondary" disabled={busy} onClick={() => void importPreset()}>导入预置课程到审核队列</button>
+        <button className="secondary" disabled={!generatedJson} onClick={downloadGeneratedJson}>下载当前 JSON</button>
+      </div>
+      {(generatedSummary || presetSummary) && <p className="helper">{generatedSummary || presetSummary}</p>}
+      <div className="fields" style={{ marginTop: 14 }}>
+        <label>到达级别媒体预热<select value={warmupLevel} onChange={(event) => setWarmupLevel(event.target.value)}><option>pre-A1</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select></label>
+        <div className="helper">只处理该级别已发布的课程：先解析并缓存图片，再按发布内容预生成公共语音。mock 模式会跳过语音，避免占位音频进入正式缓存。</div>
+      </div>
+      <button className="secondary" disabled={busy} onClick={() => void warmLevelMedia()}>预热该级别图片与语音</button>
+      {missingImages.length > 0 && <div style={{ marginTop: 16 }}>
+        <div className="panel-head"><div><h3>未找到合适图片（{missingImages.length}）</h3><p className="muted">服务端已优先从 Openverse / Wikimedia Commons 搜索并下载；以下条目无授权明确且可下载的结果，可导出清单后自行生成图片并上传。</p></div></div>
+        <button className="secondary" onClick={downloadMissingImages}>导出缺失清单 JSON</button>
+        {missingImages.map((missing) => <div className="helper" key={missing.key} style={{ marginTop: 10 }}>
+          <strong>{missing.targetText}</strong> · {missing.kind} · <code>{missing.key}</code>
+          <div className="muted">{missing.reason} · 搜索词：{missing.query}</div>
+          <label style={{ display: 'block', marginTop: 6 }}>上传这张图片<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploadingKey === missing.key} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadMissingImage(missing, file); event.target.value = ''; }} /></label>
+          {uploadingKey === missing.key && <span className="status">正在上传并挂载…</span>}
+        </div>)}
+      </div>}
+    </section>
     <section className="panel">
       <div className="panel-head"><div><p className="eyebrow">TEXTBOOK CATALOG</p><h2>教材版本</h2><p className="muted">按出版社、出版年份、年级归类，可继续扩展版本和单元。</p></div></div>
       <div className="fields">

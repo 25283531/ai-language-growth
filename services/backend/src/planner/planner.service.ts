@@ -406,14 +406,35 @@ export class PlannerService {
     const unitAlignedOf = (activity: TeachingActivity) =>
       activity.skillNodeIds.some((id) => unitSkillNodeIds.includes(id)) ? 0 : 1;
 
-    const fallback = [...input.activities].sort((a, b) =>
+    const ranked = [...input.activities].sort((a, b) =>
       masteryRankOf(a) - masteryRankOf(b) ||
       unitAlignedOf(a) - unitAlignedOf(b) ||
       a.difficulty - b.difficulty ||
       a.order - b.order,
-    )[0]!;
+    );
+    const fallback = ranked[0]!;
 
-    const decision = await this.router.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan' });
+    // 确定性优先：先按“最薄弱能力 → 教材对齐 → 难度 → 课程顺序”选出胜者。
+    // 只有掌握层级、教材对齐与难度都相同，仍无法用规则区分，且候选属于
+    // 不同任务类型时，才交给 L1 轻量模型做一次边界裁决；其余情况不调用
+    // LLM，也不写 llm 账本。
+    const topTier = ranked.filter((activity) =>
+      masteryRankOf(activity) === masteryRankOf(fallback) &&
+      unitAlignedOf(activity) === unitAlignedOf(fallback) &&
+      activity.difficulty === fallback.difficulty,
+    );
+    const boundaryNeedsLlm =
+      topTier.length > 1 &&
+      masteryRankOf(fallback) < 3 &&
+      new Set(topTier.map((activity) => activity.taskType)).size > 1;
+    if (!boundaryNeedsLlm) {
+      this.logger.debug(
+        `Planner 确定性选择 ${fallback.id}（同层同难度候选 ${topTier.length} 个，无需跨任务类型裁决）`,
+      );
+      return fallback;
+    }
+
+    const decision = await this.router.route({ serviceKind: 'llm', taskRoute: 'llm.learning_plan_tiebreak' });
     let result: Awaited<ReturnType<AiGatewayService['llm']>> | null = null;
     try {
       const learner = await this.prisma.learner_profiles.findUnique({
@@ -424,11 +445,12 @@ export class PlannerService {
         ? { ...textbookMapping, skillNodeIds: unitSkillNodeIds }
         : null;
       result = await this.gateway.llm({
-        promptKey: 'planner.adaptive_candidate',
-        promptVersion: 'm2.1',
+        promptKey: 'planner.adaptive_candidate_tiebreak',
+        promptVersion: 'm2.2',
         system: [
-          '你是课程活动排序助手，只能从候选列表选择一个 activityId。',
-          '优先考虑学习者薄弱或尚未接触的能力、教材关联和难度适配；已到期复习由系统单独优先处理。',
+          '你是课程活动边界裁决助手，只能从给定的同层候选列表选择一个 activityId。',
+          '这些候选的掌握缺口、教材关联和难度已经由系统判定相同；只在不同任务类型之间做一次轻量选择。',
+          '优先考虑任务类型多样性、目标词复现和儿童注意力负担；已到期复习由系统单独优先处理。',
           '你不能创造活动、修改能力状态或声称已经掌握。只输出 JSON：{"activityId":"候选中的ID"}。',
         ].join(''),
         messages: [{
@@ -437,7 +459,7 @@ export class PlannerService {
             learner,
             textbook,
             skillStates: input.states,
-            candidates: input.activities.map((activity) => ({
+            candidates: topTier.map((activity) => ({
               activityId: activity.id,
               targetWords: activity.targetWords,
               skillNodeIds: activity.skillNodeIds,
@@ -452,17 +474,17 @@ export class PlannerService {
         timeoutMs: 8000,
       }, decision);
     } catch {
-      // The deterministic fallback below keeps a lesson available.
+      // 边界裁决失败时仍使用确定性胜者，课程不中断。
     }
 
     const selectedId = result ? parseActivityId(result.content) : null;
-    const selected = input.activities.find((activity) => activity.id === selectedId) ?? fallback;
+    const selected = topTier.find((activity) => activity.id === selectedId) ?? fallback;
     await this.router.recordUsage({
       id: `usage-plan-${input.lessonSessionId}-${Date.now()}`,
       learnerId: input.learnerId,
       lessonSessionId: input.lessonSessionId,
       serviceKind: 'llm',
-      taskRoute: 'llm.learning_plan',
+      taskRoute: 'llm.learning_plan_tiebreak',
       level: result?.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
       providerAlias: result?.providerAlias ?? decision.providerAlias,
       modelAlias: result?.modelAlias ?? decision.modelAlias,

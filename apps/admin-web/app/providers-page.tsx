@@ -42,6 +42,23 @@ type RuntimeScore = {
 };
 type FeedbackTone = 'info' | 'success' | 'error' | 'warn';
 type Feedback = { tone: FeedbackTone; text: string };
+type BenchmarkResult = {
+  id: string;
+  benchmarkType: string;
+  score: number;
+  sampleCount: number;
+  passed: boolean;
+  notes?: string | null;
+  testedAt: string;
+};
+type BenchmarkModel = {
+  modelAlias: string;
+  level: string;
+  enabled: boolean;
+  benchmarks: BenchmarkResult[];
+  latest: BenchmarkResult | null;
+  productionReady: boolean;
+};
 type RouteReference = { taskRoute: string; role: 'primary' | 'fallback'; enabled: boolean };
 type RoutingReferences = {
   configId: string;
@@ -133,6 +150,9 @@ export default function AdminPage() {
   const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [runtimeScores, setRuntimeScores] = useState<RuntimeScore[]>([]);
+  const [benchmarkModels, setBenchmarkModels] = useState<BenchmarkModel[]>([]);
+  const [benchmarkBusy, setBenchmarkBusy] = useState(false);
+  const [benchmarkError, setBenchmarkError] = useState('');
   const [pricing, setPricing] = useState<Partial<Record<PriceType, string>>>({});
   // 卸载后不再 setState；并发读取只认最后一次，避免旧响应覆盖新数据。
   const mountedRef = useRef(true);
@@ -150,6 +170,8 @@ export default function AdminPage() {
   const current = configs[active].find((item) => (item.id ?? item.draftKey) === activeConfigIds[active])
     ?? emptyConfig(active);
   const credentialFields = (credentialLabels[current.providerPresetId] ?? []).filter(([key]) => current.providerPresetId !== 'iflytek-spark' || active !== 'pronunciation' || key !== 'apiSecret');
+  const benchmarkModel = benchmarkModels.find((item) => item.modelAlias === current.modelAlias);
+  const latestBenchmark = benchmarkModel?.latest ?? null;
   // 本地编辑与服务端快照的差异：启用开关等改动必须点「保存」才真正生效。
   const isDirty = useMemo(() => {
     const key = current.id ?? current.draftKey;
@@ -360,6 +382,56 @@ export default function AdminPage() {
     setPricing(Object.fromEntries(normalized.map((row) => [row.priceType, String(row.unitPrice)])));
     setBackgroundError('');
   }
+
+  const loadBenchmarks = useCallback(async (signal?: AbortSignal) => {
+    if (active === 'embedding' || !current.id) {
+      if (!signal?.aborted && mountedRef.current) setBenchmarkModels([]);
+      return;
+    }
+    const body = await adminFetch<BenchmarkModel[]>(
+      `/model-providers/benchmarks?serviceKind=${active}&configId=${current.id}`,
+      { signal },
+    );
+    if (signal?.aborted || !mountedRef.current) return;
+    setBenchmarkModels(Array.isArray(body) ? body : []);
+    setBenchmarkError('');
+  }, [active, current.id]);
+
+  async function runBenchmark() {
+    if (!current.id || benchmarkBusy || busy) return;
+    setBenchmarkBusy(true);
+    setBenchmarkError('');
+    try {
+      const result = await adminFetch<BenchmarkResult>('/model-providers/benchmarks/run', {
+        method: 'POST',
+        body: JSON.stringify({ serviceKind: active, configId: current.id }),
+      });
+      await loadBenchmarks();
+      notify(result.passed
+        ? `Benchmark 通过：${result.score}/100，样本 ${result.sampleCount} 次。可用于生产准入。`
+        : `Benchmark 未通过：${result.score}/100，样本 ${result.sampleCount} 次。请查看最近结果中的门槛说明。`,
+      result.passed ? 'success' : 'warn');
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '运行 Benchmark 失败';
+      setBenchmarkError(text);
+      notify(text, 'error');
+      if (text.includes('登录已失效')) { sessionExpiredRef.current = true; setSessionExpired(true); }
+    } finally {
+      if (mountedRef.current) setBenchmarkBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setBenchmarkModels([]);
+    setBenchmarkError('');
+    void loadBenchmarks(controller.signal).catch((error) => {
+      if (mountedRef.current && !controller.signal.aborted) {
+        setBenchmarkError(error instanceof Error ? error.message : '读取 Benchmark 结果失败');
+      }
+    });
+    return () => controller.abort();
+  }, [active, current.id, loadBenchmarks]);
 
   async function savePrices() {
     setBusy(true);
@@ -621,6 +693,23 @@ export default function AdminPage() {
           {current.providerPresetId === 'baidu-qianfan' && active === 'tts' && <label>音色 ID<input value={String(current.options.voiceId ?? '5003')} onChange={(event) => updateCurrent({ ...current, options: { ...current.options, voiceId: event.target.value } })}/></label>}
           <p className="helper">{active === 'pronunciation' ? '发音评测会将音频与目标文本一起发送。讯飞 ISE 需 16kHz 单声道音频；腾讯 SOE 使用签名 WebSocket；Azure 通过区域 Speech endpoint 评测。需先在对应控制台开通服务。' : active === 'asr' ? '此项只配置普通转写服务。音素级能力请在左侧单独配置。' : active === 'embedding' ? 'Embedding 用于后续的 Mem0 交互记忆语义检索和课程知识库 RAG。当前页面只保存平台、模型、接入点和密钥，尚未把未验证的向量检索结果用于教学决策。' : '填写平台账号凭据即可；接入地址可以编辑，以适应区域域名或供应商 API 地址变更。凭据在服务端使用 AES-256-GCM 加密后入库，页面不会回显已保存的密钥。'}</p>
           {(catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl) && <a className="doclink" href={catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl ?? ''} target="_blank" rel="noreferrer">打开此服务的官方接入文档 ↗</a>}
+          {active !== 'embedding' && <section className="benchmark">
+            <h3>运行准入 Benchmark</h3>
+            <p className="helper">基于当前配置近 30 天真实账本评估运行可用性，不调用供应商、不伪造样本。门槛按服务类型检查调用次数、平均延迟和 P95；mock 模式只评估，生产模式（AI_GATEWAY_MODE=live）下最近一次未通过会禁止启用该配置和写入已启用路由。</p>
+            <div className="row-actions">
+              <button className="secondary" type="button" disabled={!current.id || benchmarkBusy || busy} onClick={() => void runBenchmark()}>{benchmarkBusy ? '运行中…' : '运行 Benchmark'}</button>
+              {latestBenchmark && <span className={`status ${latestBenchmark.passed ? 'success' : 'error'}`}>最近一次：{latestBenchmark.passed ? '通过' : '未通过'} · {latestBenchmark.score}/100 · 样本 {latestBenchmark.sampleCount} 次</span>}
+              {benchmarkModel?.productionReady && <span className="status success">生产准入已通过</span>}
+            </div>
+            {benchmarkError && <div className="feedback error" role="alert">{benchmarkError}</div>}
+            {!current.id && <p className="helper">先保存配置，产生真实调用后再运行 Benchmark。</p>}
+            {current.id && !latestBenchmark && <p className="helper">尚无 Benchmark 结果。首次运行若没有真实调用，会如实记录“样本不足”，不会伪造通过。</p>}
+            {latestBenchmark && <div className="benchmark-list">
+              <div className="helper">{new Date(latestBenchmark.testedAt).toLocaleString()} · {latestBenchmark.benchmarkType} · {latestBenchmark.passed ? '通过' : '未通过'}</div>
+              <div className="helper">{latestBenchmark.notes}</div>
+              {benchmarkModel && benchmarkModel.benchmarks.length > 1 && <div className="helper">更早结果：{benchmarkModel.benchmarks.slice(1, 4).map((item) => `${new Date(item.testedAt).toLocaleDateString()} ${item.passed ? '通过' : '未通过'} ${item.score}/100`).join('；')}</div>}
+            </div>}
+          </section>}
           {active !== 'embedding' && <section className="benchmark">
             <h3>自动运行评分</h3>
             <p className="helper">模型投入使用后自动按已完成调用统计速度分和平均响应时间。该指标反映线上运行表现；儿童教学效果仍需结合真实学习结果评估。</p>

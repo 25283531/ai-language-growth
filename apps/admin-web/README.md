@@ -8,6 +8,16 @@ The page never reads saved secret values back from the API. Secret fields left b
 
 Future parent progress, curriculum, and cost dashboards remain separate from this operator screen.
 
+### 成本与缓存（只读）
+
+`/costs` 读取 `GET /api/v1/admin/tts-cache`、`GET /api/v1/admin/usage/cost` 与 `GET /api/v1/admin/usage/budget`，分栏展示互不相加的数据：
+
+- **账本用量**：按日期范围与可选 `learnerId` / `topicId` 聚合历史 `ai_usage_logs`，展示调用次数、TTS 字符、ASR 秒数、发音次数、`estimatedCostCny` 与 `unpricedCalls`，并按 learner / topic / day 三张只读表展开。
+- **用量预算**：读取环境变量 `USAGE_BUDGET_CONFIG_JSON` 的只读快照，分别展示 `learner_day`（当前 UTC 自然日 + 已填写的 `learnerId`）与 `topic_month`（当前 UTC 自然月 + 已填写的 `topicId`）的用量、限额和 80% / 100% 状态。未填写对应 ID 时只显示配置上限与提示，不伪造用量。未配置金额或存在未计价调用时，预算卡只显示字符、秒、次数；advisory 状态下 100% 也只告警，不阻断教学。
+- **进程 TTS 缓存**：展示当前后端进程的缓存命中率、请求/命中/合并/未命中次数、实际合成字符、单次合成字符均摊和缓存清理结果；进程重启后归零。
+
+预算窗口固定为当前 UTC 自然日 / 自然月，不受账本日期范围影响。页面没有清理、改价或写入按钮，也不把账本历史、预算评估与进程指标相加。
+
 ## 操作说明
 
 ### 打开页面即读取配置

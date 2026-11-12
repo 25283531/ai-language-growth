@@ -32,6 +32,7 @@ const read = (relative: string): string => readFileSync(join(ROOT, relative), 'u
 const providers = read('apps/admin-web/app/providers-page.tsx');
 const settings = read('apps/admin-web/app/settings/page.tsx');
 const learning = read('apps/admin-web/app/learning/page.tsx');
+const costs = read('apps/admin-web/app/costs/page.tsx');
 const adminAuth = read('apps/admin-web/app/admin-auth.tsx');
 
 const ANDROID_DIR = join(ROOT, 'apps/android/app/src/main/java/com/alg/languagegrowth');
@@ -165,6 +166,17 @@ describe('管理端模型接入页：静态守卫', () => {
     assert.match(providers, /重试读取目录/, '缺少目录读取重试入口');
     assert.match(providers, /visibilitychange|focus/, '会话过期后缺少重新聚焦自动重试');
   });
+
+  it('11. 模型接入页提供 Benchmark 运行按钮、最近结果与生产准入提示', () => {
+    assert.match(providers, /\/model-providers\/benchmarks\?serviceKind=/, '缺少最近 Benchmark 只读查询');
+    assert.match(providers, /\/model-providers\/benchmarks\/run/, '缺少 Benchmark 运行端点');
+    assert.match(providers, /运行 Benchmark/, '缺少运行 Benchmark 按钮');
+    assert.match(providers, /latestBenchmark/, '缺少最近一次 Benchmark 展示');
+    assert.match(providers, /benchmarkType/, '最近结果未展示 Benchmark 类型');
+    assert.match(providers, /productionReady/, '缺少生产准入状态展示');
+    assert.match(providers, /AI_GATEWAY_MODE=live/, '页面未说明 live 模式的生产门禁');
+    assert.match(providers, /method:\s*'POST'[\s\S]{0,300}benchmarks\/run|benchmarks\/run[\s\S]{0,300}method:\s*'POST'/, '运行按钮未使用 POST');
+  });
 });
 
 describe('Android：功能锚点零回归（静态）', () => {
@@ -217,6 +229,15 @@ describe('Android：功能锚点零回归（静态）', () => {
       'HTTPS 强制校验被移除',
     );
   });
+
+  it('6b. 家长门用两位数乘一位数验证，敏感入口仅在解锁后渲染', () => {
+    assert.match(androidSources, /private fun ParentAreaCard/, '缺少家长区入口');
+    assert.match(androidSources, /\(12\.\.99\)\.random\(\)/, '家长题必须是两位数');
+    assert.match(androidSources, /\(2\.\.9\)\.random\(\)/, '家长题必须是一位数');
+    assert.match(androidSources, /if \(parentUnlocked && confirmDelete\)/, '注销确认未受家长解锁保护');
+    assert.match(androidSources, /if \(parentUnlocked\) screen = "legal_privacy"/, '隐私协议入口未受家长解锁保护');
+    assert.match(androidSources, /GrowthLinkRow\("家庭会员与支付（即将开放）"/, '支付占位入口缺失');
+  });
 });
 
 describe('R2 必修：换平台后不得继续渲染「已有凭据」误导提示', () => {
@@ -259,5 +280,61 @@ describe('R2 必修：换平台后不得继续渲染「已有凭据」误导提�
         '平台切换守卫的真分支仍然渲染「已有凭据」提示（换平台时会误导用户）',
       );
     }
+  });
+});
+
+describe('管理端成本与缓存页：只读静态守卫', () => {
+  it('8. 只读取 /tts-cache，不发送写请求，并展示命中率与合成量', () => {
+    assert.match(costs, /adminFetch<TtsCacheResponse>\('\/tts-cache'\)/, '成本页未通过 adminFetch 读取 /tts-cache');
+    assert.match(costs, /hitRate/, '成本页未展示命中率');
+    assert.match(costs, /charactersSynthesized/, '成本页未展示实际合成字符');
+    assert.match(costs, /misses/, '成本页未展示未命中次数');
+    assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '成本页不应发送写请求');
+    assert.match(costs, /void\s+load\(\)/, '成本页挂载后未自动读取指标');
+  });
+
+  it('9. 成本页接入账本聚合，支持日期与 learner/topic 过滤，展示未计价而不与进程缓存相加', () => {
+    assert.match(
+      costs,
+      /adminFetch<UsageCostResponse>\(buildUsagePath\(appliedFilters\)\)/,
+      '成本页未通过 adminFetch 读取 /usage/cost',
+    );
+    assert.match(costs, /\/usage\/cost/, '成本页缺少 /usage/cost 路径');
+    for (const field of ['from', 'to', 'learnerId', 'topicId']) {
+      assert.match(costs, new RegExp(`\\b${field}\\b`), `成本页缺少 ${field} 过滤字段`);
+    }
+    assert.match(costs, /开始日期/, '成本页缺少开始日期输入');
+    assert.match(costs, /结束日期/, '成本页缺少结束日期输入');
+    for (const field of ['unpricedCalls', 'estimatedCostCny', 'byLearner', 'byTopic', 'byDay']) {
+      assert.match(costs, new RegExp(field), `成本页未展示账本字段 ${field}`);
+    }
+    assert.match(costs, /账本用量/, '成本页缺少账本用量区');
+    assert.match(costs, /进程 TTS 缓存/, '成本页缺少进程缓存区');
+    assert.match(costs, /不相加|不与/, '成本页未说明账本与进程指标分开、不可相加');
+    assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '成本页不应发送写请求');
+  });
+
+  it('10. 预算快照只读接入，展示 learner/day 与 topic/month 用量与 80/100 阈值，未计价时不展示金额', () => {
+    assert.match(
+      costs,
+      /adminFetch<UsageBudgetSnapshotResponse>\('\/usage\/budget'\)/,
+      '成本页未通过 adminFetch 读取预算快照',
+    );
+    assert.match(costs, /\/usage\/budget\/evaluate/, '成本页缺少预算评估路径');
+    for (const scope of ['learner_day', 'topic_month']) {
+      assert.match(costs, new RegExp(scope), `成本页缺少预算作用域 ${scope}`);
+    }
+    for (const text of ['learner / day', 'topic / month', '80% 告警', '100% 超限', 'advisory']) {
+      assert.ok(costs.includes(text), `成本页缺少预算展示 ${text}`);
+    }
+    assert.match(costs, /displayMode/, '成本页未消费 displayMode');
+    assert.match(costs, /unpricedCalls/, '成本页未展示未计价调用');
+    assert.match(
+      costs,
+      /notices\.some\(\(notice\) => notice\.includes\('未计价'\)\)/,
+      '未计价提示在 notices 已包含时仍会重复渲染卡片警示',
+    );
+    assert.match(costs, /只(?:展示|显示)字符\/秒\/次数/, '成本页未说明未计价时只展示用量');
+    assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '预算接入不应发送写请求');
   });
 });

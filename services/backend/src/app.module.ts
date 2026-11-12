@@ -20,20 +20,30 @@ import {
   SpeechQuotaController,
   UsageController,
 } from './speech/speech.controller';
+import { TtsCacheAdminController } from './speech/tts-cache-admin.controller';
+import { TtsCacheMaintenanceService } from './speech/tts-cache-maintenance.service';
 import { MediaController } from './media/media.controller';
 import { ImageCacheService } from './media/image-cache.service';
 import { ProviderConfigController } from './providers/provider-config.controller';
 import { ProviderConfigService } from './providers/provider-config.service';
+import { ProviderBenchmarkService } from './providers/provider-benchmark.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
+import { UsageCostService } from './usage/usage-cost.service';
+import { UsageAdminController } from './usage/usage-admin.controller';
+import { UsageBudgetService } from './usage/usage-budget.service';
+import { UsageBudgetAdminController } from './usage/usage-budget-admin.controller';
 import { MemoryAdminController } from './memory/memory-admin.controller';
 import { SpeechQuotaService } from './usage/speech-quota.service';
 import { RoutingConfigController } from './routing/routing-config.controller';
 import { RoutingConfigService } from './routing/routing-config.service';
 import { MembershipAdminController } from './membership/membership-admin.controller';
 import { CurriculumAdminController } from './curriculum/curriculum-admin.controller';
+import { CurriculumGeneratorService } from './curriculum/curriculum-generator.service';
+import { CurriculumWarmupService } from './curriculum/curriculum-warmup.service';
 import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
 import { UserController } from './auth/user.controller';
 import { AuthService } from './auth/auth.service';
+import { ParentReportService } from './reports/parent-report.service';
 import { AdminAuthService } from './auth/admin-auth.service';
 import { EmailService } from './auth/email.service';
 import { MembershipController, MembershipUsersAdminController } from './membership/membership.controller';
@@ -52,6 +62,9 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     SpeechController,
     SpeechQuotaController,
     UsageController,
+    TtsCacheAdminController,
+    UsageAdminController,
+    UsageBudgetAdminController,
     HealthController,
     MediaController,
     ProviderConfigController,
@@ -70,12 +83,19 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
   providers: [
     PrismaService,
     ProviderConfigService,
+    ProviderBenchmarkService,
     ImageCacheService,
+    CurriculumGeneratorService,
+    CurriculumWarmupService,
     AiGatewayService,
     LearnerModelService,
+    ParentReportService,
     PlannerService,
     OrchestratorService,
     SpeechQuotaService,
+    TtsCacheMaintenanceService,
+    UsageCostService,
+    UsageBudgetService,
     RoutingConfigService,
     AuthService,
     AdminAuthService,

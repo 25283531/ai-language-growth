@@ -327,6 +327,20 @@ export class AuthService {
     return user.id;
   }
 
+  /** 直连语音接口可选的课程会话归属校验，避免把用量写到别的孩子的会话上。 */
+  async assertLessonSessionOwnership(
+    rawToken: string | undefined,
+    learnerId: string,
+    lessonSessionId: string,
+  ): Promise<void> {
+    await this.assertLearnerOwnership(rawToken, learnerId);
+    const session = await this.prisma.lesson_sessions.findFirst({
+      where: { id: lessonSessionId, learnerId },
+      select: { id: true },
+    });
+    if (!session) throw new ForbiddenException('无权访问该课堂会话');
+  }
+
   async assertReservationOwnership(rawToken: string | undefined, reservationId: string): Promise<void> {
     const reservation = await this.prisma.speech_quota_reservations.findUnique({
       where: { id: reservationId },

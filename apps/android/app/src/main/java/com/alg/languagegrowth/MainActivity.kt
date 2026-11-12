@@ -143,6 +143,27 @@ private data class Tile(
     val wash: Color,
 )
 
+private fun JSONObject.jsonObjects(key: String): List<JSONObject> {
+    val array = optJSONArray(key) ?: return emptyList()
+    return (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+}
+
+private fun JSONObject?.stringItems(key: String): List<String> {
+    val array = this?.optJSONArray(key) ?: return emptyList()
+    return (0 until array.length()).mapNotNull { index ->
+        array.optString(index).takeIf { it.isNotBlank() }
+    }
+}
+
+private fun errorUnitLabel(unit: String): String = when (unit) {
+    "syllable" -> "音节"
+    "phoneme" -> "音素"
+    "word" -> "单词"
+    "pitch" -> "音高"
+    "rhythm" -> "节奏"
+    else -> "发音"
+}
+
 /** 底部 4 个 tab 的键集合，与改造前基线一致；图标 / 配色数据见 AppDesign.GrowthNavItems。 */
 @Suppress("UNUSED_VARIABLE")
 private val tabs = listOf("home", "learn", "achievements", "me")
@@ -173,6 +194,10 @@ private fun GrowthApp(
     var pageStatus by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var dashboard by remember { mutableStateOf<JSONObject?>(null) }
+    var weeklyReport by remember { mutableStateOf<JSONObject?>(null) }
+    var weeklyError by remember { mutableStateOf("") }
+    // 家长区是本次运行期内的独立解锁态，不复用 childTheme（主题不等于角色）。
+    var parentUnlocked by remember { mutableStateOf(false) }
     var lessonSessionId by remember { mutableStateOf("") }
     var directive by remember { mutableStateOf<JSONObject?>(null) }
     var lastTurn by remember { mutableStateOf<JSONObject?>(null) }
@@ -230,6 +255,15 @@ private fun GrowthApp(
         }
     }
 
+    suspend fun fetchWeeklyReport() {
+        if (learnerId.isBlank()) return
+        val result = withContext(Dispatchers.IO) {
+            http(base(), "/learners/${learnerId}/reports/weekly", "GET", token = token())
+        }
+        weeklyReport = result
+        weeklyError = ""
+    }
+
     suspend fun fetchDashboard() {
         val result = withContext(Dispatchers.IO) { http(base(), "/user/dashboard", "GET", token = token()) }
         dashboard = result
@@ -241,6 +275,11 @@ private fun GrowthApp(
         editName = user.optString("displayName")
         avatarUrl = user.optString("avatarUrl").takeUnless { it == "null" }.orEmpty()
         account.edit().putString("email", email).apply()
+        try {
+            fetchWeeklyReport()
+        } catch (e: Exception) {
+            weeklyError = e.message ?: "本周周报暂时无法加载"
+        }
     }
 
     fun loadCaptcha() {
@@ -516,6 +555,7 @@ private fun GrowthApp(
                                             http(base(), "/user/password", "PUT", JSONObject().put("currentPassword", currentPassword).put("newPassword", newPassword), token())
                                         }
                                         account.edit().remove("token").apply()
+                                        parentUnlocked = false
                                         loggedIn = false
                                         pageStatus = "密码已修改，请使用新密码登录"
                                         currentPassword = ""
@@ -550,25 +590,51 @@ private fun GrowthApp(
                                     } catch (e: Exception) { pageStatus = e.message ?: "发送失败" }
                                 }
                             },
-                            onPrivacy = { screen = "legal_privacy" },
+                            onPrivacy = {
+                                if (parentUnlocked) screen = "legal_privacy" else pageStatus = "请先完成家长验证"
+                            },
                             onTerms = { screen = "legal_terms" },
                             onLogout = {
+                                parentUnlocked = false
                                 account.edit().remove("token").apply()
                                 loggedIn = false
                                 register = false
                                 pageStatus = ""
                             },
                             onDelete = {
-                                scope.launch {
-                                    busy = true
-                                    try {
-                                        withContext(Dispatchers.IO) { http(base(), "/user/account", "DELETE", token = token()) }
-                                        account.edit().remove("token").apply()
-                                        loggedIn = false
-                                        pageStatus = "账户已注销"
-                                    } catch (e: Exception) { pageStatus = e.message ?: "注销失败" } finally { busy = false }
+                                if (!parentUnlocked) {
+                                    pageStatus = "请先完成家长验证"
+                                } else {
+                                    scope.launch {
+                                        busy = true
+                                        try {
+                                            withContext(Dispatchers.IO) { http(base(), "/user/account", "DELETE", token = token()) }
+                                            parentUnlocked = false
+                                            account.edit().remove("token").apply()
+                                            loggedIn = false
+                                            pageStatus = "账户已注销"
+                                        } catch (e: Exception) { pageStatus = e.message ?: "注销失败" } finally { busy = false }
+                                    }
                                 }
                             },
+                            weekly = weeklyReport,
+                            weeklyError = weeklyError,
+                            onRefreshWeekly = {
+                                scope.launch {
+                                    pageStatus = ""
+                                    try {
+                                        fetchWeeklyReport()
+                                        pageStatus = "周报已刷新"
+                                    } catch (e: Exception) {
+                                        weeklyError = e.message ?: "周报刷新失败"
+                                        pageStatus = "周报暂时无法刷新"
+                                    }
+                                }
+                            },
+                            parentUnlocked = parentUnlocked,
+                            onParentUnlocked = { parentUnlocked = true },
+                            onLockParent = { parentUnlocked = false },
+                            onPayment = { pageStatus = "支付入口尚未开放，本次不会扣款" },
                         )
                     }
                 }
@@ -920,6 +986,188 @@ private fun AchievementScreen(data: JSONObject?) {
 /* ------------------------------------------------------- 我的账户（家长向） */
 
 @Composable
+private fun WeeklyReportCard(report: JSONObject?, error: String, onRefresh: () -> Unit) {
+    GrowthCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GrowthSectionTitle("成长周报", "📊")
+            Spacer(Modifier.weight(1f))
+            GrowthPill("家长可见", GrowthColors.ForestDeep, GrowthColors.ForestWash, emoji = "👨‍👩‍👧")
+        }
+        if (error.isNotBlank()) {
+            Text(error, style = MaterialTheme.typography.bodySmall, color = GrowthColors.Danger)
+        }
+        if (report == null) {
+            Text(
+                "正在加载本周学习记录…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = GrowthColors.InkSoft,
+            )
+        } else {
+            Text(
+                "${report.optString("weekStart")} — ${report.optString("weekEnd")} · Asia/Shanghai",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+            Text(
+                "这是本周学习记录，不是能力结论。",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+
+            val summary = report.optJSONObject("summary")
+            val reviews = report.optJSONObject("reviews")
+            val metrics = listOf(
+                Tile("课堂", "${summary?.optInt("sessions", 0) ?: 0} 次", "📖", GrowthColors.PrimaryDeep, GrowthColors.PrimaryWash),
+                Tile("学习时长", "${summary?.optInt("learningMinutes", 0) ?: 0} 分钟", "⏱️", GrowthColors.SunDeep, GrowthColors.SunWash),
+                Tile("独立完成", "${summary?.optInt("independentSuccesses", 0) ?: 0} 次", "🌟", GrowthColors.MintDeep, GrowthColors.MintWash),
+                Tile("待复习", "${reviews?.optInt("dueCount", 0) ?: 0} 个", "🔁", GrowthColors.ForestDeep, GrowthColors.ForestWash),
+            )
+            metrics.chunked(2).forEach { row ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    row.forEach { tile ->
+                        GrowthStatTile(
+                            tile.value,
+                            tile.label,
+                            tile.emoji,
+                            tile.tint,
+                            tile.wash,
+                            Modifier.weight(1f),
+                        )
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+
+            if (!report.optBoolean("hasData", false)) {
+                Text(
+                    "本周还没有足够的课堂记录。完成一次课堂后，这里会自动汇总。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+
+            val highlights = report.jsonObjects("highlights")
+            if (highlights.isNotEmpty()) {
+                GrowthSectionTitle("本周亮点", "✨")
+                highlights.forEach { item ->
+                    Text(
+                        "${item.optString("skillName")} · ${item.optString("abilityLabel")} · 独立完成 ${item.optInt("independentSuccesses", 0)} 次",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = GrowthColors.Ink,
+                    )
+                }
+            }
+
+            val needsPractice = report.jsonObjects("needsPractice")
+            if (needsPractice.isNotEmpty()) {
+                GrowthSectionTitle("本周需要再练", "🌱")
+                needsPractice.forEach { item ->
+                    Text(
+                        "${item.optString("skillName")} · ${item.optString("abilityLabel")} · ${item.optInt("unsuccessfulAttempts", 0)} 次需要帮助",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = GrowthColors.Ink,
+                    )
+                    val focus = item.jsonObjects("errorUnits").joinToString("、") { unit ->
+                        "${errorUnitLabel(unit.optString("unit"))} ${unit.optInt("count", 0)} 次"
+                    }
+                    if (focus.isNotBlank()) {
+                        Text("先复习：$focus", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                    }
+                    if (item.optBoolean("priorIndependentSuccess", false)) {
+                        Text(
+                            "之前独立完成过，这次再熟悉一下就好。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GrowthColors.ForestDeep,
+                        )
+                    }
+                }
+            }
+
+            val dueCount = reviews?.optInt("dueCount", 0) ?: 0
+            if (dueCount > 0) {
+                GrowthSectionTitle("近期需要巩固", "🔁")
+                val overdue = reviews?.optInt("overdueCount", 0) ?: 0
+                Text(
+                    if (overdue > 0) "有 $dueCount 个复习项到期，其中 $overdue 个已等待一段时间。" else "有 $dueCount 个复习项到期。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GrowthColors.Ink,
+                )
+                reviews?.jsonObjects("items").orEmpty().forEach { item ->
+                    Text(
+                        "${item.optString("skillName")} · ${item.optString("dueAt").take(10)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GrowthColors.InkSoft,
+                    )
+                }
+            }
+
+            val suggestions = report.optJSONObject("nextWeek").stringItems("suggestions")
+            if (suggestions.isNotEmpty()) {
+                GrowthSectionTitle("下周建议", "🧭")
+                suggestions.forEach { item ->
+                    Text("• $item", style = MaterialTheme.typography.bodyMedium, color = GrowthColors.Ink)
+                }
+            }
+
+            Text(
+                report.optString("calibrationNotice"),
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
+        GrowthSecondaryButton(
+            if (report == null) "加载周报" else "刷新周报",
+            onRefresh,
+            emoji = "🔄",
+        )
+    }
+}
+
+@Composable
+private fun ParentAreaCard(
+    unlocked: Boolean,
+    onUnlockRequest: () -> Unit,
+    onLock: () -> Unit,
+    onPrivacy: () -> Unit,
+    onPayment: () -> Unit,
+    onDeleteRequest: () -> Unit,
+) {
+    GrowthCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GrowthSectionTitle("家长区", if (unlocked) "🔓" else "🔒")
+            Spacer(Modifier.weight(1f))
+            GrowthPill(
+                if (unlocked) "家长已验证" else "孩子端",
+                if (unlocked) GrowthColors.MintDeep else GrowthColors.SunDeep,
+                if (unlocked) GrowthColors.MintWash else GrowthColors.SunWash,
+                emoji = if (unlocked) "✅" else "🧒",
+            )
+        }
+        if (!unlocked) {
+            Text(
+                "注销账号、隐私协议和会员支付仅家长可操作；孩子端不会显示这些入口。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = GrowthColors.InkSoft,
+            )
+            GrowthSecondaryButton("家长验证", onUnlockRequest, emoji = "🔐")
+        } else {
+            Text(
+                "已解锁本次运行期的家长操作；重新打开应用后会自动锁定，也可随时手动锁定。",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+            GrowthLinkRow("隐私协议", "🛡️", onPrivacy)
+            GrowthLinkRow("家庭会员与支付（即将开放）", "💳", onPayment)
+            GrowthLinkRow("注销账号", "⚠️", onDeleteRequest, danger = true)
+            GrowthSecondaryButton("锁定家长区", onLock, emoji = "🔒")
+        }
+    }
+}
+
+@Composable
 private fun ProfileScreen(
     data: JSONObject?, name: String, onName: (String) -> Unit, avatar: String, onAvatar: (String) -> Unit,
     currentPassword: String, onCurrentPassword: (String) -> Unit, newPassword: String, onNewPassword: (String) -> Unit,
@@ -928,10 +1176,39 @@ private fun ProfileScreen(
     onSaveProfile: () -> Unit, onPassword: () -> Unit, onTextbook: () -> Unit,
     onVerify: () -> Unit, onSendVerification: () -> Unit, onPrivacy: () -> Unit, onTerms: () -> Unit,
     onLogout: () -> Unit, onDelete: () -> Unit,
+    weekly: JSONObject?, weeklyError: String, onRefreshWeekly: () -> Unit,
+    parentUnlocked: Boolean, onParentUnlocked: () -> Unit, onLockParent: () -> Unit, onPayment: () -> Unit,
 ) {
     val user = data?.optJSONObject("user")
     var textbookMenu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var showParentGate by remember { mutableStateOf(false) }
+    var gateA by remember { mutableStateOf(0) }
+    var gateB by remember { mutableStateOf(0) }
+    var gateAnswer by remember { mutableStateOf("") }
+    var gateError by remember { mutableStateOf("") }
+
+    fun openParentGate() {
+        gateA = (12..99).random()
+        gateB = (2..9).random()
+        gateAnswer = ""
+        gateError = ""
+        showParentGate = true
+    }
+
+    fun submitParentGate() {
+        if (gateAnswer.toIntOrNull() == gateA * gateB) {
+            onParentUnlocked()
+            showParentGate = false
+            gateAnswer = ""
+            gateError = ""
+        } else {
+            gateA = (12..99).random()
+            gateB = (2..9).random()
+            gateAnswer = ""
+            gateError = "答案不对，请家长再试一道。"
+        }
+    }
     val textbooks = data?.optJSONArray("textbooks")
     val textbookLabels = (0 until (textbooks?.length() ?: 0)).mapNotNull { index ->
         textbooks?.optJSONObject(index)?.let { it.optString("id") to "${it.optString("publisher")} · ${it.optInt("publicationYear")} · ${it.optString("grade")} ${it.optString("title")}" }
@@ -943,6 +1220,8 @@ private fun ProfileScreen(
         GrowthTextField(name, onName, "个人资料名称", leadingEmoji = "✏️")
         GrowthPrimaryButton("保存资料", onSaveProfile, emoji = "💾")
     }
+
+    WeeklyReportCard(weekly, weeklyError, onRefreshWeekly)
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("选择头像", "🎨")
@@ -993,6 +1272,15 @@ private fun ProfileScreen(
         GrowthPrimaryButton("保存教材", onTextbook, enabled = selectedTextbook.isNotBlank(), emoji = "📌")
     }
 
+    ParentAreaCard(
+        unlocked = parentUnlocked,
+        onUnlockRequest = ::openParentGate,
+        onLock = { confirmDelete = false; onLockParent() },
+        onPrivacy = onPrivacy,
+        onPayment = onPayment,
+        onDeleteRequest = { confirmDelete = true },
+    )
+
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("偏好与协议", "⚙️")
         GrowthSecondaryButton(
@@ -1000,17 +1288,15 @@ private fun ProfileScreen(
             { onTheme(!childTheme) },
             emoji = if (childTheme) "🌿" else "🌈",
         )
-        GrowthLinkRow("隐私协议", "🛡️", onPrivacy)
         GrowthLinkRow("用户协议", "📄", onTerms)
     }
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("账户", "👋")
         GrowthLinkRow("退出登录", "🚪", onLogout)
-        GrowthLinkRow("注销账号", "⚠️", { confirmDelete = true }, danger = true)
     }
 
-    if (confirmDelete) AlertDialog(
+    if (parentUnlocked && confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         containerColor = GrowthColors.Surface,
         shape = GrowthShapes.Card,
@@ -1026,6 +1312,69 @@ private fun ProfileScreen(
         dismissButton = {
             TextButton(onClick = { confirmDelete = false }, modifier = Modifier.height(48.dp)) {
                 Text("返回", style = MaterialTheme.typography.titleMedium)
+            }
+        },
+    )
+
+    if (showParentGate) AlertDialog(
+        onDismissRequest = {
+            showParentGate = false
+            gateAnswer = ""
+            gateError = ""
+        },
+        containerColor = GrowthColors.Surface,
+        shape = GrowthShapes.Card,
+        titleContentColor = GrowthColors.Ink,
+        textContentColor = GrowthColors.InkSoft,
+        title = { Text("家长验证", style = MaterialTheme.typography.headlineSmall) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "请家长完成下面的乘法题。验证后可管理账户、隐私与支付设置。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GrowthColors.InkSoft,
+                )
+                Text(
+                    "$gateA × $gateB = ?",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = GrowthColors.ForestDeep,
+                )
+                GrowthTextField(
+                    gateAnswer,
+                    { gateAnswer = it.filter(Char::isDigit).take(4) },
+                    "答案",
+                    placeholder = "输入乘积",
+                    leadingEmoji = "✏️",
+                )
+                if (gateError.isNotBlank()) {
+                    Text(gateError, style = MaterialTheme.typography.bodySmall, color = GrowthColors.Danger)
+                }
+                Text(
+                    "孩子端不会显示注销、隐私协议与支付入口。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { submitParentGate() },
+                enabled = gateAnswer.isNotBlank(),
+                modifier = Modifier.height(48.dp),
+            ) {
+                Text("解锁家长区", style = MaterialTheme.typography.titleMedium)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    showParentGate = false
+                    gateAnswer = ""
+                    gateError = ""
+                },
+                modifier = Modifier.height(48.dp),
+            ) {
+                Text("取消", style = MaterialTheme.typography.titleMedium)
             }
         },
     )

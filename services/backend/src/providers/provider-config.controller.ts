@@ -2,12 +2,14 @@ import { Body, Controller, Delete, Get, Headers, Param, ParseUUIDPipe, Post, Put
 import { SERVICE_KINDS, type ProviderServiceKind, type ServiceKind } from '@alg/shared-contracts';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { ProviderConfigService, type ProviderConfigInput } from './provider-config.service';
+import { ProviderBenchmarkService } from './provider-benchmark.service';
 import { AdminAuthService } from '../auth/admin-auth.service';
 
 @Controller('api/v1/admin/model-providers')
 export class ProviderConfigController {
   constructor(
     private readonly configs: ProviderConfigService,
+    private readonly benchmarkRunner: ProviderBenchmarkService,
     private readonly gateway: AiGatewayService,
     private readonly adminAuth: AdminAuthService,
   ) {}
@@ -83,6 +85,14 @@ export class ProviderConfigController {
     this.authorize(cookie);
     if (!SERVICE_KINDS.includes(serviceKind)) return [];
     return this.configs.listRuntimeScores(serviceKind);
+  }
+
+  @Post('benchmarks/run')
+  async runBenchmark(@Headers('cookie') cookie: string | undefined, @Body() body: unknown) {
+    this.authorize(cookie);
+    const benchmark = await this.benchmarkRunner.run(body);
+    await this.gateway.refreshRuntimeProvider(benchmark.serviceKind);
+    return benchmark;
   }
 
   @Post('benchmarks')
