@@ -995,7 +995,7 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
         }
         Text(word, style = MaterialTheme.typography.displayMedium, color = GrowthColors.Ink)
         if (ipa.isNotBlank()) {
-            Text(ipa, style = MaterialTheme.typography.headlineMedium, color = GrowthColors.BlueDeep)
+            Text("/" + ipa + "/", style = MaterialTheme.typography.headlineMedium, color = GrowthColors.BlueDeep)
         }
         if (letters.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
