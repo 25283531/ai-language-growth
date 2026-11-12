@@ -133,6 +133,12 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                                 http(base, "/speech/synthesize", "POST", body, token, headers)
                             }
                         }
+                        // Mock/演示模式返回的是不可下载的伪引用；不把它交给下载器，
+                        // 否则孩子会看到 “unknown protocol: mock” 这类内部错误。
+                        if (!safeRef(audio.optString("audioRef"))) {
+                            emit(false, "当前是演示模式，老师语音暂时不能播放。请先跟读文字，稍后再试。")
+                            return@launch
+                        }
                         resolved += AudioPart(audio.optString("audioRef"), rateOf(audio))
                     }
                     parts = resolved
@@ -163,7 +169,14 @@ internal class TeacherSpeechController(private val cacheDir: File) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                emit(false, "老师语音暂不可用：${e.message ?: "播放失败"}。请先阅读课堂文字，稍后重试。")
+                val detail = e.message.orEmpty()
+                val childMessage = when {
+                    detail.contains("登录") || detail.contains("学习者") -> "登录状态已失效，请重新登录。"
+                    detail.contains("额度") -> "老师语音额度暂时不可用，请先跟读文字。"
+                    detail.contains("文本") -> detail
+                    else -> "老师语音暂时不能播放。请先跟读文字，稍后再试。"
+                }
+                emit(false, childMessage)
             } finally {
                 if (!settled) pendingFiles.forEach { it.delete() }
                 if (!settled && reservationId != null) {
