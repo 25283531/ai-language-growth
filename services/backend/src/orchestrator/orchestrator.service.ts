@@ -2257,8 +2257,10 @@ function answerCandidates(input: {
   const configured = input.assessment?.acceptedTexts ?? [];
   if (configured.length) return configured.map(normalizeAnswer).filter(Boolean);
   if (
-    ['word_mimicry', 'pronunciation_drill', 'phrase_assembly'].includes(input.taskType)
+    ['word_mimicry', 'pronunciation_drill', 'phrase_assembly', 'listening_comprehension'].includes(input.taskType)
   ) {
+    // 听辨活动也应允许孩子用文字/语音说出听到的目标词；
+    // 否则没有图片选项时，孩子只能提交空回应，活动永远无法完成。
     return input.targetWords.map(normalizeAnswer).filter(Boolean);
   }
   if (input.taskType === 'sentence_pattern' && input.demonstrationText?.trim()) {
