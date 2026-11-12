@@ -3,8 +3,10 @@
 
 The script creates a disposable database inside the configured PostgreSQL
 container, applies Prisma migrations and the reviewed seed, starts a local mock
-backend through an SSH tunnel, runs ``m1-api.integration.test.ts``, and drops the
+backend through an SSH tunnel, runs the selected tsx test file, and drops the
 disposable database afterwards. Production tables are never used or modified.
+Use ``--serve`` to keep the backend and admin console alive for manual browser
+verification after the test; create the stop file to end the stack.
 
 Prerequisites in this repository:
   npm ci
@@ -71,6 +73,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-port", type=int, default=DEFAULT_API_PORT,
                         help="local mock backend port")
     parser.add_argument("--db-prefix", default="alg_ci_m1", help="disposable database prefix")
+    parser.add_argument("--test-file", default="services/backend/test/m1-api.integration.test.ts",
+                        help="tsx test file to run against the disposable stack")
+    parser.add_argument("--serve", action="store_true",
+                        help="keep backend/admin running after the test for manual browser verification")
+    parser.add_argument("--serve-timeout", type=int, default=1800,
+                        help="seconds to keep the manual verification stack alive")
+    parser.add_argument("--admin-port", type=int, default=3001,
+                        help="local admin console port in --serve mode")
+    parser.add_argument("--state-file", default="tools/_p2_2e_serve.json",
+                        help="where --serve writes non-secret stack metadata")
+    parser.add_argument("--stop-file", default="tools/_p2_2e_stop",
+                        help="create this file to stop --serve mode")
     parser.add_argument("--report", help="optional UTF-8 test report path")
     parser.add_argument("--keep-db", action="store_true", help="keep the disposable database for debugging")
     parser.add_argument("--migrate-timeout", type=int, default=300)
@@ -233,6 +247,10 @@ def main() -> int:
         parser.error(f"本地端口 {args.local_port} 已被占用，请用 --local-port 指定其他端口")
     if local_port_in_use(args.api_port):
         parser.error(f"本地端口 {args.api_port} 已被占用，请用 --api-port 指定其他端口")
+    if args.serve and local_port_in_use(args.admin_port):
+        parser.error(f"本地端口 {args.admin_port} 已被占用，请用 --admin-port 指定其他端口")
+    if args.serve and not (REPO / "apps/admin-web/.next").exists():
+        parser.error("--serve 需要先构建 admin-web（npm run build --workspace @alg/admin-web）")
     require_build()
 
     server_password = resolve_password(args)
@@ -245,6 +263,10 @@ def main() -> int:
     db_created = False
     pg_password: str | None = None
     backend_log = Path(tempfile.gettempdir()) / f"{db_name}_backend.log"
+    admin_log = Path(tempfile.gettempdir()) / f"{db_name}_admin.log"
+    state_path = REPO / args.state_file
+    stop_path = REPO / args.stop_file
+    admin: subprocess.Popen | None = None
     try:
         code, out, err = ssh_exec(client, f"docker exec {args.container} printenv POSTGRES_USER")
         if code == 0 and out.strip():
@@ -357,15 +379,59 @@ def main() -> int:
             raise RuntimeError("mock 后端未能在 60 秒内健康启动")
         print(f"[4/5] 本地 mock 后端健康：:{args.api_port}", flush=True)
 
+        if args.serve:
+            stop_path.unlink(missing_ok=True)
+            with admin_log.open("w", encoding="utf-8", errors="replace") as log:
+                admin = subprocess.Popen(
+                    ["node", str(REPO / "node_modules/next/dist/bin/next"),
+                     "start", "-p", str(args.admin_port)],
+                    cwd=REPO / "apps/admin-web",
+                    env=base_env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                )
+            admin_ready = False
+            for _ in range(60):
+                if admin.poll() is not None:
+                    break
+                try:
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{args.admin_port}/costs", timeout=2
+                    ) as response:
+                        admin_ready = response.status == 200
+                        if admin_ready:
+                            break
+                except Exception:
+                    pass
+                time.sleep(1)
+            if not admin_ready:
+                tail = redact(admin_log.read_text(encoding="utf-8", errors="replace")[-6000:], pg_password)
+                print(tail, flush=True)
+                raise RuntimeError("admin-web 未能在 60 秒内启动")
+            state_path.write_text(json.dumps({
+                "dbName": db_name,
+                "apiUrl": f"http://127.0.0.1:{args.api_port}/api/v1",
+                "adminUrl": f"http://127.0.0.1:{args.admin_port}",
+                "audioDir": audio_dir,
+                "testFile": args.test_file,
+                "keepFixtures": True,
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"[serve] 管理端健康：http://127.0.0.1:{args.admin_port}", flush=True)
+
         test_env = base_env.copy()
         test_env.update({
             "M1_API_URL": f"http://127.0.0.1:{args.api_port}/api/v1",
             "GITHUB_RUN_ID": f"server-pg-{db_name}",
+            **({
+                "P2_2E_DB_INTEGRATION": "1",
+                "P2_2E_KEEP_FIXTURES": "1",
+                "P2_2E_API_URL": f"http://127.0.0.1:{args.api_port}/api/v1",
+            } if args.serve else {}),
         })
         code, output = run_local(
             ["npx.cmd" if os.name == "nt" else "npx", "tsx",
              "--tsconfig", "services/backend/tsconfig.json",
-             "--test", "services/backend/test/m1-api.integration.test.ts"],
+             "--test", args.test_file],
             test_env,
             args.test_timeout,
             pg_password,
@@ -377,10 +443,31 @@ def main() -> int:
             report.write_text(output, encoding="utf-8")
             print(f"[report] {report}", flush=True)
         if code != 0:
-            raise RuntimeError(f"m1-api.integration.test.ts 失败，退出码 {code}")
-        print("[5/5] m1-api.integration.test.ts 通过", flush=True)
+            raise RuntimeError(f"{args.test_file} 失败，退出码 {code}")
+        print(f"[5/5] {args.test_file} 通过", flush=True)
+
+        if args.serve:
+            print(
+                f"[serve] 等待手动核对；创建 {stop_path} 停止，最多 {args.serve_timeout} 秒",
+                flush=True,
+            )
+            deadline = time.time() + args.serve_timeout
+            while time.time() < deadline and not stop_path.exists():
+                if admin is not None and admin.poll() is not None:
+                    raise RuntimeError("admin-web 意外退出")
+                if backend.poll() is not None:
+                    raise RuntimeError("mock 后端意外退出")
+                time.sleep(1)
+            print("[serve] 收到停止信号或达到超时", flush=True)
         return 0
     finally:
+        if admin is not None and admin.poll() is None:
+            admin.terminate()
+            try:
+                admin.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                admin.kill()
+                admin.wait(timeout=10)
         if backend is not None and backend.poll() is None:
             backend.terminate()
             try:
@@ -390,6 +477,11 @@ def main() -> int:
                 backend.wait(timeout=10)
         if tunnel is not None:
             tunnel.close()
+        try:
+            state_path.unlink(missing_ok=True)
+            stop_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         shutil.rmtree(audio_dir, ignore_errors=True)
         if db_created and not args.keep_db:
             code, out, err = ssh_exec(
@@ -402,6 +494,11 @@ def main() -> int:
                 print(f"[cleanup] 已删除一次性测试库：{db_name}", flush=True)
             else:
                 print(f"[cleanup] 删除测试库失败：{redact(err or out, pg_password or server_password).strip()}", flush=True)
+        for log_path in (backend_log, admin_log):
+            try:
+                log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         client.close()
 
 

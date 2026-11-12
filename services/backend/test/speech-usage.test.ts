@@ -52,10 +52,20 @@ function pass(result: ReturnType<typeof asrResult>, effectiveLevel = 'L1') {
 function makeHarness(input: {
   trace?: { result: ReturnType<typeof asrResult>; passes: ReturnType<typeof pass>[] };
   pronunciation?: Record<string, unknown>;
+  tts?: Record<string, unknown>;
 }) {
   const usage: UsageRecord[] = [];
   const checkedSessions: string[] = [];
   const gateway = {
+    tts: async () => ({
+      audioRef: 'mock://tts/usage-test',
+      characters: 12,
+      latencyMs: 11,
+      providerAlias: 'configured_tts',
+      modelAlias: 'tts-model',
+      cached: false,
+      ...(input.tts ?? {}),
+    }),
     asrWithTrace: async () =>
       input.trace ?? { result: asrResult(), passes: [pass(asrResult())] },
     pronunciation: async () =>
@@ -101,6 +111,43 @@ function makeHarness(input: {
 }
 
 describe('直连语音接口入账', () => {
+  it('synthesize 写一条 TTS 字符账，不混入 ASR/发音', async () => {
+    const harness = makeHarness({ tts: { characters: 12 } });
+
+    await harness.controller.synthesize(
+      { text: 'hello teacher' },
+      request(),
+    );
+
+    assert.equal(harness.usage.length, 1);
+    assert.equal(harness.usage[0]?.learnerId, 'learner-1');
+    assert.equal(harness.usage[0]?.lessonSessionId, null);
+    assert.equal(harness.usage[0]?.serviceKind, 'tts');
+    assert.equal(harness.usage[0]?.taskRoute, 'tts.dynamic_teaching');
+    assert.equal(harness.usage[0]?.ttsCharacters, 12);
+    assert.equal(harness.usage[0]?.asrSeconds, 0);
+    assert.equal(harness.usage[0]?.pronunciationCalls, 0);
+    assert.equal(harness.usage[0]?.level, 'L1');
+  });
+
+  it('TTS 缓存命中仍保留调用行，但字符数记 0', async () => {
+    const harness = makeHarness({
+      tts: {
+        characters: 0,
+        cached: true,
+        latencyMs: 0,
+        providerAlias: 'configured_tts',
+        modelAlias: 'tts-model',
+      },
+    });
+
+    await harness.controller.synthesize({ text: 'hello teacher' }, request());
+
+    assert.equal(harness.usage.length, 1);
+    assert.equal(harness.usage[0]?.serviceKind, 'tts');
+    assert.equal(harness.usage[0]?.ttsCharacters, 0);
+  });
+
   it('recognize 写一条带 learner/session/ASR 秒数的账', async () => {
     const harness = makeHarness({});
     await harness.controller.recognize(

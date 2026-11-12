@@ -61,7 +61,7 @@ SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，
 
 | Method / path | 请求 | 成功响应 / 行为 | 认证 |
 | --- | --- | --- | --- |
-| `POST /speech/synthesize` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | Gateway TTS 结果，课程级缓存可避免重复计费；`scope` 仅接受内容身份，服务端按 `PRIVATE_DYNAMIC` 处理，不信任客户端声明的归属 | Bearer + `X-Learner-Id` + 额度租约 |
+| `POST /speech/synthesize` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | Gateway TTS 结果，课程级缓存可避免重复合成；成功调用写 `ai_usage_logs`（`ttsCharacters`），缓存重播写 0 字符但仍保留一行，保证调用次数可对账；`scope.lessonSessionId` 提供时必须属于该学习者，用于归集课程主题；`scope` 仅接受内容身份，服务端按 `PRIVATE_DYNAMIC` 处理，不信任客户端声明的归属 | Bearer + `X-Learner-Id` + 额度租约 |
 | `POST /speech/cache/lookup` | `{ text, teacherSpeed?, voiceStyle?, pauseAfterSentenceMs?, pronunciationMode?, scope? }` | 只读查服务端缓存，不触发供应商、不需租约；命中返回可播放 `speech`，未命中返回 `{ cached:false, speech:null }` | Bearer + `X-Learner-Id` |
 | `POST /speech/recognize` | `{ audioRef, highQuality?, lessonSessionId? }` | ASR 转写结果；ASR 不等于发音准确度评估；成功调用写 `ai_usage_logs`（`asrSeconds`），suspect 二次识别按两次 pass 各写一条；`lessonSessionId` 提供时必须属于该学习者 | Bearer + `X-Learner-Id` + 额度租约 |
 | `POST /speech/evaluate` | `{ audioRef, targetText, granularity?: word\|syllable\|phoneme, lessonSessionId? }` | 发音评测结果；成功调用写 `ai_usage_logs`（`pronunciationCalls=1`）；`lessonSessionId` 提供时必须属于该学习者 | Bearer + `X-Learner-Id` + 额度租约 |

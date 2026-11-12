@@ -783,7 +783,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         ...request,
         ...(timeoutMs ? { timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs) } : {}),
       }),
-      undefined,
+      // 与 ASR/TTS 一致：Router 判 L0 时仍可用零成本 Mock 发音评估，
+      // 不能因缺少兜底别名把本地 mock 链路打成 500。
+      'mock_pronunciation',
     );
     return outcome.result;
   }

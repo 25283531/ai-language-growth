@@ -76,6 +76,13 @@ export class SpeechController {
     // 一律 fail-closed 到 PRIVATE_DYNAMIC，用请求方 learnerId 作 owner。
     await this.assertClientReservation(request, 'tts');
     const learnerId = String(request.headers['x-learner-id'] ?? '').trim();
+    // 重播请求会原样带回开课时下发的 scope；带 lessonSessionId 时必须校验归属，
+    // 既用于缓存键，也用于把重播 TTS 归到对应课程主题。
+    const lessonSessionId = await this.optionalLessonSessionId(
+      request,
+      learnerId,
+      parsed.data.scope?.lessonSessionId,
+    );
     const decision = await this.router.route({
       serviceKind: 'tts',
       taskRoute: 'tts.dynamic_teaching',
@@ -94,6 +101,19 @@ export class SpeechController {
       },
       decision,
     );
+    // 每次成功请求都留一行：缓存命中写 0 字符，保持「调用次数 = 账本行数」，
+    // 但绝不把缓存命中重复算成合成字符或费用。
+    await this.recordSpeechUsage({
+      learnerId,
+      lessonSessionId,
+      serviceKind: 'tts',
+      taskRoute: 'tts.dynamic_teaching',
+      level: result.providerAlias.startsWith('mock_') ? 'L0' : decision.level,
+      providerAlias: result.providerAlias,
+      modelAlias: result.modelAlias,
+      ttsCharacters: result.characters,
+      latencyMs: result.latencyMs,
+    });
     return result;
   }
 
@@ -225,11 +245,12 @@ export class SpeechController {
   private async recordSpeechUsage(input: {
     learnerId: string;
     lessonSessionId: string | null;
-    serviceKind: 'asr' | 'pronunciation';
+    serviceKind: 'asr' | 'tts' | 'pronunciation';
     taskRoute: string;
     level: UsageRecord['level'];
     providerAlias: string;
     modelAlias: string;
+    ttsCharacters?: number;
     asrSeconds?: number;
     pronunciationCalls?: number;
     latencyMs: number;
@@ -245,7 +266,7 @@ export class SpeechController {
       modelAlias: input.modelAlias,
       inputTokens: 0,
       outputTokens: 0,
-      ttsCharacters: 0,
+      ttsCharacters: input.ttsCharacters ?? 0,
       asrSeconds: input.asrSeconds ?? 0,
       pronunciationCalls: input.pronunciationCalls ?? 0,
       estimatedCostCny: 0,
