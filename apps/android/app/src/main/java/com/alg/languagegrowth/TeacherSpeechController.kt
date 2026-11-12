@@ -39,6 +39,8 @@ internal class TeacherSpeechController(private val cacheDir: File) {
     private var task: Job? = null
     private var player: MediaPlayer? = null
     private var cachedParts: List<Pair<File, Float>> = emptyList()
+    private var cachedWordParts: List<Pair<File, Float>> = emptyList()
+    private var cachedWordKey = ""
     private var generation = 0
 
     fun stop(clearAudio: Boolean = true) {
@@ -52,6 +54,13 @@ internal class TeacherSpeechController(private val cacheDir: File) {
     private fun clearCached() {
         cachedParts.forEach { it.first.delete() }
         cachedParts = emptyList()
+        clearWordCache()
+    }
+
+    private fun clearWordCache() {
+        cachedWordParts.forEach { it.first.delete() }
+        cachedWordParts = emptyList()
+        cachedWordKey = ""
     }
 
     fun close() {
@@ -136,7 +145,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                         // Mock/演示模式返回的是不可下载的伪引用；不把它交给下载器，
                         // 否则孩子会看到 “unknown protocol: mock” 这类内部错误。
                         if (!safeRef(audio.optString("audioRef"))) {
-                            emit(false, "当前是演示模式，老师语音暂时不能播放。请先跟读文字，稍后再试。")
+                            emit(false, "老师的声音还在准备中，先看着文字读一读，好吗？")
                             return@launch
                         }
                         resolved += AudioPart(audio.optString("audioRef"), rateOf(audio))
@@ -197,6 +206,154 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         }
     }
 
+    /**
+     * “再听一次”只重放当前英文单词/短语，不重放老师的中文引导句。
+     * 第一次先查服务端缓存，未命中才合成；之后直接播放本地文件，
+     * 反复点按不会重复消耗 TTS。
+     */
+    fun playWord(
+        base: String,
+        token: String,
+        learnerId: String,
+        directive: JSONObject,
+        speech: JSONObject?,
+        onState: (Boolean, String) -> Unit,
+    ) {
+        val word = targetWordOf(directive)
+        if (word.isBlank()) {
+            onState(false, "这一轮还没有可重放的单词。")
+            return
+        }
+        val previous = task
+        previous?.cancel()
+        val currentGeneration = ++generation
+        fun emit(active: Boolean, message: String) {
+            if (generation == currentGeneration) onState(active, message)
+        }
+        task = scope.launch {
+            previous?.join()
+            var reservationId: String? = null
+            val pendingFiles = mutableListOf<File>()
+            var settled = false
+            emit(true, "正在准备单词发音…")
+            try {
+                if (cachedWordKey == word && cachedWordParts.isNotEmpty() && cachedWordParts.all { it.first.isFile }) {
+                    emit(true, "正在读单词…")
+                    playParts(cachedWordParts)
+                    emit(false, "单词发音播放完毕，可以再听")
+                    return@launch
+                }
+                require(token.isNotBlank() && learnerId.isNotBlank()) { "登录或学习者信息已失效，请重新登录" }
+                clearWordCache()
+                val learnerHeaders = mapOf("X-Learner-Id" to learnerId)
+                val body = voiceBody(directive, word, speech)
+                val estimatedSeconds = ceil(word.length / 5.0).coerceIn(6.0, 30.0)
+                // 媒体下载接口要求有效额度租约；即使命中缓存也先建租约，
+                // 缓存命中时按 0 秒结算，不会产生新的供应商 TTS 费用。
+                val reservation = withContext(Dispatchers.IO) {
+                    http(
+                        base, "/speech/quota/reserve", "POST",
+                        JSONObject()
+                            .put("learnerId", learnerId)
+                            .put("serviceKind", "tts")
+                            .put("seconds", estimatedSeconds)
+                            .put("ttlSeconds", 600)
+                            .put("idempotencyKey", "android-tts-word-${UUID.randomUUID()}"),
+                        token,
+                    )
+                }
+                val rid = reservation.optString("reservationId")
+                require(rid.isNotBlank() && reservation.optString("status", "reserved") == "reserved") {
+                    "语音额度租约不可用"
+                }
+                reservationId = rid
+                val headers = learnerHeaders + ("X-Speech-Quota-Reservation" to rid)
+
+                val lookup = withContext(Dispatchers.IO) {
+                    http(base, "/speech/cache/lookup", "POST", body, token, learnerHeaders)
+                }
+                val cached = if (lookup.optBoolean("cached")) lookup.optJSONObject("speech") else null
+                if (cached != null && safeRef(cached.optString("audioRef"))) {
+                    val file = withContext(Dispatchers.IO) {
+                        download(base, cached.optString("audioRef"), token, headers).also { pendingFiles += it }
+                    }
+                    val downloaded = listOf(file to rateOf(cached))
+                    emit(true, "正在读单词…")
+                    playParts(downloaded)
+                    withContext(Dispatchers.IO) {
+                        http(
+                            base, "/speech/quota/settle", "POST",
+                            JSONObject().put("reservationId", rid).put("seconds", 0.0),
+                            token,
+                        )
+                    }
+                    settled = true
+                    pendingFiles.clear()
+                    cachedWordParts = downloaded
+                    cachedWordKey = word
+                    emit(false, "单词发音播放完毕，可以再听")
+                    return@launch
+                }
+
+                val audio = withContext(Dispatchers.IO) {
+                    http(base, "/speech/synthesize", "POST", body, token, headers)
+                }
+                if (!safeRef(audio.optString("audioRef"))) {
+                    emit(false, "老师的声音还在准备中，先看着文字读一读，好吗？")
+                    return@launch
+                }
+                val file = withContext(Dispatchers.IO) {
+                    download(base, audio.optString("audioRef"), token, headers)
+                        .also { pendingFiles += it }
+                }
+                val downloaded = listOf(file to rateOf(audio))
+                emit(true, "正在读单词…")
+                val durationMs = playParts(downloaded)
+                withContext(Dispatchers.IO) {
+                    http(
+                        base, "/speech/quota/settle", "POST",
+                        JSONObject()
+                            .put("reservationId", rid)
+                            .put("seconds", (durationMs / 1000.0).coerceIn(0.0, estimatedSeconds)),
+                        token,
+                    )
+                }
+                settled = true
+                pendingFiles.clear()
+                cachedWordParts = downloaded
+                cachedWordKey = word
+                emit(false, "单词发音播放完毕，可以再听")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val detail = e.message.orEmpty()
+                val childMessage = when {
+                    detail.contains("登录") || detail.contains("学习者") -> "登录状态已失效，请重新登录。"
+                    detail.contains("额度") -> "老师语音额度暂时不可用，请先看着文字读一读。"
+                    detail.contains("文本") -> detail
+                    else -> "单词发音暂时不能播放，请先看着文字读一读。"
+                }
+                emit(false, childMessage)
+            } finally {
+                if (!settled) pendingFiles.forEach { it.delete() }
+                if (!settled && reservationId != null) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        try {
+                            http(
+                                base, "/speech/quota/release", "POST",
+                                JSONObject().put("reservationId", reservationId), token,
+                            )
+                        } catch (_: Exception) {
+                            withContext(Dispatchers.Main) {
+                                emit(false, "语音请求已停止，额度释放暂未确认；租约将自动到期。")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun partsFromSpeech(speech: JSONObject?): List<AudioPart> {
         if (speech == null) return emptyList()
         val segments: JSONArray? = speech.optJSONArray("segments")
@@ -213,6 +370,17 @@ internal class TeacherSpeechController(private val cacheDir: File) {
 
     private fun safeRef(value: String?): Boolean =
         !value.isNullOrBlank() && value != "null" && value.startsWith("/api/v1/media/audio/")
+
+    private fun targetWordOf(directive: JSONObject): String {
+        val words = directive.optJSONArray("targetWords")
+        val fromTarget = (0 until (words?.length() ?: 0))
+            .mapNotNull { index -> words?.optString(index)?.trim()?.takeIf { it.isNotBlank() } }
+            .firstOrNull()
+        return fromTarget
+            ?: directive.optString("demonstrationText").trim()
+                .takeUnless { it.isBlank() || it == "null" }
+                .orEmpty()
+    }
 
     private fun rateOf(audio: JSONObject): Float {
         val raw = if (audio.optString("speedMode") == "playback") audio.optDouble("playbackRate", 1.0) else 1.0

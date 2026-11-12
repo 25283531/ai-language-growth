@@ -36,6 +36,7 @@ import type {
   TurnResponse,
 } from '@alg/shared-contracts';
 import { resolveEvidenceTargets } from '@alg/skill-graph';
+import { buildCefrPreset } from '@alg/curriculum';
 import { AiGatewayService, quantizeTeacherSpeed } from '../ai-gateway/ai-gateway.service';
 import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PlannerService } from '../planner/planner.service';
@@ -65,6 +66,12 @@ const OFFLINE_DIRECTIVE: TeachingDirective = {
   ],
   expectedResponse: 'listen',
   targetWords: ['hello'],
+  wordMeaningZh: '你好',
+  wordPhonetic: '/həˈloʊ/',
+  usageNoteZh: '见到老师、朋友或家人时，可以用 hello 打招呼。',
+  exampleSentenceEn: 'Hello! I am Anna.',
+  exampleSentenceZh: '你好！我是安娜。',
+  practiceTarget: 3,
   voice: {
     teacherSpeed: 0.5,
     voiceStyle: 'gentle',
@@ -1854,7 +1861,8 @@ export class OrchestratorService {
       dynamicDemonstration: true,
     };
 
-    const [teacherProfile, interactionMemories] = await Promise.all([
+    const targetWord = activity.targetWords[0] ?? '';
+    const [teacherProfile, interactionMemories, databaseVocabulary] = await Promise.all([
       this.getLearnerTeacherProfile(input.learnerId),
       this.prisma.interaction_memories.findMany({
         where: {
@@ -1866,14 +1874,38 @@ export class OrchestratorService {
         take: 3,
         select: { content: true },
       }),
+      // 词义与使用情境来自已审核词条；它们只用于屏幕讲解和固定教学话术，
+      // 不参与评分，也不把未审核内容带进课堂。
+      activity.targetWords[0] && item?.topicId
+        ? this.prisma.vocabulary_items.findFirst({
+            where: {
+              topicId: item.topicId,
+              word: { equals: activity.targetWords[0], mode: 'insensitive' },
+            },
+            select: {
+              phonetic: true,
+              meaningZh: true,
+              exampleSentences: true,
+            },
+          })
+        : Promise.resolve(null),
     ]);
+    // 已审核词条优先；预置课程没有单独词条时，从同一份已发布预置内容取词义。
+    const vocabulary = databaseVocabulary ?? presetVocabularyFor(targetWord);
     const adjustable = teacherProfile?.adjustable && typeof teacherProfile.adjustable === 'object' && !Array.isArray(teacherProfile.adjustable)
       ? teacherProfile.adjustable as Record<string, unknown>
       : {};
     const baseSpeed = typeof adjustable.speakingRate === 'number' ? Math.min(0.85, Math.max(0.45, adjustable.speakingRate)) : 0.65;
     const teacherSpeed = resolveTeacherSpeed(baseSpeed, input.methodState.current);
-    const targetWord = activity.targetWords[0] ?? '';
     const syllables = splitWord(targetWord);
+    const meaningZh = input.isReview ? '' : (vocabulary?.meaningZh ?? '').trim().slice(0, 40);
+    const phonetic = !input.isReview && vocabulary?.phonetic ? vocabulary.phonetic.trim().slice(0, 60) : '';
+    const usageNoteZh = input.isReview || !targetWord
+      ? ''
+      : usageNoteForScenario(activity.scenario, targetWord).slice(0, 80);
+    const firstExample = firstExampleSentence(vocabulary?.exampleSentences);
+    const exampleSentenceEn = input.isReview ? '' : (firstExample?.en ?? '').trim().slice(0, 120);
+    const exampleSentenceZh = input.isReview ? '' : (firstExample?.zh ?? '').trim().slice(0, 80);
 
     const demo = resolveDemonstration({
       method: input.methodState.current,
@@ -1891,6 +1923,22 @@ export class OrchestratorService {
         ? '我们来做一次复习。请回想之前学过的内容，选择对应的图片。'
         : '我们来做一次复习。请回想之前学过的内容，试着自己回答。'
       : activity.teacherUtteranceZh;
+    // 用“认识词义 → 知道什么时候用 → 听例句 → 再跟读”的顺序组织教师话语，
+    // 像父母教幼儿说话一样先建立意义，再练声音；复习轮不提前给答案。
+    const meaningLine = meaningZh ? `${targetWord} 的意思是“${meaningZh}”。` : '';
+    const exampleLine = exampleSentenceEn ? `比如：${exampleSentenceEn}` : '';
+    const teachingIntro = [meaningLine, usageNoteZh, exampleLine].filter(Boolean).join('');
+    const richTeacherUtterance = input.isReview || !teachingIntro
+      ? baseTeacherUtterance
+      : activity.taskType === 'listening_comprehension'
+        ? `我们先来认识 ${targetWord}。${teachingIntro} 听一听，选出你听到的词。`
+        : activity.taskType === 'word_mimicry'
+          ? `我们一起来读 ${targetWord}。${teachingIntro} 先听老师慢慢说，再跟着读。`
+          : activity.taskType === 'sentence_pattern'
+            ? `我们试着用 ${targetWord} 说一句话。${teachingIntro}`
+            : activity.taskType === 'situational_dialogue'
+              ? `我们在生活里用一用 ${targetWord}。${teachingIntro}`
+              : `${baseTeacherUtterance} ${teachingIntro}`;
 
     const directive: TeachingDirective = {
       targetSkillNodeId: activity.skillNodeIds[0] ?? 'LA.LISTEN.greeting_core',
@@ -1898,12 +1946,20 @@ export class OrchestratorService {
       isReview: input.isReview,
       scenario: activity.scenario as TeachingDirective['scenario'],
       teacherUtterance: input.coachingText
-        ? `${input.coachingText} ${baseTeacherUtterance}`
-        : baseTeacherUtterance,
+        ? `${input.coachingText} ${richTeacherUtterance}`
+        : richTeacherUtterance,
       demonstrationText: input.isReview ? null : demo.demonstrationText,
       pronunciationUnits: input.isReview ? [] : pronunciationUnits,
       expectedResponse: input.isReview && expectedResponse !== 'tap_image' ? 'speak' : expectedResponse,
       targetWords: input.isReview ? [] : activity.targetWords,
+      wordMeaningZh: meaningZh || null,
+      wordPhonetic: phonetic || null,
+      usageNoteZh: usageNoteZh || null,
+      exampleSentenceEn: exampleSentenceEn || null,
+      exampleSentenceZh: exampleSentenceZh || null,
+      // 每轮都保留三次小练习的节奏：听、跟读、再用一次，
+      // 不因活动类型变化而突然降低门槛，孩子可以稳定地多练几遍。
+      practiceTarget: 3,
       voice: {
         teacherSpeed,
         voiceStyle: adjustable.tone === 'lively' ? 'encouraging' : adjustable.tone === 'calm' ? 'warm' : 'gentle',
@@ -2306,6 +2362,70 @@ function topicNameOf(topicId: string): string {
     'topic-objects-around': '身边物品',
   };
   return names[topicId] ?? topicId;
+}
+
+/** 预置课程词义索引：第一次用到时构建一次，避免每轮重复扫描完整课程包。 */
+type VocabularyHint = { phonetic: string; meaningZh: string; exampleSentences: unknown };
+let presetVocabularyIndex: Map<string, VocabularyHint> | null = null;
+
+function presetVocabularyFor(word: string): VocabularyHint | null {
+  const key = word.trim().toLowerCase();
+  if (!key) return null;
+  if (!presetVocabularyIndex) {
+    const index = new Map<string, VocabularyHint>();
+    for (const level of buildCefrPreset().levels) {
+      for (const unit of level.units) {
+        for (const entry of unit.vocabulary) {
+          const entryKey = entry.word.trim().toLowerCase();
+          if (!entryKey || index.has(entryKey)) continue;
+          index.set(entryKey, {
+            phonetic: entry.phonetic,
+            meaningZh: entry.meaningZh,
+            exampleSentences: entry.exampleSentences,
+          });
+        }
+      }
+    }
+    presetVocabularyIndex = index;
+  }
+  return presetVocabularyIndex.get(key) ?? null;
+}
+
+/** 从词条的 JSON 例句中取第一条，字段缺失时返回 null，不臆造例句。 */
+function firstExampleSentence(value: unknown): { en: string; zh: string } | null {
+  if (!Array.isArray(value)) return null;
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const en = typeof record.en === 'string' ? record.en : '';
+    const zh = typeof record.zh === 'string' ? record.zh : '';
+    if (en.trim()) return { en, zh };
+  }
+  return null;
+}
+
+/** 用生活场景说明词语什么时候用；只做教学提示，不参与评估。 */
+function usageNoteForScenario(scenario: string, word: string): string {
+  switch (scenario) {
+    case 'greeting_scene':
+      return `见到老师、朋友或家人时，可以用 ${word} 打招呼。`;
+    case 'self_intro_scene':
+      return `介绍自己或认识新朋友时，可以用 ${word}。`;
+    case 'object_pic_scene':
+      return `看到身边的物品时，可以用 ${word} 说出它的名字。`;
+    case 'object_shop_scene':
+      return `在商店或新的生活情境里，可以用 ${word} 表达。`;
+    case 'free_chat_scene':
+      return `和别人聊天时，可以试着用 ${word}。`;
+    case 'story_scene':
+      return `听故事或讲故事时，可以留意 ${word} 的用法。`;
+    case 'review_scene':
+      return `先自己回想 ${word} 的意思和使用情境。`;
+    case 'assessment_scene':
+      return `试着自己用 ${word} 完成这一次小任务。`;
+    default:
+      return `在日常生活里，可以试着用 ${word} 表达。`;
+  }
 }
 
 /** 只把明显的疑问句判为提问，其余自由发言按普通交流处理。 */

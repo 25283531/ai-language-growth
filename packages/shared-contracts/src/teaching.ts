@@ -88,6 +88,17 @@ export const teachingDirectiveSchema = z.object({
   ]),
   /** 目标词（跟读任务用） */
   targetWords: z.array(z.string()).default([]),
+  /** 目标词的中文意思；来自已审核词条，缺失时为空。 */
+  wordMeaningZh: z.string().nullable().default(null),
+  /** 目标词的 IPA；客户端按需显示斜杠。 */
+  wordPhonetic: z.string().nullable().default(null),
+  /** 这个词在什么生活情境里使用，用孩子听得懂的中文说明。 */
+  usageNoteZh: z.string().nullable().default(null),
+  /** 儿童例句，帮助孩子把词放进真实语境。 */
+  exampleSentenceEn: z.string().nullable().default(null),
+  exampleSentenceZh: z.string().nullable().default(null),
+  /** 本课建议的耐心练习次数；由后端决定，客户端只展示进度。 */
+  practiceTarget: z.number().int().min(1).max(5).default(3),
   /** 语音参数 */
   voice: teacherVoiceParamsSchema,
   /** 是否允许重放 */

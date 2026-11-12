@@ -76,7 +76,7 @@ export interface AsrTrace {
 }
 
 /** 缓存键版本。升位即让旧格式索引整体逻辑失效，无需物理删除。 */
-const TTS_KEY_VERSION = 'tts-v3-course';
+const TTS_KEY_VERSION = 'tts-v4-natural-voice';
 /** PRIVATE_DYNAMIC 资产的短 TTL（毫秒），到期后索引与音频都视为 miss。 */
 const PRIVATE_TTS_TTL_MS = 24 * 60 * 60 * 1000;
 
