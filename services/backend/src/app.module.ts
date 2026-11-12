@@ -20,6 +20,8 @@ import {
   SpeechQuotaController,
   UsageController,
 } from './speech/speech.controller';
+import { TtsCacheAdminController } from './speech/tts-cache-admin.controller';
+import { TtsCacheMaintenanceService } from './speech/tts-cache-maintenance.service';
 import { MediaController } from './media/media.controller';
 import { ImageCacheService } from './media/image-cache.service';
 import { ProviderConfigController } from './providers/provider-config.controller';
@@ -54,6 +56,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     SpeechController,
     SpeechQuotaController,
     UsageController,
+    TtsCacheAdminController,
     HealthController,
     MediaController,
     ProviderConfigController,
@@ -80,6 +83,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     PlannerService,
     OrchestratorService,
     SpeechQuotaService,
+    TtsCacheMaintenanceService,
     RoutingConfigService,
     AuthService,
     AdminAuthService,

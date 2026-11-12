@@ -67,6 +67,7 @@ SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，
 | `POST /speech/evaluate` | `{ audioRef, targetText, granularity?: word\|syllable\|phoneme }` | 发音评测结果 | 无 |
 | `GET /usage/summary?learnerId=...&lessonSessionId=...` | 可选筛选 | 持久化用量与 `pricingStatus: unpriced`；`costCny=0` 表示未计价，不代表免费 | 无 |
 | `GET /health` | 无 | 状态、Gateway 模式、未校准标记、时间戳 | 无 |
+| `GET /admin/tts-cache` | 管理员 Cookie | TTS 缓存命中率、single-flight 合并数、合成字符数与最近一次清理统计；不返回音频路径或文本 | 管理员会话 |
 | `GET /config/audit` | 无 | 脱敏供应商配置摘要；`NODE_ENV=production` 时 404 | 仅开发环境门槛，不是认证 |
 | `GET /media/audio/{file}` | 内容指纹文件名 + Bearer + `X-Learner-Id` + 额度租约 | 流式返回本地 TTS 文件；扩展名白名单 + `media_assets` 归属校验：`PUBLIC_CURRICULUM` / 旧资产按租约可读，`PRIVATE_DYNAMIC` / `PRIVATE_UPLOAD` 仅归属学习者可读，过期按 404 | 学习者归属 + 租约 |
 | `POST /media/audio/uploads` | 已停用 | 返回 `410 AUDIO_UPLOAD_DISABLED`；录音改为 `POST /lessons/:id/turn` 的 `learnerResponse.audioBase64`（最大 20,000,000 字符），服务端不落盘 | — |
@@ -97,6 +98,13 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 - `PUBLIC_CURRICULUM`：仅发布态课程内容且无动态覆盖时启用，允许同一课程跨用户、跨时间复用；键中不含 `learnerId` / `lessonSessionId`。
 - `PRIVATE_DYNAMIC`：默认 fail-closed；键中含学习者与课堂标识，音频文件与媒体资产按归属隔离，按 24 小时 TTL 失效。
 - 缓存键包含 `contentVersion`、`voiceParamsHash`、`voiceProfileVersion`、`modelFamily`；发布内容、音色档案或模型族变更时旧音频不再命中。`pauseAfterSentenceMs` 属播放端行为，不进缓存键。
+
+### TTS 缓存清理与可观测性
+
+- `TtsCacheMaintenanceService` 默认每 6 小时执行一次，启动 10 分钟后首跑；只清理两类资源：`expiresAt` 已过的资产/索引，以及无任何活跃 `media_assets` / `.tts-*.json` 引用且超过宽限期的顶层音频文件。
+- `PUBLIC_CURRICULUM` / `PRONUNCIATION` 永不按 TTL 删除；索引损坏、数据库删除失败时本轮不删音频；只识别 `24-hex.mp3|wav|m4a`，不碰 `uploads/` 与未知文件。
+- 环境变量：`TTS_CACHE_CLEANUP_ENABLED`（默认 `true`）、`TTS_CACHE_CLEANUP_INTERVAL_MS`（默认 21600000）、`TTS_CACHE_CLEANUP_INITIAL_DELAY_MS`（默认 600000）、`TTS_CACHE_ORPHAN_GRACE_MS`（默认 604800000）。
+- `GET /api/v1/admin/tts-cache` 返回进程内 TTS 缓存指标（请求、命中、single-flight 合并、miss、命中率、合成字符数）与最近一次清理统计；需要管理员 Cookie。
 
 ### 会员管理
 

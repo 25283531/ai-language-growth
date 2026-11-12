@@ -151,6 +151,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   /** Coalesce simultaneous requests for the same utterance within this process. */
   private readonly ttsInFlight = new Map<string, Promise<GatewayCallResult<TtsResponse>>>();
   private readonly providerTimeouts = new Map<string, number>();
+  /** TTS 成本可观测指标；只在进程内累计，重启归零。 */
+  private ttsRequests = 0;
+  private ttsCacheHits = 0;
+  private ttsCacheMisses = 0;
+  private ttsCoalesced = 0;
+  private ttsCharactersSynthesized = 0;
   private pronunciationCandidates: string[] = [];
   private readonly runtimeCandidates: Record<'llm' | 'tts' | 'asr', string[]> = {
     llm: [],
@@ -333,8 +339,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   ): Promise<GatewayCallResult<TtsResponse>> {
     const normalizedRequest = this.normalizeTtsRequest(request);
     const cacheKey = this.ttsCacheKey(normalizedRequest);
+    this.ttsRequests += 1;
     const pending = this.ttsInFlight.get(cacheKey);
-    if (pending) return this.cachedTtsOutcome(await pending);
+    if (pending) {
+      this.ttsCoalesced += 1;
+      return this.cachedTtsOutcome(await pending);
+    }
     const work = this.resolveTts(normalizedRequest, decision, cacheKey);
     this.ttsInFlight.set(cacheKey, work);
     try { return await work; }
@@ -353,7 +363,11 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   ): Promise<GatewayCallResult<TtsResponse>> {
     // —— 缓存命中：反复播放不重新消耗 TTS ——
     const cached = await this.findTtsCache(cacheKey, normalizedRequest);
-    if (cached) return this.cachedTtsOutcome(cached.outcome);
+    if (cached) {
+      this.ttsCacheHits += 1;
+      return this.cachedTtsOutcome(cached.outcome);
+    }
+    this.ttsCacheMisses += 1;
 
     const outcome = await this.callWithFallback<TtsResponse>(
       'tts',
@@ -365,6 +379,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       'mock_tts',
     );
     Object.assign(outcome.result, this.ttsSpeedMetadata(normalizedRequest, outcome.providerAlias));
+    if (!outcome.result.cached) this.ttsCharactersSynthesized += outcome.result.characters || 0;
 
     // 只要拿到可用音频就缓存：降级到兜底适配器同样是有效音频，
     // 若因 degraded 而不缓存，Mock 模式下重复播放会永远重新计费。
@@ -870,12 +885,31 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     }
   }
 
-  /** 缓存统计，供成本与用量接口展示。 */
-  ttsCacheStats(): { entries: number; hitCharactersSaved: number } {
+  /** 缓存统计，供管理端与成本看板展示；命中率包含 single-flight 合并请求。 */
+  ttsCacheStats(): {
+    entries: number;
+    hitCharactersSaved: number;
+    requests: number;
+    cacheHits: number;
+    coalesced: number;
+    misses: number;
+    hitRate: number;
+    charactersSynthesized: number;
+  } {
     let saved = 0;
     for (const v of this.ttsCache.values()) {
       saved += v.characters;
     }
-    return { entries: this.ttsCache.size, hitCharactersSaved: saved };
+    const avoided = this.ttsCacheHits + this.ttsCoalesced;
+    return {
+      entries: this.ttsCache.size,
+      hitCharactersSaved: saved,
+      requests: this.ttsRequests,
+      cacheHits: this.ttsCacheHits,
+      coalesced: this.ttsCoalesced,
+      misses: this.ttsCacheMisses,
+      hitRate: this.ttsRequests ? Number((avoided / this.ttsRequests).toFixed(4)) : 0,
+      charactersSynthesized: this.ttsCharactersSynthesized,
+    };
   }
 }

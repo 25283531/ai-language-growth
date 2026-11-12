@@ -86,6 +86,16 @@ const independent = passed && !prompted;
 - 历史 `per_character` 仍可读：有 `per_1000_chars` 时优先新价，否则回退旧价，二者不叠加。
 - TTS 字符数按实际送合成文本计，不按 UTF-8 字节。
 
+### 2.4 TTL、孤儿文件与清理
+
+- `PRIVATE_DYNAMIC` 的索引与 `media_assets` 都带 `expiresAt`（默认 24 小时）；`PUBLIC_CURRICULUM` / `PRONUNCIATION` 永不按 TTL 删除。
+- `TtsCacheMaintenanceService` 默认每 6 小时运行一次，启动 10 分钟后首跑；先删到期数据库行与索引，再基于剩余活跃引用重算孤儿文件。
+- 孤儿只指：顶层 `24-hex.mp3|wav|m4a` 文件，没有任何活跃 `media_assets` 或 `.tts-*.json` 引用，且文件修改时间超过宽限期（默认 7 天）。`uploads/`、未知文件名和非音频文件一律不碰。
+- 索引损坏/无法读取时，本轮跳过音频孤儿删除；数据库删除失败时同样跳过，避免“数据库里还有引用但文件已被删”。
+- 进程内指标：`ttsCacheStats()` 返回请求数、缓存命中、single-flight 合并、miss、命中率与合成字符数；`GET /api/v1/admin/tts-cache` 只读展示这些指标和最近一次清理统计。
+
+相关测试：`services/backend/test/tts-cache-maintenance.test.ts`。
+
 ## 3. 录音不落盘
 
 ### 3.1 数据流
@@ -126,6 +136,8 @@ npm run typecheck --workspace @alg/backend
 npx tsx --tsconfig services/backend/tsconfig.json --test \
   services/backend/test/prisma-usage-ledger.test.ts \
   services/backend/test/prosody-contract.test.ts \
+  services/backend/test/tts-cache.test.ts \
+  services/backend/test/tts-cache-maintenance.test.ts \
   services/backend/test/tts-scope.test.ts \
   services/backend/test/tts-privacy.test.ts \
   services/backend/test/tts-public-scope.test.ts \

@@ -19,6 +19,7 @@
 | CEFR 全量内容预置服务端 | `packages/curriculum/data/cefr-curriculum.json` 预生成 7 级/49 单元/917 活动（核心词 + 日常用语/场景）；`GET /admin/curriculum/preset` 只读返回；`POST /preset/import` 导入审核队列 | 预置 JSON 通过 `cefrCurriculumPackageSchema` 校验 |
 | 图片/语音只在到达级别后预热 | `CurriculumWarmupService` 在仪表盘推导级别后异步触发；先按单词/短句/场景需求从 Openverse + Wikimedia Commons 搜索并缓存最优图，找不到记录 `missingImages` 供管理员上传，再生成 `PUBLIC_CURRICULUM` TTS；`AI_GATEWAY_MODE=mock` 跳过语音 | `curriculum-generator.test.ts` 覆盖未发布级别不生成媒体；真实图片搜索与真机/真实供应商待验证 |
 | 生产 Web 只读评估 | Web 默认关闭课堂预览与开课按钮；`startLesson` 在 `NEXT_PUBLIC_ENABLE_LESSON_START !== 'true'` 时直接拒绝；评估/证据/成本页保持可读；仅本地联调显式开启 | `web-evaluation-only.test.ts` 4/4 通过；生产 `next start` 首页 HTML 无开课按钮/课堂预览，含关闭态说明 |
+| 公共 TTS 音频按 TTL 与孤儿文件清理 | `TtsCacheMaintenanceService` 默认每 6 小时清理：删除已到期 `media_assets` 与 `.tts-*.json` 索引；仅删除无任何活跃数据库/索引引用且超过 7 天宽限期的顶层音频。`PUBLIC_CURRICULUM`/`PRONUNCIATION` 永不按 TTL 删除；索引损坏或数据库删除失败时跳过音频删除 | `tts-cache-maintenance.test.ts` 5/5 通过（过期、公共保留、双引用、损坏索引、数据库失败、幂等）；`tts-cache.test.ts` 增加命中率/合成字符数断言 |
 
 ## 2. 仍未关闭的差距（按优先级）
 
@@ -28,7 +29,6 @@
 |---|---|---|---|---|
 | P0-1 | Android 未编译、未真机听测 | 本机无 JDK/Gradle/kotlinc；改动只在源码层 | 走 `android-client.yml` 编译 + 真机走一遍“录音→提交→回放→发音纠正” | CI 绿；真机能回放本地录音；服务端无 `uploads/` 新文件 |
 | P0-2 | 发音评分与掌握判定尚未用真实供应商校准 | 用户明确：真实录音校准只能在使用中观察，本轮不校准 | 保留为真实使用后的观察项；不把未校准分数单独当作 `mastered` 依据 | 用户决定，不阻塞本轮 |
-| P0-5 | 公共 TTS 音频的清理策略未落地 | 有 scope/TTL/索引，但无定期清理任务 | 增加按 `expiresAt`/孤儿文件清理的队列任务与指标 | 过期文件可被清理；命中率/成本可观测 |
 
 ### P1：影响产品闭环
 
@@ -56,11 +56,10 @@
 ## 3. 建议的开发顺序
 
 1. **P0-1**：Android 真机听测（P0-3 发音教练回归测试已完成）。
-2. **P0-5**：公共 TTS 音频清理；Web 已收敛为评估端。
-3. **P1-1/P1-2**：课程与阶段表；审核并发布 CEFR 预置课程，补教材版本。
-4. **P1-3/P1-4**：家长报告与家长门；家庭内测最小闭环。
-5. **P1-6/P1-7**：成本与模型切换治理。
-6. 真实发音校准按用户决定，只在真实使用中观察，不作为本轮开发前置。
+2. **P1-1/P1-2**：课程与阶段表；审核并发布 CEFR 预置课程，补教材版本。
+3. **P1-3/P1-4**：家长报告与家长门；家庭内测最小闭环。
+4. **P1-6/P1-7**：成本与模型切换治理。
+5. 真实发音校准按用户决定，只在真实使用中观察，不作为本轮开发前置。
 
 ## 4. 本轮不做的事情（明确边界）
 
