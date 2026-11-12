@@ -229,6 +229,15 @@ describe('Android：功能锚点零回归（静态）', () => {
       'HTTPS 强制校验被移除',
     );
   });
+
+  it('6b. 家长门用两位数乘一位数验证，敏感入口仅在解锁后渲染', () => {
+    assert.match(androidSources, /private fun ParentAreaCard/, '缺少家长区入口');
+    assert.match(androidSources, /\(12\.\.99\)\.random\(\)/, '家长题必须是两位数');
+    assert.match(androidSources, /\(2\.\.9\)\.random\(\)/, '家长题必须是一位数');
+    assert.match(androidSources, /if \(parentUnlocked && confirmDelete\)/, '注销确认未受家长解锁保护');
+    assert.match(androidSources, /if \(parentUnlocked\) screen = "legal_privacy"/, '隐私协议入口未受家长解锁保护');
+    assert.match(androidSources, /GrowthLinkRow\("家庭会员与支付（即将开放）"/, '支付占位入口缺失');
+  });
 });
 
 describe('R2 必修：换平台后不得继续渲染「已有凭据」误导提示', () => {
