@@ -1957,9 +1957,9 @@ export class OrchestratorService {
       usageNoteZh: usageNoteZh || null,
       exampleSentenceEn: exampleSentenceEn || null,
       exampleSentenceZh: exampleSentenceZh || null,
-      // 每轮都保留三次小练习的节奏：听、跟读、再用一次，
-      // 不因活动类型变化而突然降低门槛，孩子可以稳定地多练几遍。
-      practiceTarget: 3,
+      // 一课至少陪孩子练满 5 轮：先听懂，再跟读，再换词/看图/用起来。
+      // 客户端上限也是 5，避免一节课只做一个活动就结束。
+      practiceTarget: 5,
       voice: {
         teacherSpeed,
         voiceStyle: adjustable.tone === 'lively' ? 'encouraging' : adjustable.tone === 'calm' ? 'warm' : 'gentle',
