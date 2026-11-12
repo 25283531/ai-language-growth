@@ -125,6 +125,8 @@ jobs:
             services/backend/test/prosody-contract.test.ts \
             services/backend/test/tts-public-scope.test.ts \
             services/backend/test/pronunciation-coach.test.ts \
+            services/backend/test/speech-usage.test.ts \
+            services/backend/test/usage-cost.test.ts \
             services/backend/test/admin-console-static-guard.test.ts \
             services/backend/test/web-client-auth-guard.test.ts \
             services/backend/test/queue-runtime.test.ts \
@@ -133,6 +135,11 @@ jobs:
             packages/model-router/test/router.test.ts \
             packages/shared-contracts/test/cefr.test.ts \
             packages/ai-provider-sdk/test/*.test.ts
+
+      - name: Usage cost aggregation DB integration
+        env:
+          USAGE_COST_DB_INTEGRATION: '1'
+        run: npx tsx --tsconfig services/backend/tsconfig.json --test services/backend/test/usage-cost.integration.test.ts
 
       - name: Disposable queue Redis integration
         env:

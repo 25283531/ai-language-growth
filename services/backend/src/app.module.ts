@@ -27,6 +27,8 @@ import { ImageCacheService } from './media/image-cache.service';
 import { ProviderConfigController } from './providers/provider-config.controller';
 import { ProviderConfigService } from './providers/provider-config.service';
 import { PrismaUsageLedger } from './usage/prisma-usage-ledger';
+import { UsageCostService } from './usage/usage-cost.service';
+import { UsageAdminController } from './usage/usage-admin.controller';
 import { MemoryAdminController } from './memory/memory-admin.controller';
 import { SpeechQuotaService } from './usage/speech-quota.service';
 import { RoutingConfigController } from './routing/routing-config.controller';
@@ -57,6 +59,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     SpeechQuotaController,
     UsageController,
     TtsCacheAdminController,
+    UsageAdminController,
     HealthController,
     MediaController,
     ProviderConfigController,
@@ -84,6 +87,7 @@ import { PronunciationCoachService } from './agents/pronunciation-coach.service'
     OrchestratorService,
     SpeechQuotaService,
     TtsCacheMaintenanceService,
+    UsageCostService,
     RoutingConfigService,
     AuthService,
     AdminAuthService,

@@ -68,6 +68,7 @@ SMTP 在管理后台“系统设置”页面配置并加密保存在数据库，
 | `GET /usage/summary?learnerId=...&lessonSessionId=...` | 可选筛选 | 持久化用量与 `pricingStatus: unpriced`；`costCny=0` 表示未计价，不代表免费 | 无 |
 | `GET /health` | 无 | 状态、Gateway 模式、未校准标记、时间戳 | 无 |
 | `GET /admin/tts-cache` | 管理员 Cookie | TTS 缓存命中率、single-flight 合并数、合成字符数与最近一次清理统计；不返回音频路径或文本 | 管理员会话 |
+| `GET /admin/usage/cost?from=...&to=...&learnerId=...&lessonSessionId=...&topicId=...` | 可选筛选；`from`/`to` 为 ISO 时间，默认最近 30 天，范围最大 366 天 | 按 learner/topic/day 汇总 TTS 字符、ASR 秒、发音次数、估算金额与 `unpricedCalls`；topic 取 `lesson_sessions.topicId`，未关联会话单列 null；只读 | 管理员会话 |
 | `GET /config/audit` | 无 | 脱敏供应商配置摘要；`NODE_ENV=production` 时 404 | 仅开发环境门槛，不是认证 |
 | `GET /media/audio/{file}` | 内容指纹文件名 + Bearer + `X-Learner-Id` + 额度租约 | 流式返回本地 TTS 文件；扩展名白名单 + `media_assets` 归属校验：`PUBLIC_CURRICULUM` / 旧资产按租约可读，`PRIVATE_DYNAMIC` / `PRIVATE_UPLOAD` 仅归属学习者可读，过期按 404 | 学习者归属 + 租约 |
 | `POST /media/audio/uploads` | 已停用 | 返回 `410 AUDIO_UPLOAD_DISABLED`；录音改为 `POST /lessons/:id/turn` 的 `learnerResponse.audioBase64`（最大 20,000,000 字符），服务端不落盘 | — |
@@ -105,6 +106,13 @@ Android 端在调用受限的 ASR、云端 TTS 或音素评测 SDK 前，必须�
 - `PUBLIC_CURRICULUM` / `PRONUNCIATION` 永不按 TTL 删除；索引损坏、数据库删除失败时本轮不删音频；只识别 `24-hex.mp3|wav|m4a`，不碰 `uploads/` 与未知文件。
 - 环境变量：`TTS_CACHE_CLEANUP_ENABLED`（默认 `true`）、`TTS_CACHE_CLEANUP_INTERVAL_MS`（默认 21600000）、`TTS_CACHE_CLEANUP_INITIAL_DELAY_MS`（默认 600000）、`TTS_CACHE_ORPHAN_GRACE_MS`（默认 604800000）。
 - `GET /api/v1/admin/tts-cache` 返回进程内 TTS 缓存指标（请求、命中、single-flight 合并、miss、命中率、合成字符数）与最近一次清理统计；需要管理员 Cookie。
+
+### 用量成本聚合（管理员只读）
+
+- `GET /api/v1/admin/usage/cost`：需要管理员会话；`from` / `to` 为 ISO 时间，缺省为最近 30 天，区间必须小于等于 366 天；可选 `learnerId`、`lessonSessionId`、`topicId` 过滤。
+- 响应为 `{ from, to, totals, byLearner, byTopic, byDay, note }`。每个桶包含 `calls`、`ttsCharacters`、`asrSeconds`、`pronunciationCalls`、`estimatedCostCny`、`unpricedCalls`；`byDay.date` 为 UTC 日期 `YYYY-MM-DD`。
+- `topic` 维度取 `lesson_sessions.topicId`，未关联会话的账本行在 `byTopic` 中以 `topicId: null` 单列；不伪造 `courseId` / `lessonId`。
+- `estimatedCostCny = 0` 可能是未计价而不是免费；`unpricedCalls > 0` 表示有计量单位但缺少模型或对应价格类型。接口不返回原始文本、音频或供应商凭据。
 
 ### 会员管理
 

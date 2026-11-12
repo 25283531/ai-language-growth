@@ -133,7 +133,7 @@ export class PrismaUsageLedger implements UsageLedger {
   }
 }
 
-function meteredQuantities(
+export function meteredQuantities(
   input: {
     inputTokens: number;
     outputTokens: number;
