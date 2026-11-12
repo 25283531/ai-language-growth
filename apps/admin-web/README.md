@@ -10,7 +10,12 @@ Future parent progress, curriculum, and cost dashboards remain separate from thi
 
 ### 成本与缓存（只读）
 
-`/costs` 读取 `GET /api/v1/admin/tts-cache`，展示当前后端进程的 TTS 缓存命中率、请求/命中/合并/未命中次数、实际合成字符、单次合成字符均摊，以及最近一次缓存清理结果。该接口没有 `lessonId` 或课程维度，页面不伪造整课金额；「单课成本（估算）」仅按实际合成字符 ÷ 合成次数展示，真实整课成本需课程账本接入。页面没有清理、改价或写入按钮。
+`/costs` 读取 `GET /api/v1/admin/tts-cache` 与 `GET /api/v1/admin/usage/cost`，分栏展示两类互不相加的数据：
+
+- **账本用量**：按日期范围与可选 `learnerId` / `topicId` 聚合历史 `ai_usage_logs`，展示调用次数、TTS 字符、ASR 秒数、发音次数、`estimatedCostCny` 与 `unpricedCalls`，并按 learner / topic / day 三张只读表展开。
+- **进程 TTS 缓存**：展示当前后端进程的缓存命中率、请求/命中/合并/未命中次数、实际合成字符、单次合成字符均摊和缓存清理结果；进程重启后归零。
+
+`estimatedCostCny = 0` 可能是未计价而不是免费；页面会单独突出 `unpricedCalls` 并提示金额可能偏低。页面没有清理、改价或写入按钮，也不把账本历史与进程指标相加。
 
 ## 操作说明
 

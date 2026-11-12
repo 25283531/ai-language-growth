@@ -81,6 +81,29 @@ button.secondary { background:#e9efea; color:#365344; padding:12px 14px; }
 .cost-formula{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
 @media(max-width:980px){.cost-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:780px){.cost-grid{grid-template-columns:1fr}.costs-page .panel-head{align-items:flex-start;flex-direction:column;gap:10px}}
+.costs-stack{display:grid;gap:18px}
+.cost-columns{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:18px}
+.cost-columns>.panel{min-width:0}
+.ledger-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.metric-card.warn{background:#fdf6e6;border-color:#efdfb8}
+.metric-card.warn>strong{color:#8a6518}
+.filter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.filter-grid label{margin-bottom:0}
+.filter-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px}
+.usage-tables{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.usage-table-block{min-width:0}
+.usage-table-block h3{margin:0 0 10px;color:#27352d;font-size:15px}
+.table-scroll{max-height:320px;overflow:auto;border:1px solid #edf0ed;border-radius:10px}
+.usage-table{width:100%;border-collapse:collapse;font-size:12px}
+.usage-table th,.usage-table td{padding:9px 10px;border-bottom:1px solid #edf0ed;text-align:left;white-space:nowrap}
+.usage-table th{position:sticky;top:0;z-index:1;background:#f7f9f6;color:#617067;font-size:11px;font-weight:700}
+.usage-table td{color:#34453b}
+.usage-table tr:last-child td{border-bottom:0}
+.usage-label{max-width:220px;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
+.usage-unpriced{color:#8a6518!important;font-weight:700}
+.empty-state{padding:18px;border:1px dashed #dce4de;border-radius:10px;background:#fbfcfb;color:#7e8b83;font-size:12px}
+@media(max-width:980px){.cost-columns{grid-template-columns:1fr}.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.usage-tables{grid-template-columns:1fr}}
+@media(max-width:780px){.filter-grid{grid-template-columns:1fr}.ledger-grid{grid-template-columns:1fr}}
 .admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
 .admin-card{display:flex;flex-direction:column;gap:8px;padding:20px;border:1px solid var(--line);color:var(--ink);text-decoration:none;background:var(--surface)}
 .admin-card strong{font-size:18px}.admin-card span{color:var(--muted)}

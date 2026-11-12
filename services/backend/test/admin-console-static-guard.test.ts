@@ -272,4 +272,25 @@ describe('管理端成本与缓存页：只读静态守卫', () => {
     assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '成本页不应发送写请求');
     assert.match(costs, /void\s+load\(\)/, '成本页挂载后未自动读取指标');
   });
+
+  it('9. 成本页接入账本聚合，支持日期与 learner/topic 过滤，展示未计价而不与进程缓存相加', () => {
+    assert.match(
+      costs,
+      /adminFetch<UsageCostResponse>\(buildUsagePath\(appliedFilters\)\)/,
+      '成本页未通过 adminFetch 读取 /usage/cost',
+    );
+    assert.match(costs, /\/usage\/cost/, '成本页缺少 /usage/cost 路径');
+    for (const field of ['from', 'to', 'learnerId', 'topicId']) {
+      assert.match(costs, new RegExp(`\\b${field}\\b`), `成本页缺少 ${field} 过滤字段`);
+    }
+    assert.match(costs, /开始日期/, '成本页缺少开始日期输入');
+    assert.match(costs, /结束日期/, '成本页缺少结束日期输入');
+    for (const field of ['unpricedCalls', 'estimatedCostCny', 'byLearner', 'byTopic', 'byDay']) {
+      assert.match(costs, new RegExp(field), `成本页未展示账本字段 ${field}`);
+    }
+    assert.match(costs, /账本用量/, '成本页缺少账本用量区');
+    assert.match(costs, /进程 TTS 缓存/, '成本页缺少进程缓存区');
+    assert.match(costs, /不相加|不与/, '成本页未说明账本与进程指标分开、不可相加');
+    assert.ok(!/method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/.test(costs), '成本页不应发送写请求');
+  });
 });
