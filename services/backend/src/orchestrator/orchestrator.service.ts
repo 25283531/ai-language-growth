@@ -1996,6 +1996,8 @@ export class OrchestratorService {
       ? demo.focusUnits.map((u) => ({ text: u, kind: 'syllable' as const, isFocus: true }))
       : syllables.map((s) => ({ text: s, kind: 'syllable' as const, isFocus: false }));
     const expectedResponse = expectedResponseOf(activity.taskType);
+    // 图片选择题：选项即题目，复习/回忆时同样需要保留（见下方 directive 注释）。
+    const isTapImage = activity.taskType === 'image_identification';
     const baseTeacherUtterance = input.isReview
       ? expectedResponse === 'tap_image'
         ? '我们来做一次复习。请回想之前学过的内容，选择对应的图片。'
@@ -2026,15 +2028,18 @@ export class OrchestratorService {
       taskType: activity.taskType as TeachingDirective['taskType'],
       isReview: input.isReview,
       scenario: activity.scenario as TeachingDirective['scenario'],
-      teacherUtterance: input.coachingText
-        ? `${input.coachingText} ${richTeacherUtterance}`
-        : richTeacherUtterance,
+      teacherUtterance: isTapImage && input.isReview
+        ? activity.teacherUtteranceZh
+        : input.coachingText
+          ? `${input.coachingText} ${richTeacherUtterance}`
+          : richTeacherUtterance,
       demonstrationText: input.isReview ? null : demo.demonstrationText,
       pronunciationUnits: input.isReview ? [] : pronunciationUnits,
       expectedResponse: input.isReview && expectedResponse !== 'tap_image' ? 'speak' : expectedResponse,
-      targetWords: input.isReview ? [] : activity.targetWords,
-      // 图片选择题的选项由课程内容下发；复习场次不摆图，只重听。
-      imageOptions: input.isReview ? [] : (activity.imageOptions ?? []),
+      // 图片选择题的图片就是题目本身：即使属于复习/回忆，也不能剥掉选项与目标词，
+      // 否则客户端只剩一张没有单词的跟读卡，孩子无从作答。
+      targetWords: input.isReview && !isTapImage ? [] : activity.targetWords,
+      imageOptions: isTapImage ? (activity.imageOptions ?? []) : [],
       wordMeaningZh: meaningZh || null,
       wordPhonetic: phonetic || null,
       usageNoteZh: usageNoteZh || null,
