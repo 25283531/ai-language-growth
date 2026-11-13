@@ -102,6 +102,20 @@ export const CREDIBILITY_LEVELS = ['high', 'medium', 'low'] as const;
 export type CredibilityLevel = (typeof CREDIBILITY_LEVELS)[number];
 
 /**
+ * 证据面向：同一个词的「形 / 义 / 用」必须分开记证。
+ *
+ * 依据：DECISIONS.md D-005 追加条款；Raviv et al., Science 2026
+ * —— 论文的模型学到的只是词的「形」，不知道词是什么意思，因其无身体、无指物、
+ *    无共同注意、无社会互动。跟读通过只能证明「形」，不能证明「义」与「用」。
+ *
+ * - form：听得见/读得出（跟读、发音、听辨）
+ * - meaning：知道这个词指什么（听音选图、图片识别）
+ * - usage：能在句子里用对（用该词回答、在新句中使用）
+ */
+export const EVIDENCE_FACETS = ['form', 'meaning', 'usage'] as const;
+export type EvidenceFacet = (typeof EVIDENCE_FACETS)[number];
+
+/**
  * 阈值校准状态。
  *
  * ⚠️ M1 全部阈值为原型示意值，未经真实儿童样本校准（D-010 / 任务书 §9）。
@@ -145,6 +159,16 @@ export const learningEvidenceSchema = z.object({
   credibility: z.number().min(0).max(1),
   /** 是否允许用于推高掌握状态 */
   contributesToPromotion: z.boolean(),
+  /**
+   * 证据面向（形/义/用）。默认 form 保持既有收据兼容；
+   * 状态晋级规则要求同一词同时具备 meaning 与 usage 证据（D-005 追加条款）。
+   */
+  facet: z.enum(EVIDENCE_FACETS).default('form'),
+  /**
+   * 是否为「跨天」证据：本次记录发生在该词首次学习之后的另一自然日。
+   * 当天复述成功不升级，仅跨天回忆成功可支撑晋级（D-005 追加条款）。
+   */
+  crossDay: z.boolean().default(false),
 
   // —— 观察结果 ——
   /** 任务是否完成 */

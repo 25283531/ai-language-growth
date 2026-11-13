@@ -12,3 +12,6 @@ export * from './skill-node';
 export * from './api';
 export * from './cefr';
 export * from './curriculum';
+export * from './replay';
+export * from './learner-params';
+export * from './pronunciation';

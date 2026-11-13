@@ -276,6 +276,10 @@ export class LearnerModelService {
     occurredAt: Date;
     credibility: number;
     contributesToPromotion: boolean;
+    /** 证据面向；数据库尚未建列时回退为 form（形）。 */
+    facet?: string | null;
+    /** 是否跨天证据；数据库尚未建列时回退为 false。 */
+    crossDay?: boolean | null;
     succeeded: boolean;
     score: number | null;
     errorUnits: unknown;
@@ -299,6 +303,8 @@ export class LearnerModelService {
       occurredAt: r.occurredAt.toISOString(),
       credibility: r.credibility,
       contributesToPromotion: r.contributesToPromotion,
+      facet: (r.facet ?? 'form') as LearningEvidence['facet'],
+      crossDay: r.crossDay ?? false,
       succeeded: r.succeeded,
       score: r.score,
       errorUnits: (r.errorUnits ?? []) as LearningEvidence['errorUnits'],
