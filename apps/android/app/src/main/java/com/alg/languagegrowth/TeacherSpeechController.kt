@@ -75,8 +75,8 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         directive: JSONObject,
         speech: JSONObject?,
         replay: Boolean = false,
-        onState: (Boolean, String) -> Unit,
         texts: List<String>? = null,
+        onState: (Boolean, String) -> Unit,
     ) {
         val previous = task
         previous?.cancel()
