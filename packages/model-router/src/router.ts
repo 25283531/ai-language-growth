@@ -356,6 +356,21 @@ export class ModelRouterImpl {
     return this.config.rules.find((r) => r.taskRoute === taskRoute && r.enabled);
   }
 
+  /**
+   * 单次调用的预算预留额（元）。
+   *
+   * TTS / ASR / 发音评估的单次成本可估量级（一段讲解几厘到几分钱），按典型
+   * 单次成本预留即可；LLM 单次成本不可预估，仍沿用「日预算 ÷ 并发数」的保守策略。
+   * 真正的超支由 settledCost >= budgetLimit 拦住，预留只用于避免并发瞬间冲顶。
+   */
+  private unitBudgetReserve(serviceKind: ServiceKind, budgetLimit: number, maxConcurrency: number): number {
+    const concurrencyCap = budgetLimit / Math.max(1, maxConcurrency);
+    const typicalCallCost = serviceKind === 'llm' ? concurrencyCap : (
+      serviceKind === 'tts' ? 0.05 : serviceKind === 'asr' ? 0.02 : 0.01
+    );
+    return Math.min(concurrencyCap, Math.max(typicalCallCost, budgetLimit * 0.0005));
+  }
+
   private budgetWindow(now = new Date()): { from: Date; to: Date } {
     const from = new Date(now);
     from.setUTCHours(0, 0, 0, 0);
@@ -425,7 +440,13 @@ export class ModelRouterImpl {
       : { costCny: 0, unpricedCalls: 0 };
     const settledCost = dailyUsage.costCny;
     const reservedCost = budgetLimit > 0 ? this.pendingBudget(rule.taskRoute) : 0;
-    const budgetReserve = budgetLimit > 0 ? budgetLimit / Math.max(1, rule.maxConcurrency) : 0;
+    // 单次调用预留额必须和「一次真实调用可能花掉的钱」同量级，而不是日预算的
+    // 1/并发数。旧实现下 tts.dynamic_teaching（日预算 60、并发 8）每来一个请求
+    // 就预留 7.5 元，8 个请求同时在飞就把整天的额度预留满，一次课堂预热二三十条
+    // 语音（实际只花几分钱）就会把熔断打开并静默降级到 mock。
+    const budgetReserve = budgetLimit > 0
+      ? this.unitBudgetReserve(input.serviceKind, budgetLimit, rule.maxConcurrency)
+      : 0;
     const budgetExhausted = budgetLimit > 0 &&
       (dailyUsage.unpricedCalls > 0 ||
         settledCost + reservedCost >= budgetLimit ||

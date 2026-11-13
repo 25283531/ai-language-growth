@@ -65,6 +65,8 @@ const CLASSROOM_PATH_LITERALS = [
   '"/api/v1/media/audio/"',
   // 儿童录音改为随回合内联提交，上传端点已停用（410），不再要求客户端保留该路径。
   '"/speech/cache/lookup"',
+  // 例句跟读用发音评测端点直接打分，不写课程证据。
+  '"/speech/evaluate"',
   '"/speech/quota/release"',
   '"/speech/quota/reserve"',
   '"/speech/quota/settle"',

@@ -834,8 +834,14 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const localOnly = decision.level === 'L0';
     if (localOnly) {
       reasons.push(`local_only_${decision.strategy}`);
+      const budget = decision.budget;
+      // 熔断必须可解释：把当时的预算快照打进日志，避免只看到「预算熔断」四个字
+      // 却分不清是真实超支、未定价调用，还是预留额度过大。
+      const snapshot = budget
+        ? `，预算快照 limit=${budget.limitCny} spent=${budget.spentCny.toFixed(4)} reserved=${budget.reservedCny.toFixed(4)} unpriced=${budget.unpricedCalls}`
+        : '';
       this.logger.warn(
-        `${serviceKind} 按 Router 的 L0 决策执行本地兜底（${decision.strategy}），不调用任何付费供应商`,
+        `${serviceKind} 按 Router 的 L0 决策执行本地兜底（${decision.strategy}）${snapshot}，不调用任何付费供应商`,
       );
     }
 

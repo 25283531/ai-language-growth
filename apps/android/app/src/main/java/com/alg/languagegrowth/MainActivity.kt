@@ -222,6 +222,11 @@ private fun GrowthApp(
     var speechBusy by remember { mutableStateOf(false) }
     var speechStatus by remember { mutableStateOf("") }
     var wordProgress by remember { mutableStateOf(0f) }
+    var sentenceRecording by remember { mutableStateOf(false) }
+    var sentenceAttempts by remember { mutableStateOf(0) }
+    var sentencePasses by remember { mutableStateOf(0) }
+    var sentenceScore by remember { mutableStateOf<Double?>(null) }
+    var sentenceStatus by remember { mutableStateOf("") }
     var lessonSpeech by remember { mutableStateOf<JSONObject?>(null) }
     val teacherSpeech = remember(activity) { TeacherSpeechController(activity.cacheDir) }
 
@@ -282,6 +287,97 @@ private fun GrowthApp(
         if (loggedIn && learnerId.isNotBlank() && tab == "learn" && screen == "tabs" && directive != null && finishResult == null) {
             // 进入课堂先听单词；发音纠正文字已显示在卡片里，完整讲解由按钮触发。
             replayWord()
+        }
+    }
+
+    /** 把一组句子交给老师语音逐句播放（一句一段音频，按顺序播）。 */
+    fun narrateLines(lines: List<String>) {
+        val current = directive ?: return
+        val texts = lines.map { it.trim() }.filter { it.isNotBlank() }
+        if (texts.isEmpty()) {
+            speechStatus = "这一步暂时没有可播放的讲解。"
+            return
+        }
+        teacherSpeech.play(
+            base(), token().orEmpty(), learnerId, current, lessonSpeech, false,
+            onState = { active, message ->
+                speechBusy = active
+                speechStatus = message
+            },
+            texts = texts,
+        )
+    }
+
+    fun targetWordOf(current: JSONObject): String {
+        val words = current.optJSONArray("targetWords")
+        val fromTarget = (0 until (words?.length() ?: 0))
+            .mapNotNull { index -> words?.optString(index)?.trim()?.takeIf { it.isNotBlank() } }
+            .firstOrNull()
+        return fromTarget
+            ?: current.optString("demonstrationText").trim().takeIf { it.isNotBlank() && it != "null" }.orEmpty()
+    }
+
+    /** 发音卡之后的“为什么这样读”：老师逐句把字母音和整词连读讲一遍。 */
+    fun narratePhonics() {
+        val current = directive ?: return
+        val word = targetWordOf(current)
+        if (word.isBlank()) return
+        val letters = WordPhonics.parts(word).joinToString("，") { (chunk, sound) ->
+            if (sound.any { it.code in 0x4E00..0x9FFF }) "$chunk 读 $sound" else "$chunk 发 /$sound/"
+        }
+        val lines = mutableListOf(word)
+        if (letters.isNotBlank()) lines += "这个单词分开读：$letters。"
+        lines += "连起来读：$word。"
+        narrateLines(lines)
+    }
+
+    /** “什么时候用”：老师把用法和例句逐句读给孩子听。 */
+    fun narrateUsage() {
+        val current = directive ?: return
+        val usage = current.optString("usageNoteZh").takeIf { it.isNotBlank() && it != "null" }
+        val exampleEn = current.optString("exampleSentenceEn").takeIf { it.isNotBlank() && it != "null" }
+        val exampleZh = current.optString("exampleSentenceZh").takeIf { it.isNotBlank() && it != "null" }
+        val lines = mutableListOf<String>()
+        if (usage != null) lines += usage
+        if (exampleEn != null) lines += "比如：$exampleEn"
+        if (exampleZh != null) lines += "这句话的意思是：$exampleZh"
+        narrateLines(lines)
+    }
+
+    /** 例句跟读：直接把这一段录音送到发音评测，返回真实分数。 */
+    suspend fun evaluateSentence(encoded: String, target: String, durationMs: Long): JSONObject {
+        val seconds = (durationMs / 1000.0).coerceIn(1.0, 30.0)
+        val reservation = withContext(Dispatchers.IO) {
+            http(
+                base(), "/speech/quota/reserve", "POST",
+                JSONObject()
+                    .put("learnerId", learnerId)
+                    .put("serviceKind", "pronunciation")
+                    .put("seconds", seconds)
+                    .put("idempotencyKey", "android-sentence-${System.currentTimeMillis()}"),
+                token(),
+            )
+        }
+        val reservationId = reservation.optString("reservationId")
+        try {
+            val body = JSONObject()
+                .put("audioRef", "data:audio/mp4;base64,$encoded")
+                .put("targetText", target)
+                .put("granularity", "word")
+            return withContext(Dispatchers.IO) {
+                http(
+                    base(), "/speech/evaluate", "POST", body, token(),
+                    mapOf("X-Learner-Id" to learnerId, "X-Speech-Quota-Reservation" to reservationId),
+                )
+            }
+        } finally {
+            if (reservationId.isNotBlank()) {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        http(base(), "/speech/quota/release", "POST", JSONObject().put("reservationId", reservationId), token())
+                    }
+                }
+            }
         }
     }
 
@@ -527,6 +623,71 @@ private fun GrowthApp(
                             speechStatus = speechStatus,
                             onReplay = { replayWord() },
                             onExplain = { playTeacher(true) },
+                            onNarratePhonics = { narratePhonics() },
+                            onNarrateUsage = { narrateUsage() },
+                            sentenceRecording = sentenceRecording,
+                            sentenceAttempts = sentenceAttempts,
+                            sentencePasses = sentencePasses,
+                            sentenceScore = sentenceScore,
+                            sentenceStatus = sentenceStatus,
+                            onSentenceRecord = { pressed ->
+                                teacherSpeech.stop(clearAudio = false)
+                                speechBusy = false
+                                scope.launch {
+                                    if (pressed) {
+                                        if (!sentenceRecording) {
+                                            if (!activity.hasAudioPermission()) {
+                                                activity.requestAudioPermission()
+                                                pageStatus = "请允许麦克风权限后再跟读例句"
+                                            } else {
+                                                try {
+                                                    activity.startRecording()
+                                                    recordingStartedAt = System.currentTimeMillis()
+                                                    sentenceRecording = true
+                                                    sentenceStatus = ""
+                                                } catch (e: Exception) { pageStatus = "录音没有开始，再按住试一次" }
+                                            }
+                                        }
+                                    } else if (sentenceRecording) {
+                                        val path = try {
+                                            activity.stopRecording().first
+                                        } catch (e: Exception) {
+                                            sentenceRecording = false
+                                            pageStatus = "这次录音没有保存好，再按住试一次"
+                                            return@launch
+                                        }
+                                        sentenceRecording = false
+                                        val target = directive?.optString("exampleSentenceEn")
+                                            ?.takeIf { it.isNotBlank() && it != "null" }
+                                        if (target == null) {
+                                            sentenceStatus = "这一课还没有可跟读的例句。"
+                                            return@launch
+                                        }
+                                        try {
+                                            val durationMs = System.currentTimeMillis() - recordingStartedAt
+                                            val encoded = withContext(Dispatchers.IO) {
+                                                Base64.encodeToString(java.io.File(path).readBytes(), Base64.NO_WRAP)
+                                            }
+                                            val result = evaluateSentence(encoded, target, durationMs)
+                                            val value = result.optDouble("score", Double.NaN)
+                                            sentenceAttempts += 1
+                                            if (value.isFinite()) {
+                                                sentenceScore = value
+                                                if (value >= 70.0) {
+                                                    sentencePasses += 1
+                                                    sentenceStatus = "这句读得很好，再读一遍就更熟练了！"
+                                                } else {
+                                                    sentenceStatus = "再慢一点，先听老师读，再跟着读一次。"
+                                                }
+                                            } else {
+                                                sentenceStatus = "这次没有听清楚，再试一次。"
+                                            }
+                                        } catch (e: Exception) {
+                                            pageStatus = "例句跟读暂时不可用，先听老师读"
+                                        }
+                                    }
+                                }
+                            },
                             onRecord = { pressed ->
                                 teacherSpeech.stop(clearAudio = false)
                                 speechBusy = false
@@ -588,7 +749,33 @@ private fun GrowthApp(
                                     }
                                 }
                             },
-                            onFinish = { scope.launch { try { finishResult = withContext(Dispatchers.IO) { http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token()) } } catch (e: Exception) { pageStatus = e.message ?: "结课失败" } } },
+                            onFinish = {
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        withContext(Dispatchers.IO) {
+                                            http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token())
+                                        }
+                                        // 结课成功就回到学习入口（directive 置空），孩子可以直接开始下一课。
+                                        teacherSpeech.stop()
+                                        directive = null
+                                        lessonSpeech = null
+                                        lessonSessionId = ""
+                                        practiceCount = 0
+                                        finishResult = null
+                                        sentenceAttempts = 0
+                                        sentencePasses = 0
+                                        sentenceScore = null
+                                        sentenceStatus = ""
+                                        pageStatus = "这节课完成啦，休息一下再来 🌿"
+                                        runCatching { fetchDashboard() }
+                                    } catch (e: Exception) {
+                                        pageStatus = e.message ?: "结课失败"
+                                    } finally {
+                                        busy = false
+                                    }
+                                }
+                            },
                         )
                         "achievements" -> AchievementScreen(dashboard)
                         else -> ProfileScreen(
@@ -921,6 +1108,9 @@ private fun LearnScreen(
     onStart: () -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onExplain: () -> Unit,
+    onNarratePhonics: () -> Unit, onNarrateUsage: () -> Unit,
+    sentenceRecording: Boolean, sentenceAttempts: Int, sentencePasses: Int,
+    sentenceScore: Double?, sentenceStatus: String, onSentenceRecord: (Boolean) -> Unit,
 ) {
     if (directive == null) {
         GrowthCard(
@@ -960,6 +1150,18 @@ private fun LearnScreen(
     val word = directive.optJSONArray("targetWords")?.optString(0)?.takeIf { it.isNotBlank() }
         ?: directive.optString("demonstrationText")
     var showUsage by rememberSaveable(word) { mutableStateOf(false) }
+    val stepKey = when {
+        passes < target -> "repeat"
+        !showUsage -> "phonics"
+        else -> "usage"
+    }
+    // 进入新环节先由老师讲一遍：一句一段音频，像老师带着孩子一句一句学。
+    LaunchedEffect(stepKey) {
+        when (stepKey) {
+            "phonics" -> onNarratePhonics()
+            "usage" -> onNarrateUsage()
+        }
+    }
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         PronunciationCard(
@@ -1003,10 +1205,45 @@ private fun LearnScreen(
             }
         } else if (!showUsage) {
             PhonicsStep(word)
+            GrowthSecondaryButton(
+                "听老师讲一遍",
+                onNarratePhonics,
+                enabled = !speechBusy && !busy && !recording,
+                emoji = "🔊",
+            )
             GrowthPrimaryButton("知道啦，看看怎么用", { showUsage = true }, emoji = "💡")
         } else {
             UsageStep(directive)
-            GrowthPrimaryButton("完成本课", onFinish, emoji = "🏁", enabled = !busy)
+            GrowthSecondaryButton(
+                "听老师读一遍",
+                onNarrateUsage,
+                enabled = !speechBusy && !busy && !sentenceRecording,
+                emoji = "🔊",
+            )
+            ExampleRepeatBlock(
+                sentenceEn = directive.optString("exampleSentenceEn").takeIf { it.isNotBlank() && it != "null" },
+                recording = sentenceRecording,
+                attempts = sentenceAttempts,
+                passes = sentencePasses,
+                score = sentenceScore,
+                status = sentenceStatus,
+                enabled = !busy && !speechBusy,
+                onPress = { onSentenceRecord(true) },
+                onRelease = { onSentenceRecord(false) },
+            )
+            if (sentenceAttempts < 3) {
+                Text(
+                    "先跟读 3 遍例句，再完成本课 🌿",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+            GrowthPrimaryButton(
+                "完成本课",
+                onFinish,
+                emoji = "🏁",
+                enabled = !busy && sentenceAttempts >= 3,
+            )
         }
     }
 
@@ -1086,6 +1323,46 @@ private fun UsageStep(directive: JSONObject) {
     }
 }
 
+
+@Composable
+private fun ExampleRepeatBlock(
+    sentenceEn: String?,
+    recording: Boolean,
+    attempts: Int,
+    passes: Int,
+    score: Double?,
+    status: String,
+    enabled: Boolean,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+) {
+    if (sentenceEn == null) return
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("跟读例句", style = MaterialTheme.typography.titleMedium, color = GrowthColors.MintDeep)
+        Text(sentenceEn, style = MaterialTheme.typography.titleMedium, color = GrowthColors.BlueDeep)
+        HoldToSpeakButton(
+            recording = recording,
+            enabled = enabled,
+            onPress = onPress,
+            onRelease = onRelease,
+        )
+        Text(
+            "例句跟读 $attempts / 3 · 读得不错 $passes 次",
+            style = MaterialTheme.typography.titleMedium,
+            color = GrowthColors.MintDeep,
+        )
+        if (score != null) {
+            Text(
+                "这次得分 ${score.roundToInt()} 分",
+                style = MaterialTheme.typography.bodyMedium,
+                color = GrowthColors.PrimaryDeep,
+            )
+        }
+        if (status.isNotBlank()) {
+            Text(status, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+        }
+    }
+}
 
 /**
  * 老师讲解卡：先帮孩子建立“这个词是什么意思、什么时候用”的意义联系，
