@@ -966,6 +966,7 @@ private fun LearnScreen(
             directive = directive,
             speaking = speechBusy && speechStatus.contains("正在读单词"),
             progress = wordProgress,
+            showLetters = passes < target,
         )
 
         if (passes < target) {
@@ -1126,7 +1127,7 @@ private fun TeacherWordExplanation(directive: JSONObject) {
  * 发音卡进入“正在朗读”状态为准，不伪造逐字母跳动的时间轴。
  */
 @Composable
-private fun PronunciationCard(directive: JSONObject, speaking: Boolean, progress: Float) {
+private fun PronunciationCard(directive: JSONObject, speaking: Boolean, progress: Float, showLetters: Boolean = true) {
     val targetWords = directive.optJSONArray("targetWords")
     val word = (0 until (targetWords?.length() ?: 0))
         .mapNotNull { index -> targetWords?.optString(index)?.trim()?.takeIf { it.isNotBlank() } }
@@ -1206,7 +1207,7 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean, progress
                 color = GrowthColors.BlueDeep,
             )
         }
-        if (letters.isNotEmpty()) {
+        if (letters.isNotEmpty() && showLetters) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 letters.forEachIndexed { index, letter ->
                     val spoken = index < highlightedLetters
