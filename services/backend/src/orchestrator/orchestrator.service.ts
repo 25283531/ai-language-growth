@@ -1916,6 +1916,7 @@ export class OrchestratorService {
       targetWords: string[];
       demonstrationText: string | null;
       teacherUtteranceZh: string;
+      imageOptions?: Array<{ id: string; assetName: string; labelEn: string | null }>;
     };
     // 课程资源身份：contentId 用运行时稳定可得的 activityId；contentVersion 由
     // 已读出的 row.content 直接哈希，发布内容变更即可让旧课程音频整体失效。
@@ -2020,6 +2021,8 @@ export class OrchestratorService {
       pronunciationUnits: input.isReview ? [] : pronunciationUnits,
       expectedResponse: input.isReview && expectedResponse !== 'tap_image' ? 'speak' : expectedResponse,
       targetWords: input.isReview ? [] : activity.targetWords,
+      // 图片选择题的选项由课程内容下发；复习场次不摆图，只重听。
+      imageOptions: input.isReview ? [] : (activity.imageOptions ?? []),
       wordMeaningZh: meaningZh || null,
       wordPhonetic: phonetic || null,
       usageNoteZh: usageNoteZh || null,

@@ -11,8 +11,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -469,7 +474,7 @@ private fun GrowthApp(
         }
     }
 
-    suspend fun submitTurn(audioBase64: String?, audioContentType: String?, durationMs: Long) {
+    suspend fun submitTurn(audioBase64: String?, audioContentType: String?, durationMs: Long, selectedImageId: String? = null) {
         if (lessonSessionId.isBlank()) { pageStatus = "请先开始课堂"; return }
         busy = true
         try {
@@ -481,7 +486,7 @@ private fun GrowthApp(
                     .put("audioBase64", audioBase64 ?: JSONObject.NULL)
                     .put("audioContentType", audioContentType ?: JSONObject.NULL)
                     .put("audioDurationMs", if (audioBase64 == null) JSONObject.NULL else durationMs)
-                    .put("selectedImageId", JSONObject.NULL)
+                    .put("selectedImageId", selectedImageId ?: JSONObject.NULL)
                     .put("requestedSlower", false)
                     .put("requestedRepeat", false)
                     .put("freeUtterance", JSONObject.NULL))
@@ -643,6 +648,7 @@ private fun GrowthApp(
                             onExplain = { playTeacher(true) },
                             onNarratePhonics = { praise -> narratePhonics(praise) },
                             onNarrateUsage = { narrateUsage() },
+                            onPickImage = { imageId -> scope.launch { submitTurn(null, null, 0, imageId) } },
                             sentenceRecording = sentenceRecording,
                             sentenceAttempts = sentenceAttempts,
                             sentencePasses = sentencePasses,
@@ -1157,6 +1163,7 @@ private fun LearnScreen(
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onExplain: () -> Unit,
     onNarratePhonics: (Boolean) -> Unit, onNarrateUsage: () -> Unit,
+    onPickImage: (String) -> Unit,
     sentenceRecording: Boolean, sentenceAttempts: Int, sentencePasses: Int,
     sentenceScore: Double?, sentenceStatus: String, onSentenceRecord: (Boolean) -> Unit,
 ) {
@@ -1188,6 +1195,14 @@ private fun LearnScreen(
                 }
             }
         }
+        if (status.isNotBlank()) GrowthStatusPill(status)
+        return
+    }
+
+    // 图片选择题：服务端下发选项，孩子点图作答；不进入跟读流程。
+    val imageOptions = directive.optJSONArray("imageOptions")
+    if (directive.optString("taskType") == "image_identification" && (imageOptions?.length() ?: 0) > 0) {
+        ImageChoiceStep(directive, imageOptions!!, busy, onPickImage)
         if (status.isNotBlank()) GrowthStatusPill(status)
         return
     }
@@ -2094,4 +2109,62 @@ private fun httpBytes(base: String, path: String, bytes: ByteArray, contentType:
         if (code !in 200..299) error(result.optString("message").ifBlank { "请求失败（$code）" })
         result
     } finally { connection.disconnect() }
+}
+
+
+/**
+ * 图片选择题：把服务端下发的选项渲染成图片卡片，孩子点一下就提交。
+ * 选项数量与顺序由后端决定（DECISIONS D-024 约束一），客户端不重排。
+ * 图片为 APK 内置资源（drawable-nodpi），来源与许可见
+ * packages/curriculum/assets/images/ATTRIBUTION.md。
+ */
+@Composable
+private fun ImageChoiceStep(
+    directive: JSONObject,
+    options: JSONArray,
+    busy: Boolean,
+    onPick: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val prompt = directive.optString("teacherUtterance").ifBlank { "听老师说，点出对应的图片。" }
+    GrowthCard(modifier = Modifier.fillMaxWidth()) {
+        Text("看图片，选一选", style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink)
+        Text(prompt, style = MaterialTheme.typography.bodyLarge, color = GrowthColors.InkSoft)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            for (index in 0 until options.length()) {
+                val option = options.optJSONObject(index) ?: continue
+                val assetName = option.optString("assetName")
+                val resId = context.resources.getIdentifier(assetName, "drawable", context.packageName)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (resId != 0) {
+                        Image(
+                            painter = painterResource(resId),
+                            contentDescription = assetName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(96.dp)
+                                .clip(RoundedCornerShape(14.dp)),
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(96.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(GrowthColors.BlueWash),
+                        )
+                    }
+                    GrowthSecondaryButton(
+                        "选这个",
+                        { onPick(option.optString("id")) },
+                        enabled = !busy,
+                    )
+                }
+            }
+        }
+    }
 }

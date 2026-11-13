@@ -207,6 +207,26 @@ export const teachingActivitySchema = z.object({
   order: z.number().int().min(0).default(0),
   /** 是否属于 M1 首批交付 */
   m1Scope: z.boolean().default(false),
+  /**
+   * 图片选择题的选项集合。
+   *
+   * `acceptedImageIds` 只回答「哪些算对」；本题要孩子真的看到并点选图片，
+   * 还需要知道「屏幕上摆哪几张图、各自叫什么」。选项顺序由服务端下发，
+   * 客户端不得自行重排或增删（D-024 约束一）。
+   * assetName 对应客户端内置资源名（小写下划线，不带扩展名）。
+   */
+  imageOptions: z
+    .array(
+      z.object({
+        id: z.string(),
+        /** 客户端内置图片资源名，例如 img_apple */
+        assetName: z.string().regex(/^[a-z0-9_]+$/),
+        /** 图片的可选文字标签（不遮蔽题目时不展示） */
+        labelEn: z.string().nullable().default(null),
+      }),
+    )
+    .max(6)
+    .optional(),
 });
 
 export type TeachingActivity = z.infer<typeof teachingActivitySchema>;
