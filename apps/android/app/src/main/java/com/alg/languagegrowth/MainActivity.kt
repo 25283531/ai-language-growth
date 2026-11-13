@@ -253,6 +253,7 @@ private fun GrowthApp(
 
     fun playTeacher(replay: Boolean = false) {
         val current = directive ?: return
+        wordProgress = 0f
         teacherSpeech.play(base(), token().orEmpty(), learnerId, current, lessonSpeech, replay) { active, message ->
             speechBusy = active
             speechStatus = message
@@ -267,7 +268,7 @@ private fun GrowthApp(
             onState = { active, message ->
                 speechBusy = active
                 speechStatus = message
-                if (!active) wordProgress = 1f
+                if (!active) wordProgress = 0f
             },
             onProgress = { wordProgress = it },
         )
@@ -279,8 +280,8 @@ private fun GrowthApp(
         speechStatus = ""
         wordProgress = 0f
         if (loggedIn && learnerId.isNotBlank() && tab == "learn" && screen == "tabs" && directive != null && finishResult == null) {
-            // 进入学习状态先读单词，长讲解由“重听讲解”按需触发，界面保持安静。
-            replayWord()
+            // 发音没读准时先听一句针对性纠正；读对了只读单词，界面保持安静。
+            if (!directive?.optString("coachingText").isNullOrBlank()) playTeacher() else replayWord()
         }
     }
 
@@ -950,6 +951,7 @@ private fun LearnScreen(
 
     val target = directive.optInt("pronunciationTarget", 3).coerceIn(1, 5)
     val passes = directive.optInt("pronunciationPasses", 0).coerceIn(0, target)
+    val coaching = directive.optString("coachingText").takeIf { it.isNotBlank() && it != "null" }
     val word = directive.optJSONArray("targetWords")?.optString(0)?.takeIf { it.isNotBlank() }
         ?: directive.optString("demonstrationText")
     var showUsage by rememberSaveable(word) { mutableStateOf(false) }
@@ -993,6 +995,9 @@ private fun LearnScreen(
                 style = MaterialTheme.typography.titleMedium,
                 color = GrowthColors.MintDeep,
             )
+            if (coaching != null) {
+                Text(coaching, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.PrimaryDeep)
+            }
             if (speechStatus.isNotBlank()) {
                 Text(speechStatus, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
             }

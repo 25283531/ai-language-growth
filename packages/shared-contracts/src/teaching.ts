@@ -103,6 +103,8 @@ export const teachingDirectiveSchema = z.object({
   pronunciationTarget: z.number().int().min(1).max(5).default(3),
   /** 本词已通过的发音次数；由服务端累计，客户端只展示。 */
   pronunciationPasses: z.number().int().min(0).default(0),
+  /** 发音未达标时由纠正模型生成的一句指导；通过后为空。 */
+  coachingText: z.string().nullable().default(null),
   /** 语音参数 */
   voice: teacherVoiceParamsSchema,
   /** 是否允许重放 */

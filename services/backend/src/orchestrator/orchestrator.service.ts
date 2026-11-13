@@ -74,6 +74,7 @@ const OFFLINE_DIRECTIVE: TeachingDirective = {
   practiceTarget: 3,
   pronunciationTarget: 3,
   pronunciationPasses: 0,
+  coachingText: null,
   voice: {
     teacherSpeed: 0.5,
     voiceStyle: 'gentle',
@@ -1989,6 +1990,7 @@ export class OrchestratorService {
       practiceTarget: 5,
       pronunciationTarget: 3,
       pronunciationPasses: input.pronunciationPasses ?? 0,
+      coachingText: input.coachingText ?? null,
       voice: {
         teacherSpeed,
         voiceStyle: adjustable.tone === 'lively' ? 'encouraging' : adjustable.tone === 'calm' ? 'warm' : 'gentle',
