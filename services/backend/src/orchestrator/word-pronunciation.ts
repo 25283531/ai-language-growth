@@ -26,3 +26,15 @@ export function shouldAssessWordPronunciationForActivity(input: {
     input.activity.taskType,
   );
 }
+
+/**
+ * 发音判定使用的阈值任务类型。
+ * 图片/听辨活动只是承载单词练习的界面，不能借用图片任务的通过线；
+ * 只要本轮进入单词发音评估，就统一按 word_mimicry 的发音阈值。
+ */
+export function wordPronunciationThresholdTaskType(input: {
+  activity: WordPronunciationActivity;
+  response: WordPronunciationResponse;
+}): string {
+  return shouldAssessWordPronunciationForActivity(input) ? 'word_mimicry' : input.activity.taskType;
+}

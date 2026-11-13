@@ -33,11 +33,11 @@
     "id": "iflytek-spark",
     "name": "科大讯飞星火",
     "protocol": "iflytek_signed",
-    "defaultBaseUrls": { "llm": "https://spark-api-open.xf-yun.com/v1", "tts": "wss://cbm01.cn-huabei-1.xf-yun.com/v1/private/mcd9m97e6", "asr": "wss://iat.cn-huabei-1.xf-yun.com/v1", "pronunciation": "https://api.xfyun.cn/v1/service/v1/ise" },
+    "defaultBaseUrls": { "llm": "https://spark-api-open.xf-yun.com/v1", "tts": "wss://cbm01.cn-huabei-1.xf-yun.com/v1/private/mcd9m97e6", "asr": "wss://iat.cn-huabei-1.xf-yun.com/v1", "pronunciation": "wss://ise-api.xfyun.cn/v2/open-ise" },
     "services": ["llm", "tts", "asr", "pronunciation"],
     "credentialRequired": true,
     "documentationUrl": "https://www.xfyun.cn/doc/spark/super%20smart-tts.html",
-    "documentationUrls": { "llm": "https://www.xfyun.cn/doc/spark/HTTP调用文档.html", "tts": "https://www.xfyun.cn/doc/spark/super%20smart-tts.html", "asr": "https://www.xfyun.cn/doc/spark/spark_zh_iat_new.html", "pronunciation": "https://www.xfyun.cn/doc/voiceservice/ise/API.html" }
+    "documentationUrls": { "llm": "https://www.xfyun.cn/doc/spark/HTTP调用文档.html", "tts": "https://www.xfyun.cn/doc/spark/super%20smart-tts.html", "asr": "https://www.xfyun.cn/doc/spark/spark_zh_iat_new.html", "pronunciation": "https://www.xfyun.cn/doc/Ise/IseAPI.html" }
   },
   {
     "id": "minimax",

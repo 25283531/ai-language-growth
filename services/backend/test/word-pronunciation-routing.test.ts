@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { shouldAssessWordPronunciationForActivity } from '../src/orchestrator/word-pronunciation.ts';
+import { shouldAssessWordPronunciationForActivity, wordPronunciationThresholdTaskType } from '../src/orchestrator/word-pronunciation.ts';
 
 const imageActivity = {
   taskType: 'image_identification',
@@ -39,5 +39,20 @@ describe('word pronunciation assessment routing', () => {
       activity: { taskType: 'word_mimicry', targetWords: ['hello'], requiresPronunciationAssessment: true },
       response: { audioRef: 'data:audio/mp4;base64,AAAA' },
     }), true);
+  });
+
+  it('uses the word pronunciation threshold instead of the image task threshold', () => {
+    assert.equal(wordPronunciationThresholdTaskType({
+      activity: imageActivity,
+      response: { audioRef: 'data:audio/mp4;base64,AAAA' },
+    }), 'word_mimicry');
+    assert.equal(wordPronunciationThresholdTaskType({
+      activity: imageActivity,
+      response: { audioRef: 'data:audio/mp4;base64,AAAA', selectedImageId: 'img-hello' },
+    }), 'image_identification');
+    assert.equal(wordPronunciationThresholdTaskType({
+      activity: { taskType: 'sentence_pattern', targetWords: ['hello'], requiresPronunciationAssessment: false },
+      response: { audioRef: 'data:audio/mp4;base64,AAAA' },
+    }), 'sentence_pattern');
   });
 });

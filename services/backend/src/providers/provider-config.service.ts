@@ -205,7 +205,7 @@ export class ProviderConfigService {
       chivox: ['apiKey'],
     };
     const required = preset.id === 'iflytek-spark'
-      ? value.serviceKind === 'pronunciation' ? ['appId', 'apiKey']
+      ? value.serviceKind === 'pronunciation' ? ['appId', 'apiKey', 'apiSecret']
         : value.serviceKind === 'llm' ? ['apiKey'] : ['appId', 'apiKey', 'apiSecret']
       : requiredCredentialFields[preset.id] ?? [];
     const sameProvider = existing?.providerPresetId === preset.id;

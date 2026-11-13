@@ -1,7 +1,8 @@
-import { createHmac, createHash, randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { PronunciationRequest, PronunciationResponse } from '@alg/shared-contracts';
 import type { PronunciationAdapter, ProviderCapabilities, ProviderPricing } from './protocol';
 import { loadAudio } from './http';
+import { evaluateWithIflytekIse } from './iflytek-ise';
 
 export interface PronunciationProviderOptions {
   alias: string;
@@ -321,59 +322,32 @@ export class IflytekIseAdapter implements PronunciationAdapter {
   }
 
   async invoke(request: PronunciationRequest): Promise<PronunciationResponse> {
-    const started = Date.now();
-    const audio = await loadAudio(request.audioRef);
     const apiKey = this.config.credentials.apiKey ?? '';
+    const apiSecret = this.config.credentials.apiSecret ?? '';
     const appId = this.config.credentials.appId ?? '';
-    if (!apiKey || !appId) throw new Error('讯飞 ISE 需要 AppID 和语音评测 API Key');
-    const category = request.granularity === 'word' || /^[A-Za-z'-]+$/.test(request.targetText.trim()) ? 'read_word' : 'read_sentence';
-    const text = category === 'read_word' ? `[word]\n${request.targetText.trim()}` : `[content]\n${request.targetText.trim()}`;
-    const params = Buffer.from(JSON.stringify({
-      aue: 'raw', result_level: 'entirety', language: (request.language ?? 'en-US').toLowerCase().startsWith('zh') ? 'zh_cn' : 'en_us', category,
-      ...(request.granularity === 'phoneme' ? { extra_ability: 'multi_dimension' } : {}),
-    })).toString('base64');
-    const curTime = String(Math.floor(Date.now() / 1000));
-    const checksum = createHash('md5').update(`${apiKey}${curTime}${params}`).digest('hex');
-    const form = new URLSearchParams();
-    form.set('audio', Buffer.from(audio.bytes).toString('base64'));
-    form.set('text', text);
-    const response = await fetch(this.config.baseUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-Appid': appId, 'X-CurTime': curTime, 'X-Param': params, 'X-CheckSum': checksum },
-      body: form,
-      signal: AbortSignal.timeout(request.timeoutMs ?? 20000),
+    if (!apiKey || !apiSecret || !appId) throw new Error('讯飞 ISE 需要 AppID、APIKey 和 APISecret');
+
+    const audio = await loadAudio(request.audioRef);
+    const result = await evaluateWithIflytekIse({
+      appId,
+      apiKey,
+      apiSecret,
+      baseUrl: this.config.baseUrl,
+      targetText: request.targetText,
+      language: request.language,
+      granularity: request.granularity ?? 'phoneme',
+      timeoutMs: request.timeoutMs ?? 20000,
+      audio,
     });
-    if (!response.ok) throw new Error(`讯飞 ISE 调用失败: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
-    const body = await response.json() as { code?: string; desc?: string; data?: Record<string, unknown> };
-    if (body.code !== '0' || !body.data) throw new Error(`讯飞 ISE 错误 ${body.code ?? ''}: ${body.desc ?? 'empty result'}`);
-    const root = (body.data[category] ?? body.data) as Record<string, unknown>;
-    const paper = root.rec_paper as Record<string, unknown> | undefined;
-    const detail = (paper?.[category] ?? root) as Record<string, unknown>;
-    const total = score(detail.total_score);
-    const units: PronunciationResponse['units'] = [];
-    const walk = (node: unknown, kind: 'word' | 'syllable' | 'phoneme' = 'word', inheritedScore = total): void => {
-      if (Array.isArray(node)) { for (const child of node) walk(child, kind, inheritedScore); return; }
-      if (!node || typeof node !== 'object') return;
-      const item = node as Record<string, unknown>;
-      const wordScore = score(item.total_score ?? inheritedScore);
-      const syllableScore = score(item.syll_score ?? item.total_score ?? inheritedScore);
-      if (typeof item.content === 'string' && !['sil', 'silv', 'fil'].includes(item.content)) {
-        const itemKind = Array.isArray(item.phone) ? 'syllable' : Array.isArray(item.syll) ? 'word' : kind;
-        if (request.granularity === 'word' && itemKind === 'word') units.push({ text: item.content, kind: 'word', score: wordScore, correct: wordScore >= 60, detail: null });
-        if (request.granularity === 'syllable' && itemKind === 'syllable') units.push({ text: item.content, kind: 'syllable', score: syllableScore, correct: syllableScore >= 60, detail: null });
-        if (request.granularity === 'phoneme' && kind === 'phoneme') {
-          const error = typeof item.dp_message === 'string' && item.dp_message !== '0' && item.dp_message !== '';
-          const value = typeof item.phone_score === 'number' ? score(item.phone_score) : error ? 0 : syllableScore;
-          units.push({ text: item.content, kind: 'phoneme', score: value, correct: value >= 60, detail: error ? String(item.dp_message) : null });
-        }
-      }
-      if (Array.isArray(item.sentence)) walk(item.sentence, 'word', wordScore);
-      if (Array.isArray(item.word)) walk(item.word, 'syllable', wordScore);
-      if (Array.isArray(item.syll)) walk(item.syll, 'phoneme', syllableScore);
-      if (Array.isArray(item.phone)) walk(item.phone, 'phoneme', syllableScore);
+
+    return {
+      score: result.score,
+      passed: !result.rejected && result.score >= 60,
+      units: result.units,
+      latencyMs: result.latencyMs,
+      providerAlias: this.alias,
+      modelAlias: this.config.modelAlias ?? 'ise',
     };
-    walk(detail);
-    return { score: total, passed: total >= 60, units, latencyMs: Date.now() - started, providerAlias: this.alias, modelAlias: this.config.modelAlias ?? 'ise' };
   }
 }
 

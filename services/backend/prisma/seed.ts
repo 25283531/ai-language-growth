@@ -35,12 +35,17 @@ const SCENARIOS = [
  * ⚠️ 全部标记 m1_provisional + uncalibrated：
  *    原型的 85 分只是示意值，正式阈值必须用真实 6-9 岁中国儿童录音标定
  *    （D-010 / 任务书第 9 章）。M1 不对外声称「已掌握」。
+ *
+ *    2026-11-13 真实讯飞 ISE 接入后，成人清晰样本与 TTS 的 read_word 总分集中在
+ *    61—80；85 分在该供应商的单词题型上不可达。单词跟读暂按 70 分作为
+ *    “可辨认且无漏读/替换”的临时通过线，仍标记 uncalibrated，待儿童样本重标。
+ *    证据见 docs/pronunciation-threshold-calibration.md。
  */
 const THRESHOLDS = [
   {
     taskType: 'word_mimicry',
     scenario: null,
-    passScore: 85,
+    passScore: 70,
     minSamplesForming: 2,
     minSamplesMastered: 2,
     minScenariosTransferred: 2,
@@ -49,7 +54,7 @@ const THRESHOLDS = [
   {
     taskType: 'pronunciation_drill',
     scenario: null,
-    passScore: 85,
+    passScore: 70,
     minSamplesForming: 2,
     minSamplesMastered: 2,
     minScenariosTransferred: 2,

@@ -43,7 +43,7 @@ import { PlannerService } from '../planner/planner.service';
 import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
 import { PrismaService } from '../prisma/prisma.service';
 import { GrowthMentorService } from '../agents/growth-mentor.service';
-import { shouldAssessWordPronunciationForActivity } from './word-pronunciation';
+import { shouldAssessWordPronunciationForActivity, wordPronunciationThresholdTaskType } from './word-pronunciation';
 import { MemoryManagerService } from '../agents/memory-manager.service';
 import { PersonalityEngineService } from '../agents/personality-engine.service';
 import { PronunciationCoachService } from '../agents/pronunciation-coach.service';
@@ -1559,17 +1559,22 @@ export class OrchestratorService {
       };
     }
 
-    const threshold = await this.learnerModel.getThreshold(input.activity.taskType);
+    const wordAudioRef = input.response.audioRef;
+    // 单词跟读统一按 word_mimicry 的发音阈值判定。识图/听辨活动只是承载单词练习的界面，
+    // 不能把图片任务的通过线当成发音通过线；两者含义不同，阈值也不应互相借用。
+    const shouldAssessWordPronunciation = wordAudioRef && shouldAssessWordPronunciationForActivity({
+      activity: input.activity,
+      response: input.response,
+    });
+    const thresholdTaskType = shouldAssessWordPronunciation
+      ? wordPronunciationThresholdTaskType({ activity: input.activity, response: input.response })
+      : input.activity.taskType;
+    const threshold = await this.learnerModel.getThreshold(thresholdTaskType);
     const passScore = threshold?.passScore ?? 80;
 
     // —— 发音评估：跟读任务，或孩子用语音说出单个目标词的活动 ——
     // 当前客户端没有渲染识图选项，识图/听辨活动也必须接受孩子说出的目标词，
     // 否则录音会被当成空回合，既不评测也不累计跟读次数。
-    const wordAudioRef = input.response.audioRef;
-    const shouldAssessWordPronunciation = wordAudioRef && shouldAssessWordPronunciationForActivity({
-      activity: input.activity,
-      response: input.response,
-    });
     if (shouldAssessWordPronunciation && wordAudioRef) {
       const decision = await this.router.route({
         serviceKind: 'pronunciation',

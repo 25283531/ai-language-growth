@@ -106,7 +106,7 @@ const credentialLabels: Record<string, Array<[string, string]>> = {
   bailian: [['apiKey', '百炼 API Key']],
   volcengine: [['apiKey', '火山 API Key']],
   'baidu-qianfan': [['apiKey', '百度 API Key'], ['secretKey', '百度 Secret Key']],
-  'iflytek-spark': [['appId', '讯飞 AppID'], ['apiKey', '讯飞服务 API Key'], ['apiSecret', '讯飞 TTS/星火 API Secret']],
+  'iflytek-spark': [['appId', '讯飞 AppID'], ['apiKey', '讯飞服务 API Key'], ['apiSecret', '讯飞 API Secret']],
   minimax: [['apiKey', 'MiniMax API Key'], ['groupId', 'Group ID（如接口要求）']],
   siliconflow: [['apiKey', '硅基流动 API Key']],
   zhipu: [['apiKey', '智谱 API Key']],
@@ -169,7 +169,7 @@ export default function AdminPage() {
   const available = useMemo(() => catalog.filter((item) => item.services.includes(active)), [catalog, active]);
   const current = configs[active].find((item) => (item.id ?? item.draftKey) === activeConfigIds[active])
     ?? emptyConfig(active);
-  const credentialFields = (credentialLabels[current.providerPresetId] ?? []).filter(([key]) => current.providerPresetId !== 'iflytek-spark' || active !== 'pronunciation' || key !== 'apiSecret');
+  const credentialFields = credentialLabels[current.providerPresetId] ?? [];
   const benchmarkModel = benchmarkModels.find((item) => item.modelAlias === current.modelAlias);
   const latestBenchmark = benchmarkModel?.latest ?? null;
   // 本地编辑与服务端快照的差异：启用开关等改动必须点「保存」才真正生效。
