@@ -227,6 +227,7 @@ private fun GrowthApp(
     var sentencePasses by remember { mutableStateOf(0) }
     var sentenceScore by remember { mutableStateOf<Double?>(null) }
     var sentenceStatus by remember { mutableStateOf("") }
+    var praisedWord by remember { mutableStateOf("") }
     var lessonSpeech by remember { mutableStateOf<JSONObject?>(null) }
     val teacherSpeech = remember(activity) { TeacherSpeechController(activity.cacheDir) }
 
@@ -317,17 +318,24 @@ private fun GrowthApp(
             ?: current.optString("demonstrationText").trim().takeIf { it.isNotBlank() && it != "null" }.orEmpty()
     }
 
-    /** 发音卡之后的“为什么这样读”：老师逐句把字母音和整词连读讲一遍。 */
-    fun narratePhonics() {
+    /**
+     * 发音卡之后的“为什么这样读”：只读整词。
+     * 不再逐字母合成：单个字母的语音质量差，会把孩子带偏。
+     */
+    fun narratePhonics(praise: Boolean = false) {
         val current = directive ?: return
         val word = targetWordOf(current)
         if (word.isBlank()) return
-        val letters = WordPhonics.parts(word).joinToString("，") { (chunk, sound) ->
-            if (sound.any { it.code in 0x4E00..0x9FFF }) "$chunk 读 $sound" else "$chunk 发 /$sound/"
+        // 同一节课同一个词只表扬一次，避免“重听讲解”反复自夸。
+        val praiseOnce = praise && word != praisedWord
+        if (praiseOnce) praisedWord = word
+        val lines = mutableListOf<String>()
+        if (praiseOnce) {
+            lines += "太棒了，三次都读对了，表现得很棒！"
+            lines += "下面跟着老师一起来看看这个词怎么用吧。"
         }
-        val lines = mutableListOf(word)
-        if (letters.isNotBlank()) lines += "这个单词分开读：$letters。"
-        lines += "连起来读：$word。"
+        lines += "先听老师读一遍：$word。"
+        lines += "再看一眼单词，跟着老师连起来读：$word。"
         narrateLines(lines)
     }
 
@@ -344,8 +352,14 @@ private fun GrowthApp(
         narrateLines(lines)
     }
 
-    /** 例句跟读：直接把这一段录音送到发音评测，返回真实分数。 */
-    suspend fun evaluateSentence(encoded: String, target: String, durationMs: Long): JSONObject {
+    /** 例句跟读：直接把这一段录音送到发音评测，返回真实分数与老师给的对比反馈。 */
+    suspend fun evaluateSentence(
+        encoded: String,
+        target: String,
+        durationMs: Long,
+        previousScore: Double?,
+        attemptIndex: Int,
+    ): JSONObject {
         val seconds = (durationMs / 1000.0).coerceIn(1.0, 30.0)
         val reservation = withContext(Dispatchers.IO) {
             http(
@@ -364,6 +378,10 @@ private fun GrowthApp(
                 .put("audioRef", "data:audio/mp4;base64,$encoded")
                 .put("targetText", target)
                 .put("granularity", "word")
+                .put("attemptIndex", attemptIndex)
+            // 把上一次分数一并交给服务端，让文本模型能说“比上次进步在哪里”。
+            if (previousScore != null && previousScore.isFinite()) body.put("previousScore", previousScore)
+            if (lessonSessionId.isNotBlank()) body.put("lessonSessionId", lessonSessionId)
             return withContext(Dispatchers.IO) {
                 http(
                     base(), "/speech/evaluate", "POST", body, token(),
@@ -623,7 +641,7 @@ private fun GrowthApp(
                             speechStatus = speechStatus,
                             onReplay = { replayWord() },
                             onExplain = { playTeacher(true) },
-                            onNarratePhonics = { narratePhonics() },
+                            onNarratePhonics = { praise -> narratePhonics(praise) },
                             onNarrateUsage = { narrateUsage() },
                             sentenceRecording = sentenceRecording,
                             sentenceAttempts = sentenceAttempts,
@@ -668,19 +686,33 @@ private fun GrowthApp(
                                             val encoded = withContext(Dispatchers.IO) {
                                                 Base64.encodeToString(java.io.File(path).readBytes(), Base64.NO_WRAP)
                                             }
-                                            val result = evaluateSentence(encoded, target, durationMs)
+                                            val previousScore = sentenceScore
+                                            val result = evaluateSentence(
+                                                encoded, target, durationMs, previousScore, sentenceAttempts + 1,
+                                            )
                                             val value = result.optDouble("score", Double.NaN)
+                                            val coachingText = result.optJSONObject("coaching")
+                                                ?.optString("displayText")
+                                                ?.takeIf { it.isNotBlank() && it != "null" }
                                             sentenceAttempts += 1
                                             if (value.isFinite()) {
                                                 sentenceScore = value
-                                                if (value >= 70.0) {
-                                                    sentencePasses += 1
-                                                    sentenceStatus = "这句读得很好，再读一遍就更熟练了！"
-                                                } else {
-                                                    sentenceStatus = "再慢一点，先听老师读，再跟着读一次。"
-                                                }
-                                            } else {
-                                                sentenceStatus = "这次没有听清楚，再试一次。"
+                                                if (value >= 70.0) sentencePasses += 1
+                                            }
+                                            sentenceStatus = coachingText
+                                                ?: if (value.isFinite()) "再慢一点，先听老师读，再跟着读一次。"
+                                                else "这次没有听清楚，再试一次。"
+                                            if (coachingText != null) {
+                                                // 老师的点评要读出来：孩子不用盯着屏幕看长句。
+                                                val speechDirective = directive ?: JSONObject()
+                                                teacherSpeech.play(
+                                                    base(), token().orEmpty(), learnerId, speechDirective, lessonSpeech, false,
+                                                    onState = { active, message ->
+                                                        speechBusy = active
+                                                        speechStatus = message
+                                                    },
+                                                    texts = listOf(coachingText),
+                                                )
                                             }
                                         } catch (e: Exception) {
                                             pageStatus = "例句跟读暂时不可用，先听老师读"
@@ -757,6 +789,7 @@ private fun GrowthApp(
                                             http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token())
                                         }
                                         // 结课成功就回到学习入口（directive 置空），孩子可以直接开始下一课。
+                                        val finishedDirective = directive
                                         teacherSpeech.stop()
                                         directive = null
                                         lessonSpeech = null
@@ -767,7 +800,22 @@ private fun GrowthApp(
                                         sentencePasses = 0
                                         sentenceScore = null
                                         sentenceStatus = ""
+                                        praisedWord = ""
                                         pageStatus = "这节课完成啦，休息一下再来 🌿"
+                                        // 结课要有声音：告诉孩子今天的课程完成了，并表扬他坚持了一天。
+                                        if (finishedDirective != null) {
+                                            teacherSpeech.play(
+                                                base(), token().orEmpty(), learnerId, finishedDirective, null, false,
+                                                onState = { active, message ->
+                                                    speechBusy = active
+                                                    speechStatus = message
+                                                },
+                                                texts = listOf(
+                                                    "今天的课程完成啦！",
+                                                    "你又坚持了一天，真棒！明天我们接着学。",
+                                                ),
+                                            )
+                                        }
                                         runCatching { fetchDashboard() }
                                     } catch (e: Exception) {
                                         pageStatus = e.message ?: "结课失败"
@@ -1108,7 +1156,7 @@ private fun LearnScreen(
     onStart: () -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onExplain: () -> Unit,
-    onNarratePhonics: () -> Unit, onNarrateUsage: () -> Unit,
+    onNarratePhonics: (Boolean) -> Unit, onNarrateUsage: () -> Unit,
     sentenceRecording: Boolean, sentenceAttempts: Int, sentencePasses: Int,
     sentenceScore: Double?, sentenceStatus: String, onSentenceRecord: (Boolean) -> Unit,
 ) {
@@ -1156,9 +1204,10 @@ private fun LearnScreen(
         else -> "usage"
     }
     // 进入新环节先由老师讲一遍：一句一段音频，像老师带着孩子一句一句学。
+    // 顺手把“三次都通过”的表扬说出来，再自然过渡到“这个词怎么用”。
     LaunchedEffect(stepKey) {
         when (stepKey) {
-            "phonics" -> onNarratePhonics()
+            "phonics" -> onNarratePhonics(true)
             "usage" -> onNarrateUsage()
         }
     }
@@ -1207,7 +1256,7 @@ private fun LearnScreen(
             PhonicsStep(word)
             GrowthSecondaryButton(
                 "听老师讲一遍",
-                onNarratePhonics,
+                { onNarratePhonics(false) },
                 enabled = !speechBusy && !busy && !recording,
                 emoji = "🔊",
             )
