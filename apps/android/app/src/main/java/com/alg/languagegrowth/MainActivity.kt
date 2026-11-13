@@ -1256,7 +1256,7 @@ private fun LearnScreen(
             PhonicsStep(word)
             GrowthSecondaryButton(
                 "听老师讲一遍",
-                onNarratePhonics,
+                { onNarratePhonics(false) },
                 enabled = !speechBusy && !busy && !recording,
                 emoji = "🔊",
             )
