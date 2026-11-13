@@ -41,6 +41,12 @@ import { AiGatewayService, quantizeTeacherSpeed } from '../ai-gateway/ai-gateway
 import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PlannerService } from '../planner/planner.service';
 import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
+
+/**
+ * 安卓课堂目前只有「发音卡 → 用法 → 例句跟读」这一种卡片流程。
+ * 开课时限制在这个范围内，孩子不会被推进到客户端根本呈现不了的活动上。
+ */
+const CLIENT_TEACHABLE_TASK_TYPES = ['word_mimicry', 'image_identification'];
 import { PrismaService } from '../prisma/prisma.service';
 import { GrowthMentorService } from '../agents/growth-mentor.service';
 import { shouldAssessWordPronunciationForActivity, wordPronunciationThresholdTaskType } from './word-pronunciation';
@@ -222,6 +228,7 @@ export class OrchestratorService {
       lessonSessionId: session.id,
       excludeActivityIds: recentCompletedActivityIds,
       followUpSkillNodeIds,
+      allowedTaskTypes: CLIENT_TEACHABLE_TASK_TYPES,
     }) ?? await this.planner.planNext({
       // 主题内所有活动都刚做过（例如只有一个活动的主题）时才允许重复，
       // 保证孩子不会因为“课程推进”而拿到空白页。
@@ -230,6 +237,7 @@ export class OrchestratorService {
       lessonSessionId: session.id,
       excludeActivityIds: [],
       followUpSkillNodeIds,
+      allowedTaskTypes: CLIENT_TEACHABLE_TASK_TYPES,
     });
 
     if (!step) {
