@@ -650,6 +650,16 @@ private fun GrowthApp(
                             onNarratePhonics = { praise -> narratePhonics(praise) },
                             onNarrateUsage = { narrateUsage() },
                             onPickImage = { imageId -> scope.launch { submitTurn(null, null, 0, imageId) } },
+                            onSpeakCoaching = { text ->
+                                teacherSpeech.play(
+                                    base(), token().orEmpty(), learnerId, directive ?: JSONObject(), lessonSpeech, false,
+                                    onState = { active, message ->
+                                        speechBusy = active
+                                        speechStatus = message
+                                    },
+                                    texts = listOf(text),
+                                )
+                            },
                             sentenceRecording = sentenceRecording,
                             sentenceAttempts = sentenceAttempts,
                             sentencePasses = sentencePasses,
@@ -1165,6 +1175,7 @@ private fun LearnScreen(
     speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onExplain: () -> Unit,
     onNarratePhonics: (Boolean) -> Unit, onNarrateUsage: () -> Unit,
     onPickImage: (String) -> Unit,
+    onSpeakCoaching: (String) -> Unit,
     sentenceRecording: Boolean, sentenceAttempts: Int, sentencePasses: Int,
     sentenceScore: Double?, sentenceStatus: String, onSentenceRecord: (Boolean) -> Unit,
 ) {
@@ -1226,6 +1237,12 @@ private fun LearnScreen(
             "phonics" -> onNarratePhonics(true)
             "usage" -> onNarrateUsage()
         }
+    }
+
+    // 发音卡的点评也要读出来：与例句页一致，孩子不用盯着屏幕看长句。
+    // coaching 每次评分后由服务端下发，内容变了才读，不重复念同一句。
+    LaunchedEffect(coaching) {
+        if (!coaching.isNullOrBlank()) onSpeakCoaching(coaching)
     }
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
