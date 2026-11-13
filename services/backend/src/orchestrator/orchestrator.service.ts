@@ -43,6 +43,7 @@ import { PlannerService } from '../planner/planner.service';
 import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
 import { PrismaService } from '../prisma/prisma.service';
 import { GrowthMentorService } from '../agents/growth-mentor.service';
+import { shouldAssessWordPronunciationForActivity } from './word-pronunciation';
 import { MemoryManagerService } from '../agents/memory-manager.service';
 import { PersonalityEngineService } from '../agents/personality-engine.service';
 import { PronunciationCoachService } from '../agents/pronunciation-coach.service';
@@ -532,9 +533,11 @@ export class OrchestratorService {
     if (assessment.performedPronunciationAssessment && assessment.passed) {
       state.pronunciationPasses += 1;
     }
-    const pronunciationPractice = ['word_mimicry', 'pronunciation_drill'].includes(
-      currentActivity?.taskType ?? '',
-    );
+    // 当前客户端把单词活动统一呈现为“按住跟读”。识图/听辨活动如果孩子
+    // 直接说出了目标词，也应走发音评估并留在同一个词上练满 3 次。
+    const pronunciationPractice =
+      ['word_mimicry', 'pronunciation_drill'].includes(currentActivity?.taskType ?? '') ||
+      shouldAssessWordPronunciationForActivity({ activity: currentActivity, response: input.response });
     // 发音活动不自动跳到下一个词：先在同一个词上练满跟读，
     // 再由客户端进入拼读讲解和应用场景。
     const activityCompleted = pronunciationPractice
@@ -1559,15 +1562,22 @@ export class OrchestratorService {
     const threshold = await this.learnerModel.getThreshold(input.activity.taskType);
     const passScore = threshold?.passScore ?? 80;
 
-    // —— 发音评估：仅在需要跟读评估且有音频时调用 ——
-    if (input.activity.requiresPronunciationAssessment && input.response.audioRef) {
+    // —— 发音评估：跟读任务，或孩子用语音说出单个目标词的活动 ——
+    // 当前客户端没有渲染识图选项，识图/听辨活动也必须接受孩子说出的目标词，
+    // 否则录音会被当成空回合，既不评测也不累计跟读次数。
+    const wordAudioRef = input.response.audioRef;
+    const shouldAssessWordPronunciation = wordAudioRef && shouldAssessWordPronunciationForActivity({
+      activity: input.activity,
+      response: input.response,
+    });
+    if (shouldAssessWordPronunciation && wordAudioRef) {
       const decision = await this.router.route({
         serviceKind: 'pronunciation',
         taskRoute: 'pronunciation.phoneme',
       });
       const result = await this.gateway.pronunciation(
         {
-          audioRef: input.response.audioRef,
+          audioRef: wordAudioRef,
           targetText: input.activity.targetWords[0] ?? '',
           language: 'en-US',
           granularity: 'phoneme',
