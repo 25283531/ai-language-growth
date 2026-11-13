@@ -285,6 +285,37 @@ export const M1_ACTIVITIES: Reviewed<TeachingActivity>[] = [
   },
   {
     item: {
+      id: 'act-obj-pick-pictures',
+      topicId: 'topic-objects-around',
+      taskType: 'image_identification',
+      scenario: 'object_pic_scene',
+      skillNodeIds: ['LA.LISTEN.word_recognition', 'LA.VOCAB.receptive'],
+      targetWords: ['apple'],
+      demonstrationText: null,
+      teacherUtteranceZh: '听老师说，然后点出对应的图片：apple。',
+      requiresPronunciationAssessment: false,
+      requiresAsr: false,
+      assessment: {
+        acceptedImageIds: ['img-apple'],
+        acceptedTexts: [],
+        requiredPhrases: [],
+        openResponse: false,
+      },
+      // 三个选项：一个正确（apple）+ 两个干扰项（banana、cat）。
+      // 图片来源与许可见 packages/curriculum/assets/images/ATTRIBUTION.md。
+      imageOptions: [
+        { id: 'img-apple', assetName: 'img_apple', labelEn: 'apple' },
+        { id: 'img-banana', assetName: 'img_banana', labelEn: 'banana' },
+        { id: 'img-cat', assetName: 'img_cat', labelEn: 'cat' },
+      ],
+      difficulty: 1,
+      order: 2,
+      m1Scope: true,
+    },
+    reviewStatus: 'pending_review',
+  },
+  {
+    item: {
       id: 'act-obj-tap-apple',
       topicId: 'topic-objects-around',
       taskType: 'image_identification',

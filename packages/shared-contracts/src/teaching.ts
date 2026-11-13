@@ -88,6 +88,19 @@ export const teachingDirectiveSchema = z.object({
   ]),
   /** 目标词（跟读任务用） */
   targetWords: z.array(z.string()).default([]),
+  /**
+   * 图片选择题的选项（含资源名）。由服务端下发，客户端不得自行增删重排。
+   * 为空表示本题不是图片选择题。
+   */
+  imageOptions: z
+    .array(
+      z.object({
+        id: z.string(),
+        assetName: z.string().regex(/^[a-z0-9_]+$/),
+        labelEn: z.string().nullable().default(null),
+      }),
+    )
+    .optional(),
   /** 目标词的中文意思；来自已审核词条，缺失时为空。 */
   wordMeaningZh: z.string().nullable().default(null),
   /** 目标词的 IPA；客户端按需显示斜杠。 */

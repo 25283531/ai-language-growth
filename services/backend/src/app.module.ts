@@ -53,9 +53,10 @@ import { GrowthMentorService } from './agents/growth-mentor.service';
 import { MemoryManagerService } from './agents/memory-manager.service';
 import { PersonalityEngineService } from './agents/personality-engine.service';
 import { PronunciationCoachService } from './agents/pronunciation-coach.service';
+import { ReplayModule } from './replay/replay.module';
 
 @Module({
-  imports: [ConfigModule, QueueModule],
+  imports: [ConfigModule, QueueModule, ReplayModule],
   controllers: [
     LessonsController,
     LearnersController,
