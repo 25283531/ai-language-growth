@@ -109,7 +109,11 @@ export class PronunciationCoachService {
       if (!parsed.success) return fallback;
       return {
         ...parsed.data,
-        displayText: `${parsed.data.progress} ${parsed.data.advice} ${parsed.data.encouragement}`.trim(),
+        displayText: joinCoachingSentences([
+          parsed.data.progress,
+          parsed.data.advice,
+          parsed.data.encouragement,
+        ]),
         fromModel: true,
       };
     } catch (error) {
@@ -117,6 +121,23 @@ export class PronunciationCoachService {
       return fallback;
     }
   }
+}
+
+/**
+ * 把三段反馈拼成可朗读的一句话。
+ *
+ * 模型返回的三段常常不带句末标点，直接拼成“得了0分 先闭嘴唇说b”会让 TTS 连读、
+ * 孩子听不出断句。这里统一补齐句末标点，并把段内的半角符号换成全角。
+ */
+export function joinCoachingSentences(parts: Array<string | null | undefined>): string {
+  return parts
+    .map((part) => (part ?? '').trim())
+    .filter(Boolean)
+    .map((part) => {
+      const normalized = part.replace(/[,\s]*[,，]\s*$/u, '').replace(/\.\s*$/u, '');
+      return /[。！？!?…~～]$/u.test(normalized) ? normalized : `${normalized}。`;
+    })
+    .join('');
 }
 
 /**
@@ -152,7 +173,7 @@ export function deterministicCoaching(input: {
     progress,
     advice,
     encouragement: '再读一次试试吧。',
-    displayText: `${progress} ${advice} 再读一次试试吧。`,
+    displayText: joinCoachingSentences([progress, advice, '再读一次试试吧。']),
     fromModel: false,
   };
 }
