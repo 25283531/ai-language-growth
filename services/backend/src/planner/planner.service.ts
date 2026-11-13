@@ -61,7 +61,15 @@ export class PlannerService {
     lessonSessionId: string;
     excludeActivityIds: string[];
     followUpSkillNodeIds?: string[];
+    /**
+     * 客户端当前课堂卡片能教的活动类型。安卓端目前只有「发音卡 + 用法」一种流程，
+     * 结课推进时如果不加限制，会推进到听力选图这类客户端无法呈现的活动，
+     * 孩子会卡在一张点不动的卡片上。不传则不加限制（其他调用方保持原行为）。
+     */
+    allowedTaskTypes?: string[];
   }): Promise<PlannedStep | null> {
+    const typeAllowed = (activity: { taskType: string }) =>
+      !input.allowedTaskTypes?.length || input.allowedTaskTypes.includes(activity.taskType);
     // —— 1. 先看有没有到期的复习项 ——
     const now = new Date();
     const states = await this.getStates(input.learnerId);
@@ -84,6 +92,7 @@ export class PlannerService {
       const reviewActivities = (await this.activitiesForSkill(review.skillNodeId, input.topicId))
         .filter((activity) =>
           !input.excludeActivityIds.includes(activity.id) &&
+          typeAllowed(activity) &&
           this.isWithinProgressiveAccess(activity, states),
         );
       const originalActivity = review.learningItemId
@@ -143,6 +152,7 @@ export class PlannerService {
       const followUp = (await this.activitiesForSkill(skillNodeId, input.topicId)).find((activity) =>
         activity.topicId === input.topicId &&
         !input.excludeActivityIds.includes(activity.id) &&
+        typeAllowed(activity) &&
         this.isWithinProgressiveAccess(activity, states),
       );
       if (followUp) {
@@ -157,7 +167,7 @@ export class PlannerService {
 
     // —— 3. 选取主题内下一个可排的活动 ——
     const activities = (await this.activitiesOf(input.topicId))
-      .filter((a) => !input.excludeActivityIds.includes(a.id));
+      .filter((a) => !input.excludeActivityIds.includes(a.id) && typeAllowed(a));
 
     if (activities.length === 0) {
       return null;
