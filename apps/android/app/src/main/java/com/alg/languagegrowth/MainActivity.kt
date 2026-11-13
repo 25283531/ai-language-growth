@@ -521,7 +521,6 @@ private fun GrowthApp(
                         "learn" -> LearnScreen(
                             directive, finishResult, recording, busy, pageStatus,
                             lessonTopic = lessonTopic,
-                            practiceCount = practiceCount,
                             wordProgress = wordProgress,
                             onStart = ::startSession,
                             speechBusy = speechBusy,
@@ -911,7 +910,7 @@ private fun HomeScreen(data: JSONObject?, childTheme: Boolean, status: String, o
 @Composable
 private fun LearnScreen(
     directive: JSONObject?, finish: JSONObject?, recording: Boolean,
-    busy: Boolean, status: String, lessonTopic: String, practiceCount: Int,
+    busy: Boolean, status: String, lessonTopic: String,
     wordProgress: Float,
     onStart: () -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
