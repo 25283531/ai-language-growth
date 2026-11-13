@@ -213,13 +213,16 @@ test(
     const ttsRows = byService('tts');
     const asrRows = byService('asr');
     const pronunciationRows = byService('pronunciation');
+    // 发音评分现在会把分数交给文本模型生成对比点评，每次评测多一条 llm 账（mock 下 L0/0 元）。
+    const coachingRows = rows.filter((row) => row.taskRoute === 'llm.teaching_explanation');
     const expectedTtsCharacters = [...'alpha'].length + [...'beta'].length;
     const expectedAsrSeconds = asrResults.reduce((sum, result) => sum + Number(result.seconds), 0);
 
-    assert.equal(rows.length, 9, '应为 TTS 3 + ASR 3 + 发音 3 共 9 行');
+    assert.equal(rows.length, 12, '应为 TTS 3 + ASR 3 + 发音 3 + 发音点评 3 共 12 行');
     assert.equal(ttsRows.length, 3);
     assert.equal(asrRows.length, 3);
     assert.equal(pronunciationRows.length, 3);
+    assert.equal(coachingRows.length, 3, '每次评测应恰好产生一条点评账');
     assert.equal(
       ttsRows.reduce((sum, row) => sum + row.ttsCharacters, 0),
       expectedTtsCharacters,
@@ -245,7 +248,7 @@ test(
       { headers: adminHeaders },
     );
 
-    assert.equal(aggregate.totals.calls, 9);
+    assert.equal(aggregate.totals.calls, 12);
     assert.equal(aggregate.totals.ttsCharacters, expectedTtsCharacters);
     assert.equal(aggregate.totals.asrSeconds, expectedAsrSeconds);
     assert.equal(aggregate.totals.pronunciationCalls, 3);
@@ -253,13 +256,13 @@ test(
     assert.equal(aggregate.totals.unpricedCalls, 0);
     assert.equal(aggregate.byLearner.length, 1);
     assert.equal(aggregate.byLearner[0]?.learnerId, learnerId);
-    assert.equal(aggregate.byLearner[0]?.calls, 9);
+    assert.equal(aggregate.byLearner[0]?.calls, 12);
     assert.equal(aggregate.byTopic.length, 1);
     assert.equal(aggregate.byTopic[0]?.topicId, topicId);
-    assert.equal(aggregate.byTopic[0]?.calls, 9);
+    assert.equal(aggregate.byTopic[0]?.calls, 12);
     assert.equal(
       aggregate.byDay.reduce((sum: number, bucket: Json) => sum + bucket.calls, 0),
-      9,
+      12,
     );
 
     console.log(JSON.stringify({
@@ -268,10 +271,11 @@ test(
       topicId,
       lessonSessionId,
       expected: {
-        calls: 9,
+        calls: 12,
         ttsCharacters: expectedTtsCharacters,
         asrSeconds: expectedAsrSeconds,
         pronunciationCalls: 3,
+        coachingCalls: 3,
       },
     }));
   },
