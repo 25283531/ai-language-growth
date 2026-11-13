@@ -1060,7 +1060,8 @@ private fun PhonicsStep(word: String) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("为什么这样读", style = MaterialTheme.typography.titleMedium, color = GrowthColors.MintDeep)
         WordPhonics.parts(word).forEach { (chunk, sound) ->
-            Text("$chunk 发 $sound", style = MaterialTheme.typography.bodyLarge, color = GrowthColors.Ink)
+            val shown = if (sound.any { it.code in 0x4E00..0x9FFF }) sound else "/" + sound + "/"
+            Text("$chunk 发 $shown", style = MaterialTheme.typography.bodyLarge, color = GrowthColors.Ink)
         }
     }
 }
