@@ -76,6 +76,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         speech: JSONObject?,
         replay: Boolean = false,
         onState: (Boolean, String) -> Unit,
+        texts: List<String>? = null,
     ) {
         val previous = task
         previous?.cancel()
@@ -99,9 +100,12 @@ internal class TeacherSpeechController(private val cacheDir: File) {
 
                 require(token.isNotBlank() && learnerId.isNotBlank()) { "登录或学习者信息已失效，请重新登录" }
                 clearCached()
-                var parts = partsFromSpeech(speech)
+                // texts 非空时按调用方给定的句子逐句合成（老师逐句讲解）；
+                // 否则优先用服务端已缓存的整轮 speech.segments。
+                var parts = if (texts == null) partsFromSpeech(speech) else emptyList()
                 val learnerHeaders = mapOf("X-Learner-Id" to learnerId)
-                val fallbackTexts = if (parts.isEmpty()) speechTexts(directive) else emptyList()
+                val fallbackTexts = texts?.map { it.trim() }?.filter { it.isNotBlank() }
+                    ?: if (parts.isEmpty()) speechTexts(directive) else emptyList()
                 require(parts.isNotEmpty() || fallbackTexts.isNotEmpty()) { "本轮没有可播放的老师文本" }
 
                 // 按文本长度估算所需秒数，避免固定预留 120 秒把低额度账户误拒。

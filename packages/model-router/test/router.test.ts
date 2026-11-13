@@ -186,6 +186,21 @@ describe('Model Router', () => {
     assert.equal(decision.budget?.unpricedCalls, 1);
   });
 
+  it('同路由大量并发语音请求不会因为预留额把熔断提前打开', async () => {
+    // 回归：tts.dynamic_teaching 日预算 60、并发 8。旧实现每请求预留 60/8 = 7.5 元，
+    // 一次课堂预热二三十条语音就会在只花几分钱的情况下被降级到 mock。
+    const router = new ModelRouterImpl();
+    const decisions = [];
+    for (let index = 0; index < 23; index += 1) {
+      decisions.push(await router.route({ serviceKind: 'tts', taskRoute: 'tts.dynamic_teaching' }));
+    }
+    assert.equal(decisions.some((decision) => decision.level === 'L0'), false);
+    const last = decisions[decisions.length - 1]!;
+    assert.equal(last.budget?.exhausted, false);
+    // 23 个在飞预留的总额仍然远小于日预算。
+    assert.ok((last.budget?.reservedCny ?? 0) < last.budget!.limitCny * 0.1);
+  });
+
   it('路由规则中不含任何厂商或模型名称', () => {
     const forbidden = ['silicon', 'siliconflow', 'openai', 'zhipu', 'aliyun', 'tencent', 'qwen', 'glm', 'doubao'];
     const text = JSON.stringify(DEFAULT_ROUTER_CONFIG).toLowerCase();
