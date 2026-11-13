@@ -128,6 +128,7 @@ jobs:
             services/backend/test/prosody-contract.test.ts \
             services/backend/test/tts-public-scope.test.ts \
             services/backend/test/pronunciation-coach.test.ts \
+            services/backend/test/word-pronunciation-routing.test.ts \
             services/backend/test/speech-usage.test.ts \
             services/backend/test/usage-cost.test.ts \
             services/backend/test/usage-budget.test.ts \

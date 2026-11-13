@@ -48,7 +48,8 @@ FROM node:22-alpine AS runtime
 
 WORKDIR /app
 
-RUN apk add --no-cache openssl postgresql16-client
+# ISE 需要 16k/16-bit/单声道 PCM；手机上传 m4a，由 ffmpeg 在评测前转码。
+RUN apk add --no-cache openssl postgresql16-client ffmpeg
 
 ENV NODE_ENV=production \
     PORT=3100 \
