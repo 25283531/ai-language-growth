@@ -99,6 +99,10 @@ export const teachingDirectiveSchema = z.object({
   exampleSentenceZh: z.string().nullable().default(null),
   /** 本课建议的耐心练习次数；由后端决定，客户端只展示进度。 */
   practiceTarget: z.number().int().min(1).max(5).default(3),
+  /** 跟读达标所需的有效发音次数；达标后进入拼读讲解与应用场景。 */
+  pronunciationTarget: z.number().int().min(1).max(5).default(3),
+  /** 本词已通过的发音次数；由服务端累计，客户端只展示。 */
+  pronunciationPasses: z.number().int().min(0).default(0),
   /** 语音参数 */
   voice: teacherVoiceParamsSchema,
   /** 是否允许重放 */

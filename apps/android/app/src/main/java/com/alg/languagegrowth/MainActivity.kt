@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -41,11 +42,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -55,6 +62,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 private const val OFFICIAL_API = "https://152.136.230.132:3000/api/v1"
 
@@ -212,6 +221,7 @@ private fun GrowthApp(
     var asrReservationId by remember { mutableStateOf("") }
     var speechBusy by remember { mutableStateOf(false) }
     var speechStatus by remember { mutableStateOf("") }
+    var wordProgress by remember { mutableStateOf(0f) }
     var lessonSpeech by remember { mutableStateOf<JSONObject?>(null) }
     val teacherSpeech = remember(activity) { TeacherSpeechController(activity.cacheDir) }
 
@@ -251,18 +261,26 @@ private fun GrowthApp(
 
     fun replayWord() {
         val current = directive ?: return
-        teacherSpeech.playWord(base(), token().orEmpty(), learnerId, current, lessonSpeech) { active, message ->
-            speechBusy = active
-            speechStatus = message
-        }
+        wordProgress = 0f
+        teacherSpeech.playWord(
+            base(), token().orEmpty(), learnerId, current, lessonSpeech,
+            onState = { active, message ->
+                speechBusy = active
+                speechStatus = message
+                if (!active) wordProgress = 1f
+            },
+            onProgress = { wordProgress = it },
+        )
     }
 
     LaunchedEffect(loggedIn, learnerId, tab, screen, directive, finishResult) {
         teacherSpeech.stop()
         speechBusy = false
         speechStatus = ""
+        wordProgress = 0f
         if (loggedIn && learnerId.isNotBlank() && tab == "learn" && screen == "tabs" && directive != null && finishResult == null) {
-            playTeacher()
+            // 进入学习状态先读单词，长讲解由“重听讲解”按需触发，界面保持安静。
+            replayWord()
         }
     }
 
@@ -492,7 +510,7 @@ private fun GrowthApp(
                 } else if (screen == "tabs") {
                     when (tab) {
                         "home" -> GrowthPageHeader("英语成长课堂", "每天一点点，慢慢变厉害 ✨", "🌈")
-                        "learn" -> GrowthPageHeader("今天学什么", "跟着老师，慢慢来 🌿", "📖")
+                        "learn" -> if (directive == null) GrowthPageHeader("今天学什么", "跟着老师，慢慢来 🌿", "📖")
                         "achievements" -> GrowthPageHeader("成长成就", "每一步都算数", "🏆")
                         else -> GrowthPageHeader("我的账户", "由监护人协助设置", "👤")
                     }
@@ -501,32 +519,34 @@ private fun GrowthApp(
                             scope.launch { runCatching { fetchDashboard() }.onFailure { pageStatus = it.message ?: "刷新失败" } }
                         })
                         "learn" -> LearnScreen(
-                            directive, finishResult, responseText, recording, recordingSaved, busy, pageStatus,
+                            directive, finishResult, recording, busy, pageStatus,
                             lessonTopic = lessonTopic,
                             practiceCount = practiceCount,
+                            wordProgress = wordProgress,
                             onStart = ::startSession,
                             speechBusy = speechBusy,
                             speechStatus = speechStatus,
                             onReplay = { replayWord() },
                             onExplain = { playTeacher(true) },
-                            onPlayRecording = { if (!activity.playLastRecording()) pageStatus = "还没有可回放的录音" },
-                            onText = { responseText = it },
-                            onRecord = {
+                            onRecord = { pressed ->
                                 teacherSpeech.stop(clearAudio = false)
                                 speechBusy = false
                                 scope.launch {
-                                    if (!recording) {
-                                        if (!activity.hasAudioPermission()) {
-                                            activity.requestAudioPermission()
-                                            pageStatus = "请允许麦克风权限后再次点击录音"
-                                        } else {
-                                            try {
-                                                activity.startRecording()
-                                                recordingStartedAt = System.currentTimeMillis()
-                                                recording = true
-                                            } catch (e: Exception) { pageStatus = e.message ?: "无法开始录音" }
+                                    if (pressed) {
+                                        if (!recording) {
+                                            if (!activity.hasAudioPermission()) {
+                                                activity.requestAudioPermission()
+                                                pageStatus = "请允许麦克风权限后再按住跟读"
+                                            } else {
+                                                try {
+                                                    activity.startRecording()
+                                                    recordingStartedAt = System.currentTimeMillis()
+                                                    recording = true
+                                                    pageStatus = ""
+                                                } catch (e: Exception) { pageStatus = e.message ?: "无法开始录音" }
+                                            }
                                         }
-                                    } else {
+                                    } else if (recording) {
                                         try {
                                             val (path, _) = activity.stopRecording()
                                             recording = false
@@ -563,7 +583,6 @@ private fun GrowthApp(
                                     }
                                 }
                             },
-                            onSubmit = { teacherSpeech.stop(clearAudio = false); scope.launch { submitTurn(null, null, 0) } },
                             onFinish = { scope.launch { try { finishResult = withContext(Dispatchers.IO) { http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token()) } } catch (e: Exception) { pageStatus = e.message ?: "结课失败" } } },
                         )
                         "achievements" -> AchievementScreen(dashboard)
@@ -891,101 +910,28 @@ private fun HomeScreen(data: JSONObject?, childTheme: Boolean, status: String, o
 
 @Composable
 private fun LearnScreen(
-    directive: JSONObject?, finish: JSONObject?, responseText: String, recording: Boolean,
-    recordingSaved: Boolean, busy: Boolean, status: String, lessonTopic: String, practiceCount: Int,
-    onStart: () -> Unit, onText: (String) -> Unit,
-    onRecord: () -> Unit, onSubmit: () -> Unit, onFinish: () -> Unit,
+    directive: JSONObject?, finish: JSONObject?, recording: Boolean,
+    busy: Boolean, status: String, lessonTopic: String, practiceCount: Int,
+    wordProgress: Float,
+    onStart: () -> Unit,
+    onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onExplain: () -> Unit,
-    onPlayRecording: () -> Unit,
 ) {
-    GrowthCard(
-        modifier = Modifier.fillMaxWidth(),
-        fill = GrowthColors.BlueWash,
-        outline = GrowthColors.Blue.copy(alpha = 0.20f),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("🧑‍🏫", fontSize = 30.sp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("跟着老师的节奏，完成一小段练习。", style = MaterialTheme.typography.titleMedium, color = GrowthColors.Ink)
-                Text("不着急，慢慢来就好 🌿", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+    if (directive == null) {
+        GrowthCard(
+            modifier = Modifier.fillMaxWidth(),
+            fill = GrowthColors.BlueWash,
+            outline = GrowthColors.Blue.copy(alpha = 0.20f),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("🧑‍🏫", fontSize = 30.sp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("跟着老师的节奏，完成一小段练习。", style = MaterialTheme.typography.titleMedium, color = GrowthColors.Ink)
+                    Text("不着急，慢慢来就好 🌿", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                }
             }
         }
-    }
-    GrowthPrimaryButton(if (directive == null) "开始学习" else "再来一节", onStart, emoji = "✨", enabled = !busy, busy = busy)
-    if (directive != null) {
-        val target = directive.optInt("practiceTarget", 3).coerceIn(1, 5)
-        val done = practiceCount.coerceAtMost(target)
-        GrowthCard(modifier = Modifier.fillMaxWidth()) {
-            GrowthSectionTitle(
-                if (lessonTopic.isBlank()) "今天的课堂" else "今天的课堂 · $lessonTopic",
-                "📖",
-            )
-            PronunciationCard(
-                directive = directive,
-                speaking = speechBusy && speechStatus.contains("正在说话"),
-            )
-            TeacherWordExplanation(directive)
-            Text(
-                directive.optString("teacherUtterance"),
-                style = MaterialTheme.typography.titleMedium,
-                color = GrowthColors.Ink,
-            )
-            Text(
-                "先听清单词，再跟着读。读错也没关系，老师会陪你再来一次。",
-                style = MaterialTheme.typography.bodySmall,
-                color = GrowthColors.InkSoft,
-            )
-            if (directive.optString("expectedResponse") == "tap_image") {
-                Text("这一轮先听老师说，再用声音或文字回应。", color = GrowthColors.InkSoft)
-            }
-            if (speechStatus.isNotBlank()) Text(speechStatus, color = GrowthColors.InkSoft)
-            GrowthSecondaryButton(
-                if (speechBusy) "老师正在说话" else "再听单词",
-                onReplay,
-                emoji = "🔤",
-                enabled = !speechBusy && !recording && !busy,
-            )
-            GrowthSecondaryButton(
-                "听老师完整讲解",
-                onExplain,
-                emoji = "🧑‍🏫",
-                enabled = !speechBusy && !recording && !busy,
-            )
-            GrowthPill("本课小练习 $done / $target", GrowthColors.MintDeep, GrowthColors.MintWash, emoji = "🌱")
-            if (done < target) {
-                Text(
-                    "还差 ${target - done} 次小练习。慢慢来，每次只练一点点。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = GrowthColors.InkSoft,
-                )
-            }
-            GrowthTextField(responseText, onText, "试着拼一拼，或者回答老师", leadingEmoji = "✍️")
-            GrowthSecondaryButton(
-                if (recording) "停止并提交录音" else "开始跟读",
-                onRecord,
-                emoji = "🎙️",
-                enabled = !busy,
-            )
-            if (recordingSaved) GrowthSecondaryButton("回放我的录音", onPlayRecording, emoji = "🔊", enabled = !recording && !busy)
-            GrowthPrimaryButton("提交这次回应", onSubmit, emoji = "📨", enabled = !busy)
-            GrowthSecondaryButton(
-                if (done >= target) "完成本课" else "练满 $target 次后完成本课",
-                onFinish,
-                emoji = "🏁",
-                enabled = !busy && done >= target,
-            )
-        }
-        finish?.let {
-            GrowthCard(
-                modifier = Modifier.fillMaxWidth(),
-                fill = GrowthColors.SunWash,
-                outline = GrowthColors.Sun.copy(alpha = 0.28f),
-            ) {
-                Text("这节课完成啦！", style = MaterialTheme.typography.headlineMedium, color = GrowthColors.Ink)
-                Text("今天又练习了一点，休息一下，下次继续 🌿", color = GrowthColors.InkSoft)
-            }
-        }
-    } else {
+        GrowthPrimaryButton("开始学习", onStart, emoji = "✨", enabled = !busy, busy = busy)
         GrowthCard(
             modifier = Modifier.fillMaxWidth(),
             fill = GrowthColors.SunWash,
@@ -999,9 +945,142 @@ private fun LearnScreen(
                 }
             }
         }
+        if (status.isNotBlank()) GrowthStatusPill(status)
+        return
+    }
+
+    val target = directive.optInt("pronunciationTarget", 3).coerceIn(1, 5)
+    val passes = directive.optInt("pronunciationPasses", 0).coerceIn(0, target)
+    val word = directive.optJSONArray("targetWords")?.optString(0)?.takeIf { it.isNotBlank() }
+        ?: directive.optString("demonstrationText")
+    var showUsage by rememberSaveable(word) { mutableStateOf(false) }
+
+    GrowthCard(modifier = Modifier.fillMaxWidth()) {
+        GrowthSectionTitle(
+            if (lessonTopic.isBlank()) "今天的课堂" else "今天的课堂 · $lessonTopic",
+            "📖",
+        )
+        PronunciationCard(
+            directive = directive,
+            speaking = speechBusy && speechStatus.contains("正在读单词"),
+            progress = wordProgress,
+        )
+
+        if (passes < target) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GrowthSecondaryButton(
+                    "重听发音",
+                    onReplay,
+                    modifier = Modifier.weight(1f),
+                    emoji = "🔊",
+                    enabled = !speechBusy && !recording && !busy,
+                )
+                GrowthSecondaryButton(
+                    "重听讲解",
+                    onExplain,
+                    modifier = Modifier.weight(1f),
+                    emoji = "🧑‍🏫",
+                    enabled = !speechBusy && !recording && !busy,
+                )
+            }
+            HoldToSpeakButton(
+                recording = recording,
+                enabled = !busy && !speechBusy,
+                onPress = { onRecord(true) },
+                onRelease = { onRecord(false) },
+            )
+            Text(
+                "跟读 $passes / $target",
+                style = MaterialTheme.typography.titleMedium,
+                color = GrowthColors.MintDeep,
+            )
+            if (speechStatus.isNotBlank()) {
+                Text(speechStatus, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+            }
+        } else if (!showUsage) {
+            PhonicsStep(word)
+            GrowthPrimaryButton("知道啦，看看怎么用", { showUsage = true }, emoji = "💡")
+        } else {
+            UsageStep(directive)
+            GrowthPrimaryButton("完成本课", onFinish, emoji = "🏁", enabled = !busy)
+        }
+    }
+
+    finish?.let {
+        GrowthCard(
+            modifier = Modifier.fillMaxWidth(),
+            fill = GrowthColors.SunWash,
+            outline = GrowthColors.Sun.copy(alpha = 0.28f),
+        ) {
+            Text("这节课完成啦！", style = MaterialTheme.typography.headlineMedium, color = GrowthColors.Ink)
+            Text("今天又练习了一点，休息一下，下次继续 🌿", color = GrowthColors.InkSoft)
+        }
     }
     if (status.isNotBlank()) GrowthStatusPill(status)
 }
+
+@Composable
+private fun HoldToSpeakButton(
+    recording: Boolean,
+    enabled: Boolean,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val active = pressed || recording
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .clip(GrowthShapes.Button)
+            .background(if (active) GrowthColors.Primary.copy(alpha = 0.78f) else GrowthColors.Primary)
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        onPress()
+                        tryAwaitRelease()
+                        pressed = false
+                        onRelease()
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (active) "松开，老师听听" else "按住跟读",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+        )
+    }
+}
+
+@Composable
+private fun PhonicsStep(word: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("为什么这样读", style = MaterialTheme.typography.titleMedium, color = GrowthColors.MintDeep)
+        WordPhonics.parts(word).forEach { (chunk, sound) ->
+            Text("$chunk 发 $sound", style = MaterialTheme.typography.bodyLarge, color = GrowthColors.Ink)
+        }
+    }
+}
+
+@Composable
+private fun UsageStep(directive: JSONObject) {
+    val usage = directive.optString("usageNoteZh").takeIf { it.isNotBlank() && it != "null" }
+    val exampleEn = directive.optString("exampleSentenceEn").takeIf { it.isNotBlank() && it != "null" }
+    val exampleZh = directive.optString("exampleSentenceZh").takeIf { it.isNotBlank() && it != "null" }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("什么时候用", style = MaterialTheme.typography.titleMedium, color = GrowthColors.MintDeep)
+        if (usage != null) Text(usage, style = MaterialTheme.typography.bodyLarge, color = GrowthColors.Ink)
+        if (exampleEn != null) {
+            Text(exampleEn, style = MaterialTheme.typography.titleMedium, color = GrowthColors.BlueDeep)
+            if (exampleZh != null) Text(exampleZh, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+        }
+    }
+}
+
 
 /**
  * 老师讲解卡：先帮孩子建立“这个词是什么意思、什么时候用”的意义联系，
@@ -1043,7 +1122,7 @@ private fun TeacherWordExplanation(directive: JSONObject) {
  * 发音卡进入“正在朗读”状态为准，不伪造逐字母跳动的时间轴。
  */
 @Composable
-private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
+private fun PronunciationCard(directive: JSONObject, speaking: Boolean, progress: Float) {
     val targetWords = directive.optJSONArray("targetWords")
     val word = (0 until (targetWords?.length() ?: 0))
         .mapNotNull { index -> targetWords?.optString(index)?.trim()?.takeIf { it.isNotBlank() } }
@@ -1065,7 +1144,6 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
             ?.filter { it.isLetter() }
             ?.takeIf { it.isNotBlank() }
     }
-    // 服务端只给出音节级重点；把它映射到对应字母，孩子看到的是“哪几个字母要多练”。
     val focusIndexes = mutableSetOf<Int>()
     var searchFrom = 0
     focusTexts.forEach { focus ->
@@ -1075,45 +1153,75 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
             searchFrom = at + focus.length
         }
     }
+    val meaning = directive.optString("wordMeaningZh").takeIf { it.isNotBlank() && it != "null" }
+    val highlightedWord = (displayWord.length * progress.coerceIn(0f, 1f)).roundToInt()
+    val ipaText = if (ipa.isBlank()) "" else "/$ipa/"
+    val highlightedIpa = (ipaText.length * progress.coerceIn(0f, 1f)).roundToInt()
+    val highlightedLetters = (letters.size * progress.coerceIn(0f, 1f)).roundToInt()
 
     GrowthCard(
         modifier = Modifier.fillMaxWidth(),
-        fill = if (speaking) GrowthColors.PrimaryWash else GrowthColors.SunWash,
-        outline = (if (speaking) GrowthColors.Primary else GrowthColors.Sun).copy(alpha = 0.30f),
+        fill = if (speaking) GrowthColors.PrimaryWash else GrowthColors.BlueWash,
+        outline = (if (speaking) GrowthColors.Primary else GrowthColors.Blue).copy(alpha = 0.24f),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             GrowthSectionTitle("发音卡", "🔤")
             Spacer(Modifier.weight(1f))
             GrowthPill(
-                if (speaking) "正在朗读" else "跟读",
-                if (speaking) GrowthColors.PrimaryDeep else GrowthColors.SunDeep,
-                if (speaking) GrowthColors.PrimaryWash else GrowthColors.SunWash,
+                if (speaking) "正在朗读" else "听一听",
+                if (speaking) GrowthColors.PrimaryDeep else GrowthColors.BlueDeep,
+                if (speaking) GrowthColors.PrimaryWash else GrowthColors.BlueWash,
                 emoji = if (speaking) "🔊" else "👂",
             )
         }
-        Text(word, style = MaterialTheme.typography.displayMedium, color = GrowthColors.Ink)
-        if (ipa.isNotBlank()) {
-            Text("/" + ipa + "/", style = MaterialTheme.typography.headlineMedium, color = GrowthColors.BlueDeep)
+        Text(
+            buildAnnotatedString {
+                displayWord.forEachIndexed { index, ch ->
+                    if (index < highlightedWord) {
+                        withStyle(SpanStyle(color = Color(0xFFD64545))) { append(ch) }
+                    } else {
+                        append(ch)
+                    }
+                }
+            },
+            style = MaterialTheme.typography.displayMedium,
+            color = GrowthColors.Ink,
+        )
+        if (ipaText.isNotBlank()) {
+            Text(
+                buildAnnotatedString {
+                    ipaText.forEachIndexed { index, ch ->
+                        if (index < highlightedIpa) {
+                            withStyle(SpanStyle(color = Color(0xFFD64545))) { append(ch) }
+                        } else {
+                            append(ch)
+                        }
+                    }
+                },
+                style = MaterialTheme.typography.headlineMedium,
+                color = GrowthColors.BlueDeep,
+            )
         }
         if (letters.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 letters.forEachIndexed { index, letter ->
+                    val spoken = index < highlightedLetters
                     val focus = index in focusIndexes
                     val tint = when {
+                        spoken -> Color(0xFFD64545)
                         focus -> GrowthColors.SunDeep
-                        speaking -> GrowthColors.PrimaryDeep
                         else -> GrowthColors.BlueDeep
                     }
                     val wash = when {
+                        spoken -> Color(0x14D64545)
                         focus -> GrowthColors.SunWash
-                        speaking -> GrowthColors.PrimaryWash
                         else -> GrowthColors.BlueWash
                     }
                     Box(
                         Modifier
                             .clip(GrowthShapes.Pill)
                             .background(wash)
-                            .border(1.dp, tint.copy(alpha = 0.35f), GrowthShapes.Pill)
+                            .border(1.dp, tint.copy(alpha = 0.30f), GrowthShapes.Pill)
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1122,18 +1230,8 @@ private fun PronunciationCard(directive: JSONObject, speaking: Boolean) {
                 }
             }
         }
-        Text(
-            if (speaking) "老师正在读：眼睛跟着字母和音标，听完再跟读一遍。"
-            else "先看字母，再听音标，最后自己读一遍。",
-            style = MaterialTheme.typography.bodySmall,
-            color = GrowthColors.InkSoft,
-        )
-        if (focusIndexes.isNotEmpty()) {
-            Text(
-                "黄色字母是这次要多练的部分。",
-                style = MaterialTheme.typography.bodySmall,
-                color = GrowthColors.SunDeep,
-            )
+        if (meaning != null) {
+            Text("中文意思：$meaning", style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
         }
     }
 }

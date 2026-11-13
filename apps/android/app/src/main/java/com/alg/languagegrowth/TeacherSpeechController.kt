@@ -218,6 +218,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         directive: JSONObject,
         speech: JSONObject?,
         onState: (Boolean, String) -> Unit,
+        onProgress: ((Float) -> Unit)? = null,
     ) {
         val word = targetWordOf(directive)
         if (word.isBlank()) {
@@ -239,7 +240,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
             try {
                 if (cachedWordKey == word && cachedWordParts.isNotEmpty() && cachedWordParts.all { it.first.isFile }) {
                     emit(true, "正在读单词…")
-                    playParts(cachedWordParts)
+                    playParts(cachedWordParts, onProgress)
                     emit(false, "单词发音播放完毕，可以再听")
                     return@launch
                 }
@@ -279,7 +280,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                     }
                     val downloaded = listOf(file to rateOf(cached))
                     emit(true, "正在读单词…")
-                    playParts(downloaded)
+                    playParts(downloaded, onProgress)
                     withContext(Dispatchers.IO) {
                         http(
                             base, "/speech/quota/settle", "POST",
@@ -308,7 +309,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 }
                 val downloaded = listOf(file to rateOf(audio))
                 emit(true, "正在读单词…")
-                val durationMs = playParts(downloaded)
+                val durationMs = playParts(downloaded, onProgress)
                 withContext(Dispatchers.IO) {
                     http(
                         base, "/speech/quota/settle", "POST",
@@ -410,19 +411,28 @@ internal class TeacherSpeechController(private val cacheDir: File) {
     }
 
     /** 顺序播放全部片段，返回累计时长（毫秒）。 */
-    private suspend fun playParts(parts: List<Pair<File, Float>>): Int = withTimeout(540_000) {
+    private suspend fun playParts(
+        parts: List<Pair<File, Float>>,
+        onProgress: ((Float) -> Unit)? = null,
+    ): Int = withTimeout(540_000) {
         var total = 0
-        for ((file, rate) in parts) total += playFile(file, rate)
+        for ((file, rate) in parts) total += playFile(file, rate, onProgress)
         total
     }
 
-    private suspend fun playFile(file: File, rate: Float): Int = suspendCancellableCoroutine { continuation ->
+    private suspend fun playFile(
+        file: File,
+        rate: Float,
+        onProgress: ((Float) -> Unit)? = null,
+    ): Int = suspendCancellableCoroutine { continuation ->
         val created = MediaPlayer()
         player = created
         var released = false
+        var progressJob: Job? = null
         fun cleanup() {
             if (released) return
             released = true
+            progressJob?.cancel()
             created.runCatching { if (isPlaying) stop() }
             created.release()
             if (player === created) player = null
@@ -436,6 +446,17 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         created.setOnPreparedListener {
             try {
                 if (rate != 1f) it.playbackParams = it.playbackParams.setSpeed(rate)
+                if (onProgress != null) {
+                    progressJob = scope.launch {
+                        while (true) {
+                            val duration = runCatching { it.duration }.getOrDefault(0)
+                            if (duration > 0) {
+                                onProgress((it.currentPosition.toFloat() / duration).coerceIn(0f, 1f))
+                            }
+                            kotlinx.coroutines.delay(40)
+                        }
+                    }
+                }
                 it.start()
             } catch (e: Exception) {
                 cleanup()
@@ -444,6 +465,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         }
         created.setOnCompletionListener {
             val duration = it.duration
+            onProgress?.invoke(1f)
             cleanup()
             if (continuation.isActive) continuation.resume(duration)
         }
