@@ -17,6 +17,7 @@ import { resolveLiveServices, resolveTtsProtocol } from '@alg/ai-provider-sdk';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
 import { AuthService, extractBearerToken } from '../auth/auth.service';
+import { PronunciationCoachService } from '../agents/pronunciation-coach.service';
 
 /**
  * 直连 synthesize / cache/lookup 的可选课程作用域。
@@ -55,6 +56,10 @@ const evaluateSchema = z.object({
   granularity: z.enum(['word', 'syllable', 'phoneme']).default('phoneme'),
   /** 可选课堂会话；提供时校验归属，用于按课程归集发音成本。 */
   lessonSessionId: z.string().min(1).max(100).optional(),
+  /** 同一目标文本上一次的得分，仅用于生成“比上次进步了什么”的讲解。 */
+  previousScore: z.number().min(0).max(100).nullable().optional(),
+  /** 这是本轮第几次尝试（从 1 开始）。 */
+  attemptIndex: z.number().int().min(1).max(50).optional(),
 });
 
 @Controller('api/v1/speech')
@@ -64,6 +69,7 @@ export class SpeechController {
     @Inject(ModelRouterImpl) private readonly router: ModelRouterImpl,
     @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
     @Inject(AuthService) private readonly auth: AuthService,
+    @Inject(PronunciationCoachService) private readonly pronunciationCoach: PronunciationCoachService,
   ) {}
 
   @Post('synthesize')
@@ -224,7 +230,21 @@ export class SpeechController {
       pronunciationCalls: 1,
       latencyMs: result.latencyMs,
     });
-    return result;
+    // 分数本身不构成教学：把这次分数、错误单元和上一次分数交给文本模型，
+    // 生成“哪里进步了 / 这次怎么改 / 再读一次”的口头反馈。
+    // 模型失败只回退文案，不影响分数与证据。
+    const coaching = await this.pronunciationCoach.createCorrection({
+      learnerId,
+      lessonSessionId,
+      targetText: parsed.data.targetText,
+      score: result.score ?? null,
+      errorUnits: (result.units ?? [])
+        .filter((unit) => !unit.correct)
+        .map((unit) => ({ unit: unit.text, kind: unit.kind, detail: unit.detail ?? null })),
+      previousScore: parsed.data.previousScore ?? null,
+      attemptIndex: parsed.data.attemptIndex ?? 1,
+    });
+    return { ...result, coaching };
   }
 
   private async optionalLessonSessionId(

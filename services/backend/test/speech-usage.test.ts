@@ -104,6 +104,16 @@ function makeHarness(input: {
       router as never,
       quota as never,
       auth as never,
+      // 发音教练只负责“怎么说”，不影响评分与账本；这里用直给文案的桩。
+      {
+        createCorrection: async () => ({
+          displayText: '再读一次试试吧。',
+          progress: '',
+          advice: '',
+          encouragement: '再读一次试试吧。',
+          fromModel: false,
+        }),
+      } as never,
     ),
     usage,
     checkedSessions,

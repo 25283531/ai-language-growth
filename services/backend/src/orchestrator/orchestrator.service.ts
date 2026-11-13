@@ -194,6 +194,9 @@ export class OrchestratorService {
       ...selectFollowUpSkillNodeIds(previousSnapshot?.evidenceBySkill ?? []),
       ...(previousSnapshot?.nextFocusSkillNodeIds ?? []),
     ])).slice(0, 5);
+    // 结课推进：上一节课已经做完的活动不能在新课里原样再派一次。
+    // 跨课续学只允许“同一能力换一个活动巩固”，否则孩子会觉得课程没往前走。
+    const recentCompletedActivityIds = await this.recentCompletedActivityIds(input.learnerId);
     const session = await this.prisma.lesson_sessions.create({
       data: {
         learnerId: input.learnerId,
@@ -214,6 +217,14 @@ export class OrchestratorService {
     });
 
     const step = await this.planner.planNext({
+      topicId,
+      learnerId: input.learnerId,
+      lessonSessionId: session.id,
+      excludeActivityIds: recentCompletedActivityIds,
+      followUpSkillNodeIds,
+    }) ?? await this.planner.planNext({
+      // 主题内所有活动都刚做过（例如只有一个活动的主题）时才允许重复，
+      // 保证孩子不会因为“课程推进”而拿到空白页。
       topicId,
       learnerId: input.learnerId,
       lessonSessionId: session.id,
@@ -442,6 +453,11 @@ export class OrchestratorService {
     // 示范/纠错后的成功可以形成 forming，但绝不能记成独立样本（R2/R6）。
     const promptedAttempt = state.methodLadder.consecutiveFailures > 0
       || state.methodLadder.current !== 'method_slow_clear';
+    // 先取本轮之前的同活动成绩，供教练做“比上次进步了没有”的对比；
+    // 必须在写本次证据之前取，否则拿到的就是这一轮自己的分数。
+    const previousPronunciationScore = currentActivity
+      ? await this.latestPronunciationScore(input.learnerId, currentActivity.id)
+      : null;
     const assessment = await this.assess({
       response: input.response,
       activity: currentActivity,
@@ -458,6 +474,7 @@ export class OrchestratorService {
           targetText: currentActivity.targetWords[0] ?? '',
           score: assessment.score,
           errorUnits: assessment.errorUnits,
+          previousScore: previousPronunciationScore,
         })
       : null;
     const passiveActivityCompleted = isPassiveActivity(currentActivity!.taskType) &&
@@ -2182,6 +2199,52 @@ export class OrchestratorService {
         latencyMs: outcome.latencyMs,
       },
     };
+  }
+
+  /**
+   * 上一节已完成课程里出现过的活动。
+   *
+   * 结课后再开课，Planner 的“跨课续学”会优先把未达标能力再练一遍；如果同一活动
+   * 原样回来（同一个词、同一张卡片），孩子感受到的就是“课程没往前走”。这里把
+   * 刚做完的活动排除掉，让续学只能换活动，换不了才允许重复。
+   */
+  /**
+   * 同一活动最近一次发音成绩（不含本轮）。
+   * 用于让教练能说出“比上次进步了几分”，没有历史时返回 null。
+   */
+  private async latestPronunciationScore(learnerId: string, learningItemId: string): Promise<number | null> {
+    const row = await this.prisma.learning_evidence.findFirst({
+      where: {
+        learnerId,
+        learningItemId,
+        source: 'pronunciation_api',
+        score: { not: null },
+      },
+      orderBy: { occurredAt: 'desc' },
+      select: { score: true },
+    });
+    return typeof row?.score === 'number' ? row.score : null;
+  }
+
+  private async recentCompletedActivityIds(learnerId: string): Promise<string[]> {
+    const lastFinished = await this.prisma.lesson_sessions.findFirst({
+      where: { learnerId, status: 'finished' },
+      orderBy: { finishedAt: 'desc' },
+      select: { id: true },
+    });
+    if (!lastFinished) return [];
+    const rows = await this.prisma.learning_evidence.findMany({
+      where: {
+        learnerId,
+        lessonSessionId: lastFinished.id,
+        learningItemId: { not: null },
+      },
+      select: { learningItemId: true },
+      distinct: ['learningItemId'],
+    });
+    return rows
+      .map((row) => row.learningItemId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
   }
 
   private getRuntime(sessionId: string): SessionRuntimeState {
