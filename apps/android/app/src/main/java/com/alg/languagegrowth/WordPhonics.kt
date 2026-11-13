@@ -47,8 +47,40 @@ internal object WordPhonics {
         "this" to "ðɪs",
     )
 
+    /** 字母组合与发音的对应关系；只给已确认的 M1 词，不猜未收录的词。 */
+    private val partsMap = mapOf(
+        "hello" to listOf("h" to "h", "e" to "ə", "ll" to "l", "o" to "oʊ"),
+        "hi" to listOf("h" to "h", "i" to "aɪ"),
+        "bye" to listOf("b" to "b", "y" to "aɪ", "e" to "不发音"),
+        "goodbye" to listOf("good" to "ɡʊd", "b" to "b", "y" to "aɪ", "e" to "不发音"),
+        "yes" to listOf("y" to "j", "e" to "e", "s" to "s"),
+        "no" to listOf("n" to "n", "o" to "oʊ"),
+        "name" to listOf("n" to "n", "a" to "eɪ", "me" to "m（e 不发音）"),
+        "nice" to listOf("n" to "n", "i" to "aɪ", "c" to "s", "e" to "不发音"),
+        "nine" to listOf("n" to "n", "i" to "aɪ", "n" to "n", "e" to "不发音"),
+        "like" to listOf("l" to "l", "i" to "aɪ", "k" to "k", "e" to "不发音"),
+        "meet" to listOf("m" to "m", "ee" to "iː", "t" to "t"),
+        "green" to listOf("g" to "ɡ", "r" to "r", "ee" to "iː", "n" to "n"),
+        "please" to listOf("p" to "p", "l" to "l", "ea" to "iː", "se" to "z"),
+        "thank you" to listOf("th" to "θ", "ank" to "æŋk", "y" to "j", "ou" to "uː"),
+        "sorry" to listOf("s" to "s", "o" to "ɑː", "rr" to "r", "y" to "i"),
+        "apple" to listOf("a" to "æ", "pp" to "p", "le" to "l"),
+        "banana" to listOf("ba" to "bə", "na" to "nɑː", "na" to "nə"),
+        "cat" to listOf("c" to "k", "a" to "æ", "t" to "t"),
+        "dog" to listOf("d" to "d", "o" to "ɔː", "g" to "ɡ"),
+        "book" to listOf("b" to "b", "oo" to "ʊ", "k" to "k"),
+        "red" to listOf("r" to "r", "e" to "e", "d" to "d"),
+        "blue" to listOf("bl" to "bl", "ue" to "uː"),
+        "friend" to listOf("fr" to "fr", "ie" to "e", "nd" to "nd"),
+    )
+
     fun of(word: String): String {
         val key = word.trim().trim('.', ',', '!', '?', '"', '\'').lowercase()
         return ipa[key].orEmpty()
+    }
+
+    fun parts(word: String): List<Pair<String, String>> {
+        val key = word.trim().trim('.', ',', '!', '?', '"', '\'').lowercase()
+        return partsMap[key] ?: listOf(key to "按音节慢慢读")
     }
 }

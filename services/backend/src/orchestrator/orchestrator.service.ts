@@ -72,6 +72,9 @@ const OFFLINE_DIRECTIVE: TeachingDirective = {
   exampleSentenceEn: 'Hello! I am Anna.',
   exampleSentenceZh: '你好！我是安娜。',
   practiceTarget: 3,
+  pronunciationTarget: 3,
+  pronunciationPasses: 0,
+  coachingText: null,
   voice: {
     teacherSpeed: 0.5,
     voiceStyle: 'gentle',
@@ -92,6 +95,8 @@ interface SessionRuntimeState {
   turnCount: number;
   /** 本堂课已完成的活动 */
   completedActivities: string[];
+  /** 当前词已通过的发音次数 */
+  pronunciationPasses: number;
   /** 连续成功次数，用于复习间隔调整 */
   consecutiveSuccesses: Record<string, number>;
 }
@@ -204,6 +209,7 @@ export class OrchestratorService {
       turnCount: 0,
       completedActivities: [],
       consecutiveSuccesses: {},
+      pronunciationPasses: 0,
     });
 
     const step = await this.planner.planNext({
@@ -331,12 +337,16 @@ export class OrchestratorService {
     if (session.methodState && typeof session.methodState === 'object') {
       const persistedState = session.methodState as unknown as MethodLadderState & {
         completedActivities?: string[];
+        pronunciationPasses?: number;
       };
-      const { completedActivities, ...methodLadder } = persistedState;
+      const { completedActivities, pronunciationPasses, ...methodLadder } = persistedState;
       state.methodLadder = methodLadder as MethodLadderState;
       state.completedActivities = Array.isArray(persistedState.completedActivities)
         ? persistedState.completedActivities
         : [];
+      state.pronunciationPasses = Number.isFinite(pronunciationPasses)
+        ? Number(pronunciationPasses)
+        : 0;
     }
     const activityId = session.currentActivityId;
     const activity = activityId
@@ -518,9 +528,20 @@ export class OrchestratorService {
 
     // —— 第七步：决定是否结束本堂课 ——
     state.turnCount += 1;
-    const activityCompleted = assessment.evaluated
-      ? assessment.passed
-      : passiveActivityCompleted;
+    // 发音达标才累计“有效跟读”；未达标只走纠音，不推进。
+    if (assessment.performedPronunciationAssessment && assessment.passed) {
+      state.pronunciationPasses += 1;
+    }
+    const pronunciationPractice = ['word_mimicry', 'pronunciation_drill'].includes(
+      currentActivity?.taskType ?? '',
+    );
+    // 发音活动不自动跳到下一个词：先在同一个词上练满跟读，
+    // 再由客户端进入拼读讲解和应用场景。
+    const activityCompleted = pronunciationPractice
+      ? false
+      : assessment.evaluated
+        ? assessment.passed
+        : passiveActivityCompleted;
     if (activityCompleted) {
       if (!state.completedActivities.includes(currentActivity!.id)) {
         state.completedActivities.push(currentActivity!.id);
@@ -564,6 +585,7 @@ export class OrchestratorService {
       errorUnits: outputErrorUnits,
       isReview: outputIsReview,
       coachingText: outputCoachingText,
+      pronunciationPasses: state.pronunciationPasses,
     });
 
     // 普通提问/闲聊已在评估前单独处理；学习回合不额外调用对话模型。
@@ -612,6 +634,7 @@ export class OrchestratorService {
 
     const persistedMethodState = Object.assign({}, state.methodLadder, {
       completedActivities: state.completedActivities,
+      pronunciationPasses: state.pronunciationPasses,
     });
     await this.prisma.lesson_sessions.update({
       where: { id: input.lessonSessionId },
@@ -1840,6 +1863,8 @@ export class OrchestratorService {
     isReview: boolean;
     /** 发音纠正模型生成的一句引导；为空时使用发布态教师话语。 */
     coachingText?: string | null;
+    /** 当前词已通过的发音次数；达标后客户端进入拼读讲解。 */
+    pronunciationPasses?: number;
   }): Promise<{ directive: TeachingDirective; scopeSeed: DirectiveScopeSeed }> {
     const item = await this.prisma.learning_items.findUnique({
       where: { id: input.activityId },
@@ -1963,6 +1988,9 @@ export class OrchestratorService {
       // 一课至少陪孩子练满 5 轮：先听懂，再跟读，再换词/看图/用起来。
       // 客户端上限也是 5，避免一节课只做一个活动就结束。
       practiceTarget: 5,
+      pronunciationTarget: 3,
+      pronunciationPasses: input.pronunciationPasses ?? 0,
+      coachingText: input.coachingText ?? null,
       voice: {
         teacherSpeed,
         voiceStyle: adjustable.tone === 'lively' ? 'encouraging' : adjustable.tone === 'calm' ? 'warm' : 'gentle',
@@ -2151,6 +2179,7 @@ export class OrchestratorService {
         turnCount: 0,
         completedActivities: [],
         consecutiveSuccesses: {},
+        pronunciationPasses: 0,
       };
       this.runtime.set(sessionId, state);
     }
