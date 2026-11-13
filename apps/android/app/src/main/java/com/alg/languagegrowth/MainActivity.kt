@@ -280,8 +280,8 @@ private fun GrowthApp(
         speechStatus = ""
         wordProgress = 0f
         if (loggedIn && learnerId.isNotBlank() && tab == "learn" && screen == "tabs" && directive != null && finishResult == null) {
-            // 发音没读准时先听一句针对性纠正；读对了只读单词，界面保持安静。
-            if (!directive?.optString("coachingText").isNullOrBlank()) playTeacher() else replayWord()
+            // 进入课堂先听单词；发音纠正文字已显示在卡片里，完整讲解由按钮触发。
+            replayWord()
         }
     }
 
@@ -521,7 +521,6 @@ private fun GrowthApp(
                         })
                         "learn" -> LearnScreen(
                             directive, finishResult, recording, busy, pageStatus,
-                            lessonTopic = lessonTopic,
                             wordProgress = wordProgress,
                             onStart = ::startSession,
                             speechBusy = speechBusy,
@@ -543,12 +542,18 @@ private fun GrowthApp(
                                                     recordingStartedAt = System.currentTimeMillis()
                                                     recording = true
                                                     pageStatus = ""
-                                                } catch (e: Exception) { pageStatus = e.message ?: "无法开始录音" }
+                                                } catch (e: Exception) { pageStatus = "录音没有开始，再按住试一次" }
                                             }
                                         }
                                     } else if (recording) {
+                                        val path = try {
+                                            activity.stopRecording().first
+                                        } catch (e: Exception) {
+                                            recording = false
+                                            pageStatus = "这次录音没有保存好，再按住试一次"
+                                            return@launch
+                                        }
                                         try {
-                                            val (path, _) = activity.stopRecording()
                                             recording = false
                                             recordingSaved = true
                                             val durationMs = System.currentTimeMillis() - recordingStartedAt
@@ -578,7 +583,7 @@ private fun GrowthApp(
                                                     }
                                                 }
                                             }
-                                            pageStatus = e.message ?: "录音提交失败"
+                                            pageStatus = "录音提交失败"
                                         }
                                     }
                                 }
@@ -911,7 +916,7 @@ private fun HomeScreen(data: JSONObject?, childTheme: Boolean, status: String, o
 @Composable
 private fun LearnScreen(
     directive: JSONObject?, finish: JSONObject?, recording: Boolean,
-    busy: Boolean, status: String, lessonTopic: String,
+    busy: Boolean, status: String,
     wordProgress: Float,
     onStart: () -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
@@ -957,10 +962,6 @@ private fun LearnScreen(
     var showUsage by rememberSaveable(word) { mutableStateOf(false) }
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
-        GrowthSectionTitle(
-            if (lessonTopic.isBlank()) "今天的课堂" else "今天的课堂 · $lessonTopic",
-            "📖",
-        )
         PronunciationCard(
             directive = directive,
             speaking = speechBusy && speechStatus.contains("正在读单词"),
@@ -973,14 +974,12 @@ private fun LearnScreen(
                     "重听发音",
                     onReplay,
                     modifier = Modifier.weight(1f),
-                    emoji = "🔊",
                     enabled = !speechBusy && !recording && !busy,
                 )
                 GrowthSecondaryButton(
                     "重听讲解",
                     onExplain,
                     modifier = Modifier.weight(1f),
-                    emoji = "🧑‍🏫",
                     enabled = !speechBusy && !recording && !busy,
                 )
             }
