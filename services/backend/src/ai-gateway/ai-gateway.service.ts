@@ -200,17 +200,13 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       this.providerTimeouts.delete(alias);
     }
     const configs = (await this.providerConfigs.listEnabledRuntimeConfigs()).filter((item) => item.serviceKind === serviceKind);
-    const eligible: RuntimeProviderConfig[] = [];
-    if ((process.env.AI_GATEWAY_MODE ?? 'mock') === 'live') {
-      for (const config of configs) {
-        if (await this.providerConfigs.hasPassingBenchmark(config.serviceKind, config.modelAlias, config.id)) {
-          eligible.push(config);
-        } else {
-          this.logger.warn(`生产模式已跳过未通过 Benchmark 的模型：${config.serviceKind}/${config.id}`);
-        }
+    // 运营者在管理台显式启用的模型一律参与路由，不再以 Benchmark 结果做准入门槛。
+    // Benchmark 仅作为可观测信息记录：未通过时打一条提示，但仍会接真实流量。
+    const eligible: RuntimeProviderConfig[] = [...configs];
+    for (const config of eligible) {
+      if (!(await this.providerConfigs.hasPassingBenchmark(config.serviceKind, config.modelAlias, config.id))) {
+        this.logger.log(`模型未通过 Benchmark，按运营者配置继续使用：${config.serviceKind}/${config.id}`);
       }
-    } else {
-      eligible.push(...configs);
     }
     const enabled: RuntimeProviderConfig[] = [];
     if (eligible.length) {
