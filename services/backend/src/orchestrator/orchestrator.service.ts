@@ -193,9 +193,13 @@ export class OrchestratorService {
           select: { topicId: true },
         });
     const previousTopicId = previousSnapshot?.session?.topicId ?? previousFinishedSession?.topicId;
-    // 未指定主题时沿用最近完成课程的主题，让隔天重进真正延续教学上下文；
-    // Planner 仍会依据能力、复习和跨场景证据决定具体活动，不把主题顺序当成能力状态。
-    const topicId = input.topicId ?? previousTopicId ?? 'topic-greetings';
+    // 未指定主题时优先采用学习者档案里明确设定的当前主题（家/运营可指定下一阶段主题），
+    // 其次是最近完成课程的主题。Planner 仍会依据能力、复习和跨场景证据决定具体活动。
+    const profileTopicId = (await this.prisma.learner_profiles.findUnique({
+      where: { id: input.learnerId },
+      select: { currentTopic: true },
+    }))?.currentTopic;
+    const topicId = input.topicId ?? (profileTopicId || null) ?? previousTopicId ?? 'topic-greetings';
     const followUpSkillNodeIds = Array.from(new Set([
       ...selectFollowUpSkillNodeIds(previousSnapshot?.evidenceBySkill ?? []),
       ...(previousSnapshot?.nextFocusSkillNodeIds ?? []),
@@ -211,6 +215,14 @@ export class OrchestratorService {
         methodState: initialMethodLadderState() as unknown as object,
       },
     });
+
+    // 档案里的 currentTopic 是一次性的“下一节课主题指定”：开课即消费掉，
+    // 否则孩子会被永远锁在同一个主题里，规划器也失去了自适应空间。
+    if (!input.topicId && profileTopicId) {
+      await this.prisma.learner_profiles
+        .update({ where: { id: input.learnerId }, data: { currentTopic: null } })
+        .catch(() => undefined);
+    }
 
     this.runtime.set(session.id, {
       methodLadder: initialMethodLadderState(),
