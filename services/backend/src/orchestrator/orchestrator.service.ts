@@ -14,7 +14,7 @@
  *  - 教学决策全部在后端完成，客户端只渲染（约束一）。
  *  - 掌握状态由规则引擎根据证据计算，不由模型声称（约束三）。
  */
-import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import {
   advanceMethodLadder,
@@ -1918,9 +1918,18 @@ export class OrchestratorService {
     /** 当前词已通过的发音次数；达标后客户端进入拼读讲解。 */
     pronunciationPasses?: number;
   }): Promise<{ directive: TeachingDirective; scopeSeed: DirectiveScopeSeed }> {
-    const item = await this.prisma.learning_items.findUnique({
-      where: { id: input.activityId },
-    });
+    const item =
+      (await this.prisma.learning_items.findUnique({
+        where: { id: input.activityId },
+      })) ??
+      // 预置课程的 activityId 是内容里的 `${unitId}:${index}`，与行主键不同；
+      // planner / 客户端按这个稳定 id 传参，这里补一次 JSON 路径查找。
+      (await this.prisma.learning_items.findFirst({
+        where: { content: { path: ['id'], equals: input.activityId } },
+      }));
+    if (!item) {
+      throw new NotFoundException(`课程活动不存在: ${input.activityId}`);
+    }
     const activity = item?.content as unknown as {
       taskType: string;
       scenario: string;
@@ -2137,7 +2146,7 @@ export class OrchestratorService {
   async pregeneratePublicSpeech(input: { activityIds: string[]; learnerId: string }) {
     const results: Array<{
       activityId: string;
-      status: 'generated' | 'cached' | 'skipped_dynamic' | 'missing' | 'error';
+      status: 'generated' | 'cached' | 'skipped_dynamic' | 'missing' | 'error' | 'degraded';
       characters?: number;
       audioRef?: string;
       detail?: string;
@@ -2173,7 +2182,9 @@ export class OrchestratorService {
           lessonSessionId: '',
         });
         // 预生成同样消耗供应商字符，必须进账本；命中缓存的条目 characters=0 不重复计费。
-        if (speech.characters > 0) {
+        // 降级到 mock 不算生成成功：mock 是虚拟 URI、不落盘，给账本写字符只会污染用量。
+        const degradedToMock = speech.meta.providerAlias.startsWith('mock');
+        if (speech.characters > 0 && !degradedToMock) {
           await this.router.recordUsage(
             usageRecord({
               id: `usage-pregenerate-tts-${activityId}-${Date.now()}`,
@@ -2192,7 +2203,7 @@ export class OrchestratorService {
         }
         results.push({
           activityId,
-          status: speech.speech.cached ? 'cached' : 'generated',
+          status: degradedToMock ? 'degraded' : speech.speech.cached ? 'cached' : 'generated',
           characters: speech.characters,
           audioRef: speech.speech.audioRef ?? undefined,
         });
