@@ -78,8 +78,10 @@ jobs:
           cp -r "$SRC/espeak-ng-data" "$KOKORO_DIR/"
           du -sh "$KOKORO_DIR"
           # JNI 原生库同样在构建时拉取，避免 51MB 二进制进仓库。
+          # 版本必须 < 2.0.0：sherpa-onnx >= 2.0.0 已废弃并**忽略** --vits-data-dir，
+          # Piper 模型因此无法用内置 espeak 音素化（实测报 phoneme_codepoints is empty）。
           curl -fsSL -o /tmp/sherpa-android.tar.bz2 \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-android.tar.bz2
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.20/sherpa-onnx-v1.12.20-android.tar.bz2
           tar -xjf /tmp/sherpa-android.tar.bz2 -C /tmp
           mkdir -p apps/android/app/src/main/jniLibs
           cp -r /tmp/jniLibs/arm64-v8a /tmp/jniLibs/armeabi-v7a apps/android/app/src/main/jniLibs/
