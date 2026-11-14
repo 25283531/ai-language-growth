@@ -5,6 +5,7 @@ import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shar
 import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } from './protocol';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
 import { audioFingerprint } from './audio-fingerprint';
+import { splitByLanguage, tencentSpeedForSegment } from './language-speed';
 
 export interface TencentCloudSpeechOptions {
   alias: string;
@@ -84,32 +85,39 @@ export class TencentCloudTtsAdapter implements TtsAdapter {
     const started = Date.now();
     const codec = String(this.config.options?.codec ?? 'mp3');
     const voiceType = Number(this.config.options?.voiceType ?? 101001);
-    const speed = Math.max(-2, Math.min(2, Math.round(((request.voice.teacherSpeed ?? 0.65) - 0.65) * 2)));
     const sampleRate = Number(this.config.options?.sampleRate ?? 16000);
     const primaryLanguage = Number(this.config.options?.primaryLanguage ?? 1);
     const volume = Number(this.config.options?.volume ?? 0);
-    const result = await callTencent(this.config, 'TextToVoice', '2019-08-23', {
-      Text: request.text,
-      SessionId: `alg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      VoiceType: voiceType,
-      Codec: codec,
-      SampleRate: sampleRate,
-      PrimaryLanguage: primaryLanguage,
-      Speed: speed,
-      Volume: volume,
-    }, request.timeoutMs ?? 15000);
-    const audio = String(result.Audio ?? '');
-    if (!audio) throw new Error('腾讯云 TTS 未返回音频');
-    const bytes = Buffer.from(audio, 'base64');
+    // 慢速教学只针对英语：中英混排时按书写系统切段，英语段用慢速档位，中文段用自然语速。
+    const segments = splitByLanguage(request.text);
+    if (!segments.length) throw new Error('腾讯云 TTS 的文本为空');
+    const speeds = segments.map((segment) => tencentSpeedForSegment(segment, request.voice.teacherSpeed ?? 0.65));
+    const parts: Buffer[] = [];
+    for (const [index, segment] of segments.entries()) {
+      const result = await callTencent(this.config, 'TextToVoice', '2019-08-23', {
+        Text: segment.text,
+        SessionId: `alg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        VoiceType: voiceType,
+        Codec: codec,
+        SampleRate: sampleRate,
+        PrimaryLanguage: primaryLanguage,
+        Speed: speeds[index],
+        Volume: volume,
+      }, request.timeoutMs ?? 15000);
+      const audio = String(result.Audio ?? '');
+      if (!audio) throw new Error(`腾讯云 TTS 未返回音频（第 ${index + 1}/${segments.length} 段）`);
+      parts.push(Buffer.from(audio, 'base64'));
+    }
+    const bytes = Buffer.concat(parts);
     if (bytes.length < 128) throw new Error('腾讯云 TTS 返回音频过短');
     // 文件名指纹统一走共享纯函数：纳入课程作用域/音色版本/模型族、补齐
     // voiceStyle/pronunciationMode、移除 pauseAfterSentenceMs。不同课程同文本
     // 必得不同指纹；同一课程不同用户/时间得到相同指纹。
     const fingerprint = audioFingerprint(request, {
-      speed,
+      speed: speeds.join(','),
       voice: voiceType,
       modelAlias: this.config.modelAlias ?? '',
-      extra: [codec, sampleRate, primaryLanguage, volume, request.voiceIdentity, this.config.baseUrl],
+      extra: [codec, sampleRate, primaryLanguage, volume, request.voiceIdentity, this.config.baseUrl, 'lang-speed-v1'],
     });
     const dir = resolveAudioDir();
     mkdirSync(dir, { recursive: true });

@@ -5,6 +5,7 @@ import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } fr
 import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shared-contracts';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
 import { audioFingerprint } from './audio-fingerprint';
+import { iflytekSpeedForSegment, splitByLanguage } from './language-speed';
 
 export interface IflytekSpeechOptions {
   alias: string;
@@ -128,44 +129,50 @@ export class IflytekTtsAdapter implements TtsAdapter {
     const started = Date.now();
     const { apiKey = '', apiSecret = '', appId = '' } = this.config.credentials;
     if (!apiKey || !apiSecret || !appId) throw new Error('讯飞 TTS 需要 AppID、API Key 和 API Secret');
-    const speed = Math.max(0, Math.min(100, Math.round(((request.voice.teacherSpeed ?? 0.65) - 0.25) / 1.75 * 100)));
     const voice = String(this.config.options?.voice ?? request.voiceIdentity);
     const isSuperSmart = /\/v1\/private\//i.test(this.config.baseUrl);
-    const payload = JSON.stringify(isSuperSmart
-      ? {
-        header: { app_id: appId, status: 2 },
-        parameter: {
-          oral: {
-            oral_level: String(this.config.options?.oralLevel ?? 'mid'),
-            spark_assist: Number(this.config.options?.sparkAssist ?? 1),
-            remain: Number(this.config.options?.remain ?? 0),
-            stop_split: Number(this.config.options?.stopSplit ?? 0),
+    // 慢速教学只针对英语：中英混排时按书写系统切段，英语段放慢，中文段保持自然语速。
+    const segments = splitByLanguage(request.text);
+    if (!segments.length) throw new Error('讯飞 TTS 的文本为空');
+    const speeds = segments.map((segment) => iflytekSpeedForSegment(segment, request.voice.teacherSpeed ?? 0.65));
+    const parts: Buffer[] = [];
+    for (const [index, segment] of segments.entries()) {
+      const speed = speeds[index];
+      const payload = JSON.stringify(isSuperSmart
+        ? {
+          header: { app_id: appId, status: 2 },
+          parameter: {
+            oral: {
+              oral_level: String(this.config.options?.oralLevel ?? 'mid'),
+              spark_assist: Number(this.config.options?.sparkAssist ?? 1),
+              remain: Number(this.config.options?.remain ?? 0),
+              stop_split: Number(this.config.options?.stopSplit ?? 0),
+            },
+            tts: {
+              vcn: voice,
+              speed,
+              volume: 50,
+              pitch: 50,
+              bgs: 0,
+              reg: 0,
+              rdn: 0,
+              rhy: 0,
+              audio: { encoding: 'lame', sample_rate: 24000, channels: 1, bit_depth: 16, frame_size: 0 },
+            },
           },
-          tts: {
-            vcn: voice,
-            speed,
-            volume: 50,
-            pitch: 50,
-            bgs: 0,
-            reg: 0,
-            rdn: 0,
-            rhy: 0,
-            audio: { encoding: 'lame', sample_rate: 24000, channels: 1, bit_depth: 16, frame_size: 0 },
+          payload: {
+            text: {
+              encoding: 'utf8',
+              compress: 'raw',
+              format: 'plain',
+              status: 2,
+              seq: 0,
+              text: Buffer.from(segment.text).toString('base64'),
+            },
           },
-        },
-        payload: {
-          text: {
-            encoding: 'utf8',
-            compress: 'raw',
-            format: 'plain',
-            status: 2,
-            seq: 0,
-            text: Buffer.from(request.text).toString('base64'),
-          },
-        },
-      }
-      : { common: { app_id: appId }, business: { aue: 'lame', sfl: 1, tte: 'UTF8', vcn: voice, speed, volume: 50, pitch: 50 }, data: { status: 2, text: Buffer.from(request.text).toString('base64') } });
-    const bytes = Buffer.from(await connectAndSend(signedUrl(this.config.baseUrl, apiKey, apiSecret), payload, request.timeoutMs ?? 20000, (message) => {
+        }
+        : { common: { app_id: appId }, business: { aue: 'lame', sfl: 1, tte: 'UTF8', vcn: voice, speed, volume: 50, pitch: 50 }, data: { status: 2, text: Buffer.from(segment.text).toString('base64') } });
+      const chunk = Buffer.from(await connectAndSend(signedUrl(this.config.baseUrl, apiKey, apiSecret), payload, request.timeoutMs ?? 20000, (message) => {
       const header = message.header as { code?: number; message?: string; status?: number } | undefined;
       const code = header?.code ?? (typeof message.code === 'number' ? message.code : 0);
       const errorMessage = header?.message ?? message.message;
@@ -181,13 +188,16 @@ export class IflytekTtsAdapter implements TtsAdapter {
         ? (data as { seq: number }).seq
         : undefined;
       return { ...(encodedAudio ? { bytes: Buffer.from(encodedAudio, 'base64'), seq } : {}), ...(done ? { done: true } : {}) };
-    }));
+      }));
+      parts.push(chunk);
+    }
+    const bytes = Buffer.concat(parts);
     if (bytes.length < 128) throw new Error('讯飞 TTS 返回的音频数据为空或过短');
     // 文件名指纹统一走共享纯函数：纳入课程作用域/音色版本/模型族、补齐
     // voiceStyle/pronunciationMode、移除 pauseAfterSentenceMs。不同课程同文本
     // 必得不同指纹；同一课程不同用户/时间得到相同指纹。
     const fingerprint = audioFingerprint(request, {
-      speed,
+      speed: speeds.join(','),
       voice: this.config.options?.voice ?? request.voiceIdentity,
       modelAlias: this.config.modelAlias ?? '',
       // 超拟人/普通两套请求体结构不同，且 oral 参数会改变声学，纳入指纹。
@@ -198,6 +208,7 @@ export class IflytekTtsAdapter implements TtsAdapter {
         this.config.options?.sparkAssist ?? 1,
         this.config.options?.remain ?? 0,
         this.config.options?.stopSplit ?? 0,
+        'lang-speed-v1',
       ],
     });
     const dir = resolveAudioDir();

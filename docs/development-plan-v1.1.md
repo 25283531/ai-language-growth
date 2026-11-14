@@ -2,7 +2,7 @@
 
 > 依据：`docs/ai-language-growth-v1-1-design.pdf`、`../docs/taskbook-v1.1-extracted.txt`、`DECISIONS.md`。
 > 本文件只记录“设计承诺”和“当前代码事实”的差距，不把待办写成已完成。
-> 更新时间：2026-11-12。
+> 更新时间：2026-11-14（状态校正；上一版 2026-11-12）。
 
 ## 1. 本轮已关闭的差距
 
@@ -20,6 +20,15 @@
 | 图片/语音只在到达级别后预热 | `CurriculumWarmupService` 在仪表盘推导级别后异步触发；先按单词/短句/场景需求从 Openverse + Wikimedia Commons 搜索并缓存最优图，找不到记录 `missingImages` 供管理员上传，再生成 `PUBLIC_CURRICULUM` TTS；`AI_GATEWAY_MODE=mock` 跳过语音 | `curriculum-generator.test.ts` 覆盖未发布级别不生成媒体；真实图片搜索与真机/真实供应商待验证 |
 | 生产 Web 只读评估 | Web 默认关闭课堂预览与开课按钮；`startLesson` 在 `NEXT_PUBLIC_ENABLE_LESSON_START !== 'true'` 时直接拒绝；评估/证据/成本页保持可读；仅本地联调显式开启 | `web-evaluation-only.test.ts` 4/4 通过；生产 `next start` 首页 HTML 无开课按钮/课堂预览，含关闭态说明 |
 | 公共 TTS 音频按 TTL 与孤儿文件清理 | `TtsCacheMaintenanceService` 默认每 6 小时清理：删除已到期 `media_assets` 与 `.tts-*.json` 索引；仅删除无任何活跃数据库/索引引用且超过 7 天宽限期的顶层音频。`PUBLIC_CURRICULUM`/`PRONUNCIATION` 永不按 TTL 删除；索引损坏或数据库删除失败时跳过音频删除 | `tts-cache-maintenance.test.ts` 5/5 通过（过期、公共保留、双引用、损坏索引、数据库失败、幂等）；`tts-cache.test.ts` 增加命中率/合成字符数断言 |
+| 发音评估要定位到具体音素（2026-11-13） | `iflytek-ise.ts` 解析 `rec_paper` 到词/音节/音素三级（`total_score`、`phone_score`），并用 `dp_message` 标出错读/漏读/增读与 `is_rejected`；错误单元随回合下发到发音教练（最多 4 个），响应保留 `units` | 生产日志出现音素级提示（“先闭嘴唇说 b，再张大嘴说 ai”），非仅总分 |
+| 点评语言连贯（2026-11-13） | 模型返回的多句点评统一走 `joinCoachingSentences()` 补标点后再交给 TTS，避免整段连读 | `pronunciation-coach.service.ts` 模型分支与确定性 `displayText` 共用同一函数；线上 dist 已生效 |
+| 单词卡发音点评要有语音（2026-11-14） | `LearnScreen` 新增 `onSpeakCoaching` 与 `LaunchedEffect(coaching)`，单词卡点评复用句子页同一套 `teacherSpeech.play` | 已随 APK 0.0.6（versionCode 6）装机；真机听测需麦克风打分触发，尚未复测 |
+| 图片选择题要能真机点选（2026-11-14） | 新增活动 `act-obj-pick-pictures`（3 张 Commons 授权图 + `ATTRIBUTION.md`），契约加 `imageOptions`，编排器下发，Android 新增 `ImageChoiceStep` 与 `onPickImage` | 真机渲染三张图并点选成功；`learning_evidence` 落 `LA.VOCAB.receptive` 与 `LA.LISTEN.word_recognition` 两条、`succeeded/independent=true`、`score=100` |
+| 开课主题不能是死字段（2026-11-14，D-032） | 主题解析改为 参数 > `learner_profiles.currentTopic`（一次性指定，开课即清空）> 上一课主题 > 兜底；图片题的选项与目标词在复习场次同样下发 | 真机新课进入 `topic-objects-around` 并派到图片题 |
+| 主力 LLM 必须是真实模型（2026-11-14） | DeepSeek `DeepSeek-V4.1-Flash` 置为 `role=main`、priority 1，Qwen3-8B 降为 `role=small`；移除 Benchmark 对路由的门禁（只记日志） | live 证据：`llm.teaching_explanation | L2 | configured_llm_1e741885-…` |
+| TTS 供应商与音色（2026-11-14） | 接入腾讯云 TTS 并设为优先；音色由 101001（16k 基础音色）改为 601009 大模型音色 24k（用户试听后确认 B>C>A）；讯飞 TTS 保留为备选 | 真机课堂走 `tts.dynamic_teaching | L2 | tencent-tts`，24k 音频（34 字符 84,672 字节）；讯飞同句 p50 336ms vs 腾讯 1,124ms（近 2 天真实账本） |
+| 慢速教学只作用于英语（2026-11-14） | 新增 `packages/ai-provider-sdk/src/language-speed.ts`：按书写系统切段，英语段用慢速档位（腾讯档位 / 讯飞 0—100），中文段固定自然语速；腾讯 Speed 由近似公式改为档位映射 | `services/backend/test/tts-language-speed.test.ts` 6/6 通过；纯英文/纯中文仍是单段单次调用 |
+| 成本熔断不能被单条未计价调用整天打死（2026-11-14） | 腾讯 TTS 配置走 SQL 直插时绕过了 `syncModelCatalog`，缺 provider/model 行 → 用量行 `modelId` 为空 → 计入未计价 → 路由器整天降级 mock。已补齐目录与 `per_1000_chars` 价格并回填历史用量 | 账本恢复 `tencent-tts` L2 计费（0.00096 元/次），未计价计数归零 |
 
 ## 2. 仍未关闭的差距（按优先级）
 
@@ -27,14 +36,14 @@
 
 | # | 差距 | 现状 | 下一步任务 | 验收 |
 |---|---|---|---|---|
-| P0-1 | Android 未编译、未真机听测 | 本机无 JDK/Gradle/kotlinc；改动只在源码层 | 走 `android-client.yml` 编译 + 真机走一遍“录音→提交→回放→发音纠正” | CI 绿；真机能回放本地录音；服务端无 `uploads/` 新文件 |
+| P0-1 | Android 编译与真机课堂 | 已可编译并装机 APK 0.0.6（versionCode 6）；真机跑通“开课→图片题点选→证据落库→推进下一卡”；录音→提交→回放→发音纠正的整条闭环仍未在一次真机上走完，模拟器无法注入麦克风 | 走一次真实设备课堂录音闭环，核对 `learning_evidence` 与发音教练输出；CI 绿
 | P0-2 | 发音评分与掌握判定尚未用真实供应商校准 | 用户明确：真实录音校准只能在使用中观察，本轮不校准 | 保留为真实使用后的观察项；不把未校准分数单独当作 `mastered` 依据 | 用户决定，不阻塞本轮 |
 
 ### P1：影响产品闭环
 
 | # | 差距 | 现状 | 下一步任务 |
 |---|---|---|---|
-| P1-1 | 课程内容只有 M1 三主题/约 20 活动 | 已新增 CEFR 7 级预置课程：63 单元/1197 活动，含 25 核心词 + 5 拓展词、21 条日常用语/级；教材词表生成器与 3 个教材版本目录已接入 | 审核后按级别发布；真实媒体预热与真机听测继续 |
+| P1-1 | 课程内容只有 M1 三主题/约 20 活动 | CEFR 预置 7 级 1197 个活动**已全部 published**；M1 手工主题仍未发布：`topic-objects-around` 9 条仅 1 条发布，`topic-greetings` 6 条、`topic-self-introduction` 6 条全部待审 → 规划器在这些主题上仍走内存兜底 | 审核并发布 M1 三主题的活动；真实媒体预热与真机听测继续 |
 | P1-2 | `curriculum_stages` 只有 schema | 代码未引用 | 用阶段表驱动 planner 的阶段边界与解锁，不再写死 M1 |
 | P1-3 ✅ 已关闭 | 家长报告端点缺失 | 已新增只读 `GET /learners/:id/reports/weekly`：按 `Asia/Shanghai` 周一起算，聚合课堂时长估算、独立成功、覆盖能力、待巩固点、到期复习与确定性下周建议；空周/边界/鉴权/隐私单测通过 | 只读聚合，不写库、不调 LLM、不暴露原始录音/转写/供应商/成本；Android「我的账户」新增成长周报卡片；CI `43193274538` 与 Android `43193274548` 成功，提交 `0ef1231` |
 | P1-4 ✅ 已关闭 | Android 家长/孩子共用但角色边界弱 | 已增加两位数乘一位数的家长验证；家长区是独立解锁态，不复用儿童主题 | 孩子端隐藏注销、隐私协议与会员支付占位入口；解锁后才显示并受回调二次校验；重新打开应用、退出登录或修改密码后恢复孩子端；Android CI `43198957269` 与 CI `43198957277` 成功，提交 `a6f6d3b` |
@@ -53,7 +62,7 @@
 | P2-2 ✅ 已关闭 | TTS/ASR/发音成本只有账本，无按课程/用户的预算看板 | 2026-11-12 已完成 P2-2A~E：直连 TTS/ASR/发音入账、管理员只读聚合、`/costs` 账本与 learner/day、topic/month 预算卡；一次性 PostgreSQL + mock 对账 9 次调用（TTS 3 / ASR 3 / 发音 3），账本、聚合 API、页面一致；详见 `docs/P2-2E-usage-reconciliation.md`。 |
 | P2-3 | 发音供应商如果不支持“不留存”，隐私政策与实际不一致 | 选型时把“不用于训练/不保留”写进供应商清单；不支持则不接 |
 | P2-4 | 音频格式/采样率在 Android 与供应商之间未做真机矩阵 | 至少验证 AAC 44.1k/单声道；不支持的格式服务端明确 415 |
-| P2-5 | 生产 Docker 基础冒烟已完成（2026-11-12）：新镜像重建、迁移 `20261111120000_media_asset_scope_ownership` 应用、`/api/v1/health` 200、旧录音上传端点 410 | 生产仍为 `AI_GATEWAY_MODE=mock`；切 live 后需跑一课真实 TTS/ASR/发音并核对账本 |
+| P2-5 | 生产 Docker 基础冒烟已完成（2026-11-12）：新镜像重建、迁移 `20261111120000_media_asset_scope_ownership` 应用、`/api/v1/health` 200、旧录音上传端点 410 | 2026-11-14 已切 `AI_GATEWAY_MODE=live`（`AI_GATEWAY_LIVE_SERVICES=llm,asr,tts`）；LLM 与腾讯 TTS 已有真实调用与账本行，ASR 与发音评估的 live 对账仍未做 |
 
 #### P2-2 后续任务（全部完成）
 
