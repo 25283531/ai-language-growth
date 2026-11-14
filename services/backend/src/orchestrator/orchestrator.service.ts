@@ -2124,6 +2124,67 @@ export class OrchestratorService {
     }
   }
 
+  /**
+   * 预生成公共课程语音（只处理能落到 PUBLIC_CURRICULUM 的固定话术）。
+   *
+   * 关键是“与课堂走同一条路”：文本由 buildDirective 构造，缓存作用域与
+   * synthesize 内部完全一致（PUBLIC_CURRICULUM + topicId/contentId/contentVersion +
+   * 发布态音色档），因此孩子真正上课时按同一指纹命中、不重复计费。
+   *
+   * 明确不做的事：方法阶梯升阶后的拆音节示范、含错误单元的纠错示范、
+   * 带进度/姓名的话术都属于 PRIVATE_DYNAMIC，这里直接跳过。
+   */
+  async pregeneratePublicSpeech(input: { activityIds: string[]; learnerId: string }) {
+    const results: Array<{
+      activityId: string;
+      status: 'generated' | 'cached' | 'skipped_dynamic' | 'missing' | 'error';
+      characters?: number;
+      audioRef?: string;
+      detail?: string;
+    }> = [];
+    for (const activityId of input.activityIds) {
+      try {
+        const item = await this.prisma.learning_items.findUnique({
+          where: { id: activityId },
+          select: { topicId: true, reviewStatus: true },
+        });
+        if (!item) {
+          results.push({ activityId, status: 'missing' });
+          continue;
+        }
+        const { directive, scopeSeed } = await this.buildDirective({
+          activityId,
+          learnerId: input.learnerId,
+          sessionId: '',
+          methodState: initialMethodLadderState(),
+          errorUnits: [],
+          isReview: false,
+        });
+        if (scopeSeed.dynamicDemonstration) {
+          results.push({ activityId, status: 'skipped_dynamic' });
+          continue;
+        }
+        const speech = await this.synthesize(directive, undefined, {
+          publicCurriculum: true,
+          topicId: item.topicId ?? '',
+          contentId: scopeSeed.contentId,
+          contentVersion: scopeSeed.contentVersion,
+          learnerId: input.learnerId,
+          lessonSessionId: '',
+        });
+        results.push({
+          activityId,
+          status: speech.speech.cached ? 'cached' : 'generated',
+          characters: speech.characters,
+          audioRef: speech.speech.audioRef ?? undefined,
+        });
+      } catch (error) {
+        results.push({ activityId, status: 'error', detail: (error as Error).message.slice(0, 160) });
+      }
+    }
+    return results;
+  }
+
   /** 生成语音。 */
   private async synthesize(
     directive: TeachingDirective,
