@@ -49,6 +49,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // 端侧 TTS 模型体积大（约 145MB），必须不压缩打包：
+    // 否则 aapt 压缩阶段会 Java heap space OOM，且原生层需要直接读未压缩资源。
+    androidResources {
+        noCompress += listOf("onnx", "fst")
+    }
 }
 
 dependencies {
