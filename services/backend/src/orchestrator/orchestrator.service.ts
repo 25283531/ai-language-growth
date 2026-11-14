@@ -2178,8 +2178,8 @@ export class OrchestratorService {
             usageRecord({
               id: `usage-pregenerate-tts-${activityId}-${Date.now()}`,
               learnerId: input.learnerId,
-              // 预生成不属于任何课堂会话，用固定标记便于成本看板单列。
-              lessonSessionId: 'pregenerate',
+              // 预生成不属于任何课堂会话（该列有外键，不能填占位串）。
+              lessonSessionId: null,
               serviceKind: 'tts',
               taskRoute: 'tts.dynamic_teaching',
               level: speech.meta.effectiveLevel,
@@ -2397,7 +2397,8 @@ function persistedLearnerResponse(response: LearnerResponse): Record<string, unk
 function usageRecord(input: {
   id: string;
   learnerId: string;
-  lessonSessionId: string;
+  /** 预生成等无课堂会话的场景传 null（DB 列可空且有外键）。 */
+  lessonSessionId: string | null;
   serviceKind: 'llm' | 'tts' | 'asr' | 'pronunciation';
   taskRoute: string;
   level: 'L0' | 'L1' | 'L2' | 'L3';
@@ -2414,7 +2415,7 @@ function usageRecord(input: {
   return {
     id: input.id,
     learnerId: input.learnerId,
-    lessonSessionId: input.lessonSessionId,
+    lessonSessionId: input.lessonSessionId ?? null,
     serviceKind: input.serviceKind,
     taskRoute: input.taskRoute,
     level: input.level,
