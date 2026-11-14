@@ -9,12 +9,24 @@
  *  - 连续型供应商（0—100）英语段按老师语速换算、中文段固定 50。
  */
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, it } from 'node:test';
+import type { TtsRequest } from '@alg/shared-contracts';
 import {
   iflytekSpeedForSegment,
   splitByLanguage,
+  TencentCloudTtsAdapter,
   tencentSpeedForSegment,
 } from '@alg/ai-provider-sdk';
+
+const originalFetch = globalThis.fetch;
+const originalAudioDir = process.env.AI_AUDIO_DIR;
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  process.env.AI_AUDIO_DIR = originalAudioDir;
+});
 
 const en = (text: string) => ({ text, language: 'en' as const });
 const zh = (text: string) => ({ text, language: 'zh' as const });
@@ -64,5 +76,61 @@ describe('每段速率：英语放慢，中文自然', () => {
     assert.equal(iflytekSpeedForSegment(zh('苹果'), 1.2), 50);
     assert.equal(iflytekSpeedForSegment(en('apple'), 1.0), 43);
     assert.ok(iflytekSpeedForSegment(en('apple'), 0.44) < iflytekSpeedForSegment(en('apple'), 1.0));
+  });
+});
+
+describe('适配器：按语言分段请求并拼接音频', () => {
+  function stubFetch(): Array<{ Text: string; Speed: number }> {
+    const bodies: Array<{ Text: string; Speed: number }> = [];
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      const audio = Buffer.concat([Buffer.from([0xff, 0xf3, 0x48, 0xc4]), Buffer.alloc(252)]);
+      return new Response(JSON.stringify({ Response: { Audio: audio.toString('base64') } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    return bodies;
+  }
+
+  function adapter(audioDir: string): TencentCloudTtsAdapter {
+    return new TencentCloudTtsAdapter({
+      alias: 'test_tts',
+      baseUrl: 'https://tts.example.com',
+      modelAlias: 'test-model',
+      credentials: { secretId: 'TESTID', secretKey: 'TESTKEY' },
+      options: { codec: 'mp3', voiceType: 601009, sampleRate: 24000 },
+      pricing: { checkedAt: '2026-11-14' },
+    });
+  }
+
+  function request(text: string, teacherSpeed = 0.6): TtsRequest {
+    return {
+      text,
+      voice: { teacherSpeed, voiceStyle: 'gentle', pronunciationMode: 'slow_clear' },
+      voiceIdentity: 'teacher_default',
+      timeoutMs: 5000,
+    } as TtsRequest;
+  }
+
+  it('中文讲解 + 英语例句：两次请求，英语段更慢、中文段自然', async () => {
+    process.env.AI_AUDIO_DIR = mkdtempSync(join(tmpdir(), 'alg-tts-lang-'));
+    const bodies = stubFetch();
+    await adapter(process.env.AI_AUDIO_DIR).invoke(request('这是苹果。跟我读：apple。'));
+
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0]!.Speed, 0);
+    assert.ok(bodies[0]!.Text.includes('苹果'));
+    assert.equal(bodies[1]!.Speed, -2);
+    assert.ok(bodies[1]!.Text.includes('apple'));
+  });
+
+  it('纯英文只请求一次，不该为了分段多花一次调用', async () => {
+    process.env.AI_AUDIO_DIR = mkdtempSync(join(tmpdir(), 'alg-tts-lang-'));
+    const bodies = stubFetch();
+    await adapter(process.env.AI_AUDIO_DIR).invoke(request('Listen and say apple.'));
+
+    assert.equal(bodies.length, 1);
+    assert.equal(bodies[0]!.Speed, -2);
   });
 });
