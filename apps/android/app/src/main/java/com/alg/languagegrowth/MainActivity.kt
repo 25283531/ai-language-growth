@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -647,6 +648,10 @@ private fun GrowthApp(
                             speechStatus = speechStatus,
                             onReplay = { replayWord() },
                             onExplain = { playTeacher(true) },
+                            hasRecording = recordingSaved,
+                            onPlayRecording = {
+                                if (!activity.playLastRecording()) pageStatus = "还没有可回放的录音，先按住跟读一次"
+                            },
                             onNarratePhonics = { praise -> narratePhonics(praise) },
                             onNarrateUsage = { narrateUsage() },
                             onPickImage = { imageId -> scope.launch { submitTurn(null, null, 0, imageId) } },
@@ -1173,6 +1178,7 @@ private fun LearnScreen(
     onStart: () -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onExplain: () -> Unit,
+    hasRecording: Boolean, onPlayRecording: () -> Unit,
     onNarratePhonics: (Boolean) -> Unit, onNarrateUsage: () -> Unit,
     onPickImage: (String) -> Unit,
     onSpeakCoaching: (String) -> Unit,
@@ -1338,6 +1344,18 @@ private fun LearnScreen(
             Text("这节课完成啦！", style = MaterialTheme.typography.headlineMedium, color = GrowthColors.Ink)
             Text("今天又练习了一点，休息一下，下次继续 🌿", color = GrowthColors.InkSoft)
         }
+    }
+    if (hasRecording) {
+        // 回放只读本机录音文件（服务端不留存），让孩子听见自己刚才读的。
+        Text(
+            "🎧 听我的录音",
+            style = MaterialTheme.typography.bodyMedium,
+            color = GrowthColors.BlueDeep,
+            modifier = Modifier
+                .clip(GrowthShapes.Button)
+                .clickable { onPlayRecording() }
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        )
     }
     if (status.isNotBlank()) GrowthStatusPill(status)
 }
