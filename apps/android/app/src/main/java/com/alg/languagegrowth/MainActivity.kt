@@ -137,7 +137,8 @@ class MainActivity : ComponentActivity() {
         // 端侧 TTS 评测入口（不影响正常使用）：
         // adb shell am start -n com.alg.languagegrowth/.MainActivity --ez localtts_test true
         if (intent?.getBooleanExtra("localtts_bench", false) == true) {
-            Thread { LocalTtsBench.run(this) }.start()
+            val mode = intent?.getStringExtra("localtts_bench_mode") ?: "all"
+            Thread { LocalTtsBench.run(this, mode) }.start()
         }
         val appearance = getSharedPreferences("appearance", MODE_PRIVATE)
         val account = getSharedPreferences("account", MODE_PRIVATE)

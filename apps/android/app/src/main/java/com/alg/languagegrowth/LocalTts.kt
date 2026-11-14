@@ -26,6 +26,21 @@ object LocalTts {
     const val VOICE_EN = "en-amy"
     const val VOICE_ZH_EN = "zh-en-melo-fp32"
 
+    /** Piper 官方音色（Sherpa-ONNX 的 VITS Piper 方式加载，espeak-ng-data 三模型共用一份）。 */
+    const val VOICE_PIPER_ZH = "piper-zh-huayan-medium"
+    const val VOICE_PIPER_EN_MEDIUM = "piper-en-amy-medium"
+    const val VOICE_PIPER_EN_HIGH = "piper-en-lessac-high"
+
+    private data class PiperSpec(val assetDir: String, val modelName: String, val label: String)
+
+    val piperSpecs: Map<String, PiperSpec> = mapOf(
+        VOICE_PIPER_ZH to PiperSpec("tts-piper/zh_CN-huayan-medium", "zh_CN-huayan-medium.onnx", "huayan-medium"),
+        VOICE_PIPER_EN_MEDIUM to PiperSpec("tts-piper/en_US-amy-medium", "en_US-amy-medium.onnx", "amy-medium"),
+        VOICE_PIPER_EN_HIGH to PiperSpec("tts-piper/en_US-lessac-high", "en_US-lessac-high.onnx", "lessac-high"),
+    )
+
+    fun piperLabel(voice: String): String = piperSpecs[voice]?.label ?: voice
+
     /** Kokoro 音色：英语 af_heart = sid 3；中文 zf_xiaobei = sid 45（本就是两个人）。 */
     const val SID_EN_AF_HEART = 3
     const val SID_ZH_ZF_XIAOBEI = 45
@@ -108,6 +123,9 @@ object LocalTts {
                     maxNumSentences = 1,
                 )
             }
+            in piperSpecs -> {
+                config = piperConfig(context, voice, threads)
+            }
             else -> {
                 val model = File(dir, "en_US-amy-medium.onnx")
                 if (!model.exists()) copyAssetTree(context, "tts", dir)
@@ -131,6 +149,71 @@ object LocalTts {
         Log.i(TAG, "init $key ok=${initCost[key]}ms rate=${tts.sampleRate()} speakers=${tts.numSpeakers()}")
         return tts
     }
+
+    /**
+     * Piper 配置：模型 + tokens + 共用 espeak-ng-data（espeak 负责音素化）。
+     * 模型优先取 filesDir 下已推送的副本，缺失时才从 assets 拷贝。
+     */
+    private fun piperConfig(context: Context, voice: String, threads: Int): OfflineTtsConfig {
+        val spec = piperSpecs.getValue(voice)
+        val internalDir = File(context.filesDir, voice)
+        val externalRoot = context.getExternalFilesDir(null)?.let { File(it, "tts-piper") }
+        val externalDir = externalRoot?.let { File(it, voice) }
+        val model = sequenceOf(internalDir, externalDir)
+            .filterNotNull()
+            .map { File(it, spec.modelName) }
+            .firstOrNull { it.exists() }
+        if (model == null) {
+            copyAssetTree(context, spec.assetDir, internalDir)
+        }
+        val resolved = model ?: File(internalDir, spec.modelName)
+        require(resolved.exists()) { "$voice 模型缺失：${resolved.absolutePath}（可用 adb 推送到 ${externalDir?.absolutePath}）" }
+        val modelDir = resolved.parentFile
+        val espeak = sequenceOf(internalDir, externalDir, externalRoot)
+            .filterNotNull()
+            .map { File(it, "espeak-ng-data") }
+            .firstOrNull { it.exists() }
+            ?: File(context.filesDir, "espeak-ng-data").also { copyAssetTree(context, "tts-piper/espeak-ng-data", it) }
+        require(espeak.exists()) { "espeak-ng-data 缺失：${espeak.absolutePath}" }
+        Log.i(TAG, "piper $voice model=${resolved.absolutePath} (${resolved.length()}B) espeak=${espeak.absolutePath}")
+        return OfflineTtsConfig(
+            model = OfflineTtsModelConfig(
+                vits = OfflineTtsVitsModelConfig(
+                    model = resolved.absolutePath,
+                    tokens = File(modelDir, "tokens.txt").absolutePath,
+                    dataDir = espeak.absolutePath,
+                ),
+                numThreads = threads,
+                debug = false,
+            ),
+            maxNumSentences = 1,
+        )
+    }
+
+    /** 多段拼接，段间插入指定毫秒静音（混排切换用）。返回音频总时长毫秒。 */
+    fun concatWavWithGap(
+        context: Context,
+        parts: List<FloatArray>,
+        gapMs: Int,
+        sampleRate: Int,
+        wavName: String,
+    ): Long {
+        val gap = (sampleRate.toLong() * gapMs / 1000L).toInt()
+        val total = parts.sumOf { it.size } + gap * (parts.size - 1).coerceAtLeast(0)
+        val all = FloatArray(total)
+        var offset = 0
+        parts.forEachIndexed { index, p ->
+            p.copyInto(all, offset)
+            offset += p.size
+            if (index != parts.lastIndex) offset += gap
+        }
+        val file = File(context.getExternalFilesDir(null) ?: context.filesDir, wavName)
+        writeWav(file, all, sampleRate)
+        return (total * 1000L) / sampleRate
+    }
+
+    /** 当前进程 PSS（MB），用于“双模型常驻”内存对比。 */
+    fun pssMb(): Int = pssKb() / 1024
 
     /** 合成一次（无回调），测量总耗时 / 音频时长 / PSS。 */
     fun synth(
