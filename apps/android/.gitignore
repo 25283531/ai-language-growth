@@ -1,3 +1,4 @@
 app/src/main/jniLibs/
 app/src/main/assets/tts/
 app/src/main/assets/tts-melo/
+app/src/main/assets/tts-melo-int8/

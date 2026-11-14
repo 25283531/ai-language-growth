@@ -136,30 +136,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // 端侧 TTS 评测入口（不影响正常使用）：
         // adb shell am start -n com.alg.languagegrowth/.MainActivity --ez localtts_test true
-        if (intent?.getBooleanExtra("localtts_test", false) == true) {
-            Thread {
-                try {
-                    val en = "Hello! Let us read this word together."
-                    val zh = "欢迎回来。上次我们一起练习了身边物品，今天继续学习。"
-                    val mixed = "我们来读这个单词，family。"
-                    // 英文单语模型（对照基准，已有样本）
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_EN, en, 1.0f, "en_amy_sentence_10.wav")
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_EN, "family", 0.6f, "en_amy_family_06.wav")
-                    // 中英双语模型：中文 / 混排 / 英文
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, zh, 1.0f, "melo_zh_sentence_10.wav")
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, zh, 0.9f, "melo_zh_sentence_09.wav")
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, "欢迎回来", 1.0f, "melo_zh_greeting.wav")
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, mixed, 1.0f, "melo_mixed_10.wav")
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, en, 1.0f, "melo_en_sentence_10.wav")
-                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, "family", 0.6f, "melo_family_06.wav")
-                    repeat(3) { index ->
-                        LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, zh, 1.0f, "melo_zh_stability_$index.wav")
-                    }
-                    android.util.Log.i("LocalTts", "TEST DONE init=${LocalTts.initMsByVoice}")
-                } catch (error: Throwable) {
-                    android.util.Log.e("LocalTts", "TEST FAIL", error)
-                }
-            }.start()
+        if (intent?.getBooleanExtra("localtts_bench", false) == true) {
+            Thread { LocalTtsBench.run(this) }.start()
         }
         val appearance = getSharedPreferences("appearance", MODE_PRIVATE)
         val account = getSharedPreferences("account", MODE_PRIVATE)

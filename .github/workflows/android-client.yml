@@ -81,6 +81,17 @@ jobs:
           cp /tmp/vits-melo-tts-zh_en/lexicon.txt "$MELO_DIR/"
           cp /tmp/vits-melo-tts-zh_en/*.fst "$MELO_DIR/"
           ls -lh "$MELO_DIR"
+          # 官方包内的 model.int8.onnx 实为 133 字节 Git LFS 指针（LFS 对象 404），
+          # 因此构建时用 onnxruntime 自行量化（同一权重、同一音色，只改精度）。
+          echo "official int8 bytes: $(stat -c %s /tmp/vits-melo-tts-zh_en/model.int8.onnx)"
+          python3 -m pip install --quiet onnxruntime
+          INT8_DIR=apps/android/app/src/main/assets/tts-melo-int8
+          mkdir -p "$INT8_DIR"
+          python3 tools/quantize_tts.py /tmp/vits-melo-tts-zh_en/model.onnx "$INT8_DIR/model.int8.onnx"
+          cp /tmp/vits-melo-tts-zh_en/tokens.txt "$INT8_DIR/"
+          cp /tmp/vits-melo-tts-zh_en/lexicon.txt "$INT8_DIR/"
+          cp /tmp/vits-melo-tts-zh_en/*.fst "$INT8_DIR/"
+          ls -lh "$INT8_DIR"
           # JNI 原生库同样在构建时拉取，避免 51MB 二进制进仓库。
           curl -fsSL -o /tmp/sherpa-android.tar.bz2 \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-android.tar.bz2

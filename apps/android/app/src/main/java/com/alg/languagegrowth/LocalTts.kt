@@ -1,6 +1,8 @@
 package com.alg.languagegrowth
 
+import android.app.ActivityManager
 import android.content.Context
+import android.os.Debug
 import android.util.Log
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
@@ -12,33 +14,66 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * 端侧语音合成（实验）：sherpa-onnx 上的两个 VITS 模型。
+ * 端侧语音合成（实验）：sherpa-onnx 上的 VITS 模型。
  *
- * - [VOICE_EN]：Piper amy（英文单语，轻量，用于单词/短句发音）
- * - [VOICE_ZH_EN]：Melo TTS zh_en（中英混说，用于覆盖中文教师话语）
+ * - [VOICE_EN]：Piper amy（英文单语）
+ * - [VOICE_ZH_EN]：Melo TTS zh_en fp32（中英混说）
+ * - [VOICE_ZH_EN_INT8]：Melo TTS zh_en int8（同一音色、同一 sid，仅权重精度不同）
  *
- * 只关心四个评估维度：初始化耗时、单句合成耗时（RTF）、重复合成稳定性、语速可调性。
- * 模型放在 APK assets（CI 构建时下载），首次使用复制到私有目录后交给原生层读绝对路径。
+ * 评估维度：初始化耗时、合成耗时（RTF）、首音延迟（流式回调）、峰值内存、重复稳定性。
  */
 object LocalTts {
     private const val TAG = "LocalTts"
 
     const val VOICE_EN = "en-amy"
-    const val VOICE_ZH_EN = "zh-en-melo"
+    const val VOICE_ZH_EN = "zh-en-melo-fp32"
+    const val VOICE_ZH_EN_INT8 = "zh-en-melo-int8"
+
+    data class Bench(
+        val voice: String,
+        val threads: Int,
+        val speed: Float,
+        val initMs: Long,
+        val firstAudioMs: Long,
+        val totalMs: Long,
+        val audioMs: Long,
+        val peakPssKb: Int,
+    ) {
+        val rtf: Double get() = totalMs.toDouble() / audioMs.coerceAtLeast(1)
+        override fun toString(): String =
+            "voice=$voice threads=$threads speed=$speed initMs=$initMs firstMs=$firstAudioMs " +
+                "totalMs=$totalMs audioMs=$audioMs rtf=${"%.2f".format(rtf)} pssMb=${peakPssKb / 1024}"
+    }
 
     private val engines = HashMap<String, OfflineTts>()
-    val initMsByVoice = LinkedHashMap<String, Long>()
+    private val initCost = HashMap<String, Long>()
+
+    /** int8 资源是否真的可用（发布包里的 int8 可能是 Git LFS 指针）。 */
+    fun int8State(context: Context): String {
+        val f = File(File(context.filesDir, VOICE_ZH_EN_INT8), "model.int8.onnx")
+        if (!f.exists()) return "missing"
+        val size = f.length()
+        return if (size < 4096) "pointer($size bytes)" else "ok($size bytes)"
+    }
 
     @Synchronized
-    private fun ensure(context: Context, voice: String): OfflineTts {
-        engines[voice]?.let { return it }
+    fun engine(context: Context, voice: String, threads: Int): OfflineTts {
+        val key = "$voice@$threads"
+        engines[key]?.let { return it }
         val started = System.currentTimeMillis()
         val dir = File(context.filesDir, voice)
         val config: OfflineTtsConfig
         when (voice) {
-            VOICE_ZH_EN -> {
-                val model = File(dir, "model.onnx")
-                if (!model.exists()) copyAssets(context, "tts-melo", dir)
+            VOICE_ZH_EN, VOICE_ZH_EN_INT8 -> {
+                val modelName = if (voice == VOICE_ZH_EN_INT8) "model.int8.onnx" else "model.onnx"
+                val model = File(dir, modelName)
+                if (!model.exists()) {
+                    copyAssets(context, if (voice == VOICE_ZH_EN_INT8) "tts-melo-int8" else "tts-melo", dir)
+                }
+                require(model.exists()) { "model not found: ${model.absolutePath}" }
+                require(model.length() > 4096) {
+                    "$modelName 不是可用模型：只有 ${model.length()} 字节（疑似 Git LFS 指针）"
+                }
                 config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
                         vits = OfflineTtsVitsModelConfig(
@@ -46,10 +81,9 @@ object LocalTts {
                             tokens = File(dir, "tokens.txt").absolutePath,
                             lexicon = File(dir, "lexicon.txt").absolutePath,
                         ),
-                        numThreads = 2,
+                        numThreads = threads,
                         debug = false,
                     ),
-                    // 数字/日期/电话号码等文本归一化规则，中英混排时避免读成乱码（ruleFsts 属于顶层配置）。
                     ruleFsts = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
                         .map { File(dir, it).absolutePath }
                         .filter { File(it).exists() }
@@ -67,7 +101,7 @@ object LocalTts {
                             tokens = File(dir, "tokens.txt").absolutePath,
                             lexicon = File(dir, "lexicon-en-us.txt").absolutePath,
                         ),
-                        numThreads = 2,
+                        numThreads = threads,
                         debug = false,
                     ),
                     maxNumSentences = 1,
@@ -75,33 +109,54 @@ object LocalTts {
             }
         }
         val tts = OfflineTts(assetManager = null, config = config)
-        initMsByVoice[voice] = System.currentTimeMillis() - started
-        engines[voice] = tts
-        Log.i(TAG, "init $voice: ${initMsByVoice[voice]}ms rate=${tts.sampleRate()}")
+        initCost[key] = System.currentTimeMillis() - started
+        engines[key] = tts
+        Log.i(TAG, "init $key ok=${initCost[key]}ms rate=${tts.sampleRate()}")
         return tts
     }
 
-    /** 合成一句并落成 wav，返回（合成耗时、音频时长、文件）。 */
-    fun synthesizeToWav(
+    /** 合成一次，测量首音延迟 / 总耗时 / 音频时长 / 进程 PSS 峰值。 */
+    fun bench(
         context: Context,
         voice: String,
+        threads: Int,
         text: String,
         speed: Float,
-        fileName: String,
-    ): Triple<Long, Long, File> {
-        val tts = ensure(context, voice)
-        val started = System.nanoTime()
-        val audio = tts.generate(text = text, sid = 0, speed = speed)
-        val elapsedMs = (System.nanoTime() - started) / 1_000_000
-        val file = File(context.getExternalFilesDir(null) ?: context.filesDir, fileName)
-        writeWav(file, audio.samples, audio.sampleRate)
+        wavName: String? = null,
+    ): Bench {
+        val key = "$voice@$threads"
+        val initMs = initCost[key] ?: -1L
+        val tts = engine(context, voice, threads)
+        val pssBefore = pssKb(context)
+        var firstAt = 0L
+        var chunks = 0
+        val t0 = System.nanoTime()
+        val audio = tts.generateWithCallback(text = text, sid = 0, speed = speed) { samples ->
+            if (chunks == 0) firstAt = System.nanoTime()
+            chunks++
+            0
+        }
+        val totalMs = (System.nanoTime() - t0) / 1_000_000
+        val firstMs = if (firstAt == 0L) totalMs else (firstAt - t0) / 1_000_000
         val audioMs = (audio.samples.size * 1000L) / audio.sampleRate
-        Log.i(
-            TAG,
-            "synth voice=$voice speed=$speed chars=${text.length} ms=$elapsedMs audioMs=$audioMs " +
-                "rtf=${"%.2f".format(elapsedMs.toDouble() / audioMs.coerceAtLeast(1))} file=${file.name}",
-        )
-        return Triple(elapsedMs, audioMs, file)
+        val pssAfter = pssKb(context)
+        if (wavName != null) {
+            val file = File(context.getExternalFilesDir(null) ?: context.filesDir, wavName)
+            writeWav(file, audio.samples, audio.sampleRate)
+        }
+        val b = Bench(voice, threads, speed, initMs, firstMs, totalMs, audioMs, maxOf(pssBefore, pssAfter))
+        Log.i(TAG, "bench chars=${text.length} $b")
+        return b
+    }
+
+    private fun pssKb(context: Context): Int {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val info = Debug.MemoryInfo()
+        Debug.getMemoryInfo(info)
+        @Suppress("DEPRECATION")
+        val pss = info.totalPss
+        Log.d(TAG, "pss=$pss KB")
+        return pss
     }
 
     private fun writeWav(file: File, samples: FloatArray, sampleRate: Int) {
