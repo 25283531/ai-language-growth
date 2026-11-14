@@ -123,6 +123,7 @@ object LocalTts {
         text: String,
         speed: Float,
         wavName: String? = null,
+        useCallback: Boolean = false,
     ): Bench {
         val key = "$voice@$threads"
         val initMs = initCost[key] ?: -1L
@@ -131,10 +132,14 @@ object LocalTts {
         var firstAt = 0L
         var chunks = 0
         val t0 = System.nanoTime()
-        val audio = tts.generateWithCallback(text = text, sid = 0, speed = speed) { samples ->
-            if (chunks == 0) firstAt = System.nanoTime()
-            chunks++
-            0
+        val audio = if (useCallback) {
+            tts.generateWithCallback(text = text, sid = 0, speed = speed) { _ ->
+                if (chunks == 0) firstAt = System.nanoTime()
+                chunks++
+                0
+            }
+        } else {
+            tts.generate(text = text, sid = 0, speed = speed)
         }
         val totalMs = (System.nanoTime() - t0) / 1_000_000
         val firstMs = if (firstAt == 0L) totalMs else (firstAt - t0) / 1_000_000
