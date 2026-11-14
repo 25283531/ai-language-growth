@@ -139,16 +139,23 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra("localtts_test", false) == true) {
             Thread {
                 try {
-                    val sentence = "Hello! Let us read this word together."
-                    for (speed in listOf(0.6f, 0.8f, 1.0f, 1.2f)) {
-                        LocalTts.synthesizeToWav(this, sentence, speed, "local_tts_$speed.wav")
-                    }
+                    val en = "Hello! Let us read this word together."
+                    val zh = "欢迎回来。上次我们一起练习了身边物品，今天继续学习。"
+                    val mixed = "我们来读这个单词，family。"
+                    // 英文单语模型（对照基准，已有样本）
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_EN, en, 1.0f, "en_amy_sentence_10.wav")
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_EN, "family", 0.6f, "en_amy_family_06.wav")
+                    // 中英双语模型：中文 / 混排 / 英文
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, zh, 1.0f, "melo_zh_sentence_10.wav")
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, zh, 0.9f, "melo_zh_sentence_09.wav")
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, "欢迎回来", 1.0f, "melo_zh_greeting.wav")
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, mixed, 1.0f, "melo_mixed_10.wav")
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, en, 1.0f, "melo_en_sentence_10.wav")
+                    LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, "family", 0.6f, "melo_family_06.wav")
                     repeat(3) { index ->
-                        LocalTts.synthesizeToWav(this, sentence, 1.0f, "local_tts_stability_$index.wav")
+                        LocalTts.synthesizeToWav(this, LocalTts.VOICE_ZH_EN, zh, 1.0f, "melo_zh_stability_$index.wav")
                     }
-                    LocalTts.synthesizeToWav(this, "family", 0.6f, "local_tts_word_family_06.wav")
-                    LocalTts.synthesizeToWav(this, "family", 1.0f, "local_tts_word_family_10.wav")
-                    android.util.Log.i("LocalTts", "TEST DONE initMs=${LocalTts.initMs}")
+                    android.util.Log.i("LocalTts", "TEST DONE init=${LocalTts.initMsByVoice}")
                 } catch (error: Throwable) {
                     android.util.Log.e("LocalTts", "TEST FAIL", error)
                 }

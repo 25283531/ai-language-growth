@@ -70,6 +70,17 @@ jobs:
           curl -fsSL -o "$MODEL_DIR/lexicon-en-us.txt" \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/lexicon-en-us.txt
           ls -lh "$MODEL_DIR"
+          # 中英双语模型（Melo TTS），用于验证中文教师话语能否端侧合成。
+          MELO_DIR=apps/android/app/src/main/assets/tts-melo
+          mkdir -p "$MELO_DIR"
+          curl -fsSL -o /tmp/melo.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2
+          tar -xjf /tmp/melo.tar.bz2 -C /tmp
+          cp /tmp/vits-melo-tts-zh_en/model.onnx "$MELO_DIR/"
+          cp /tmp/vits-melo-tts-zh_en/tokens.txt "$MELO_DIR/"
+          cp /tmp/vits-melo-tts-zh_en/lexicon.txt "$MELO_DIR/"
+          cp /tmp/vits-melo-tts-zh_en/*.fst "$MELO_DIR/"
+          ls -lh "$MELO_DIR"
           # JNI 原生库同样在构建时拉取，避免 51MB 二进制进仓库。
           curl -fsSL -o /tmp/sherpa-android.tar.bz2 \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-android.tar.bz2

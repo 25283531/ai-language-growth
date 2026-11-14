@@ -12,73 +12,95 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * 端侧语音合成（实验）：sherpa-onnx + Piper VITS 英文女声。
+ * 端侧语音合成（实验）：sherpa-onnx 上的两个 VITS 模型。
  *
- * 用途是评估「能不能用端侧合成替代云端按字符计费」，因此这里只关心四件事：
- * 初始化耗时、单句合成耗时（RTF）、同一文本重复合成的稳定性、语速可调性。
+ * - [VOICE_EN]：Piper amy（英文单语，轻量，用于单词/短句发音）
+ * - [VOICE_ZH_EN]：Melo TTS zh_en（中英混说，用于覆盖中文教师话语）
  *
- * 模型来自 APK assets/tts（CI 构建时下载），首次启动复制到 filesDir 后再交给
- * 原生层读绝对路径，避免压缩资源无法被 mmap 的问题。
+ * 只关心四个评估维度：初始化耗时、单句合成耗时（RTF）、重复合成稳定性、语速可调性。
+ * 模型放在 APK assets（CI 构建时下载），首次使用复制到私有目录后交给原生层读绝对路径。
  */
 object LocalTts {
     private const val TAG = "LocalTts"
-    private const val ASSET_DIR = "tts"
 
-    @Volatile
-    private var engine: OfflineTts? = null
+    const val VOICE_EN = "en-amy"
+    const val VOICE_ZH_EN = "zh-en-melo"
 
-    /** 首次初始化耗时（字节复制 + 原生加载），仅用于评估。 */
-    @Volatile
-    var initMs: Long = -1L
-        private set
+    private val engines = HashMap<String, OfflineTts>()
+    val initMsByVoice = LinkedHashMap<String, Long>()
 
-    private fun ensure(context: Context): OfflineTts {
-        engine?.let { return it }
-        synchronized(this) {
-            engine?.let { return it }
-            val started = System.currentTimeMillis()
-            val dir = File(context.filesDir, ASSET_DIR)
-            val model = File(dir, "en_US-amy-medium.onnx")
-            if (!model.exists()) copyAssets(context, dir)
-
-            val config = OfflineTtsConfig(
-                model = OfflineTtsModelConfig(
-                    vits = OfflineTtsVitsModelConfig(
-                        model = model.absolutePath,
-                        tokens = File(dir, "tokens.txt").absolutePath,
-                        // 英文用 lexicon 发音，不依赖 espeak-ng-data 目录。
-                        lexicon = File(dir, "lexicon-en-us.txt").absolutePath,
-                        lengthScale = 1.0f,
+    @Synchronized
+    private fun ensure(context: Context, voice: String): OfflineTts {
+        engines[voice]?.let { return it }
+        val started = System.currentTimeMillis()
+        val dir = File(context.filesDir, voice)
+        val config: OfflineTtsConfig
+        when (voice) {
+            VOICE_ZH_EN -> {
+                val model = File(dir, "model.onnx")
+                if (!model.exists()) copyAssets(context, "tts-melo", dir)
+                config = OfflineTtsConfig(
+                    model = OfflineTtsModelConfig(
+                        vits = OfflineTtsVitsModelConfig(
+                            model = model.absolutePath,
+                            tokens = File(dir, "tokens.txt").absolutePath,
+                            lexicon = File(dir, "lexicon.txt").absolutePath,
+                            // 数字/日期/电话号码等文本归一化规则，中英混排时避免读成乱码。
+                            ruleFsts = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
+                                .map { File(dir, it).absolutePath }
+                                .filter { File(it).exists() }
+                                .joinToString(","),
+                        ),
+                        numThreads = 2,
+                        debug = false,
                     ),
-                    numThreads = 2,
-                    debug = false,
-                ),
-                maxNumSentences = 1,
-            )
-            val tts = OfflineTts(assetManager = null, config = config)
-            initMs = System.currentTimeMillis() - started
-            engine = tts
-            Log.i(TAG, "init ok: ${initMs}ms sampleRate=${tts.sampleRate()} speakers=${tts.numSpeakers()}")
-            return tts
+                    maxNumSentences = 1,
+                )
+            }
+            else -> {
+                val model = File(dir, "en_US-amy-medium.onnx")
+                if (!model.exists()) copyAssets(context, "tts", dir)
+                config = OfflineTtsConfig(
+                    model = OfflineTtsModelConfig(
+                        vits = OfflineTtsVitsModelConfig(
+                            model = model.absolutePath,
+                            tokens = File(dir, "tokens.txt").absolutePath,
+                            lexicon = File(dir, "lexicon-en-us.txt").absolutePath,
+                        ),
+                        numThreads = 2,
+                        debug = false,
+                    ),
+                    maxNumSentences = 1,
+                )
+            }
         }
+        val tts = OfflineTts(assetManager = null, config = config)
+        initMsByVoice[voice] = System.currentTimeMillis() - started
+        engines[voice] = tts
+        Log.i(TAG, "init $voice: ${initMsByVoice[voice]}ms rate=${tts.sampleRate()}")
+        return tts
     }
 
-    /** 合成一句并落成 wav，返回（耗时、音频时长）。 */
+    /** 合成一句并落成 wav，返回（合成耗时、音频时长、文件）。 */
     fun synthesizeToWav(
         context: Context,
+        voice: String,
         text: String,
         speed: Float,
         fileName: String,
     ): Triple<Long, Long, File> {
-        val tts = ensure(context)
+        val tts = ensure(context, voice)
         val started = System.nanoTime()
         val audio = tts.generate(text = text, sid = 0, speed = speed)
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
-        val samples = audio.samples
         val file = File(context.getExternalFilesDir(null) ?: context.filesDir, fileName)
-        writeWav(file, samples, audio.sampleRate)
-        val audioMs = (samples.size * 1000L) / audio.sampleRate
-        Log.i(TAG, "synth speed=$speed ms=$elapsedMs audioMs=$audioMs rtf=${"%.2f".format(elapsedMs.toDouble() / audioMs.coerceAtLeast(1))} file=${file.name}")
+        writeWav(file, audio.samples, audio.sampleRate)
+        val audioMs = (audio.samples.size * 1000L) / audio.sampleRate
+        Log.i(
+            TAG,
+            "synth voice=$voice speed=$speed chars=${text.length} ms=$elapsedMs audioMs=$audioMs " +
+                "rtf=${"%.2f".format(elapsedMs.toDouble() / audioMs.coerceAtLeast(1))} file=${file.name}",
+        )
         return Triple(elapsedMs, audioMs, file)
     }
 
@@ -104,13 +126,12 @@ object LocalTts {
         FileOutputStream(file).use { it.write(out.array()) }
     }
 
-    private fun copyAssets(context: Context, dir: File) {
+    private fun copyAssets(context: Context, assetDir: String, dir: File) {
         dir.mkdirs()
-        val assets = context.assets
-        assets.list(ASSET_DIR)?.forEach { name ->
+        context.assets.list(assetDir)?.forEach { name ->
             val target = File(dir, name)
             if (target.exists()) return@forEach
-            context.assets.open("$ASSET_DIR/$name").use { input ->
+            context.assets.open("$assetDir/$name").use { input ->
                 FileOutputStream(target).use { output -> input.copyTo(output) }
             }
         }
