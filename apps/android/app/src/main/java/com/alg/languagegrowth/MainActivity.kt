@@ -2145,8 +2145,23 @@ private fun ImageChoiceStep(
 ) {
     val context = LocalContext.current
     val prompt = directive.optString("teacherUtterance").ifBlank { "听老师说，点出对应的图片。" }
+    // 目标词就是题干：服务端在 image_identification 下会保留 targetWords，
+    // 少一行渲染，孩子就只剩三张图不知道该选哪张（真机反馈）。
+    val targetWord = directive.optJSONArray("targetWords")?.optString(0)?.takeIf { it.isNotBlank() }
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         Text("看图片，选一选", style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink)
+        if (targetWord != null) {
+            Text(
+                targetWord,
+                style = MaterialTheme.typography.headlineLarge,
+                color = GrowthColors.Ink,
+            )
+            Text(
+                "哪张图是 $targetWord？",
+                style = MaterialTheme.typography.bodyLarge,
+                color = GrowthColors.Ink,
+            )
+        }
         Text(prompt, style = MaterialTheme.typography.bodyLarge, color = GrowthColors.InkSoft)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             for (index in 0 until options.length()) {
@@ -2177,7 +2192,7 @@ private fun ImageChoiceStep(
                         )
                     }
                     GrowthSecondaryButton(
-                        "选这个",
+                        "选这张",
                         { onPick(option.optString("id")) },
                         enabled = !busy,
                     )
