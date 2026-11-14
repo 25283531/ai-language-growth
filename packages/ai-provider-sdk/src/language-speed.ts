@@ -1,11 +1,11 @@
 /**
- * 语言感知的语速策略。
+ * 语言感知的语速策略（与供应商无关的部分）。
  *
- * 产品要求（2026-11-14 用户明确）：慢速教学**只针对英语**——英语单词、例句、
- * 短文需要放慢；中文讲解保持自然语速，不需要放慢。
+ * 产品要求（2026-11-14）：慢速教学**只针对英语**——英语单词、例句、短文需要放慢；
+ * 中文讲解保持自然语速。一次合成请求只能带一个速率，因此按书写系统切段后，
+ * 由各适配器把每段换算成自己的速率参数，再把音频按顺序拼接。
  *
- * 因此合成前先按书写系统切段，逐段用各自的档位调用供应商，再把音频按顺序拼接。
- * 这两个函数是纯函数，便于单测；适配器只负责把结果映射成厂商参数。
+ * 本文件只做切段与语言判定，不含任何厂商参数，保证模型/供应商可替换。
  */
 
 export type SpeechLanguage = 'zh' | 'en';
@@ -30,7 +30,7 @@ function languageOfChar(char: string, previous: SpeechLanguage): SpeechLanguage 
  *
  * - 纯中文或纯英文只有一段；
  * - 空白与标点跟随前一段，避免出现以标点开头的片段；
- * - 过短的片段（< 3 个字符）并入相邻段，避免逐字合成的生硬断句。
+ * - 过短的片段（去掉空白后 < 3 个字符）并入相邻段，避免逐字合成的生硬断句。
  */
 export function splitByLanguage(text: string): SpeechSegment[] {
   const body = (text ?? '').trim();
@@ -62,42 +62,4 @@ export function splitByLanguage(text: string): SpeechSegment[] {
     }
   }
   return merged.filter((segment) => segment.text.trim().length > 0);
-}
-
-/** 腾讯云 Speed 是档位不是倍率：-2→0.6x、-1→0.8x、0→1.0x、1→1.2x、2→1.5x。 */
-const TENCENT_GEARS: ReadonlyArray<readonly [ratio: number, gear: number]> = [
-  [0.6, -2],
-  [0.8, -1],
-  [1.0, 0],
-  [1.2, 1],
-  [1.5, 2],
-];
-
-/** 中文不受慢速教学影响，固定用自然语速。 */
-export const NEUTRAL_TENCENT_SPEED = 0;
-/** 讯飞 speed 取值 0—100，50 为自然语速。 */
-export const NEUTRAL_IFLYTEK_SPEED = 50;
-
-export function tencentSpeedForTeacherSpeed(teacherSpeed: number): number {
-  const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
-  return TENCENT_GEARS.reduce((best, gear) =>
-    Math.abs(gear[0] - value) < Math.abs(best[0] - value) ? gear : best,
-  )[1];
-}
-
-export function iflytekSpeedForTeacherSpeed(teacherSpeed: number): number {
-  const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
-  return Math.max(0, Math.min(100, Math.round(((value - 0.25) / 1.75) * 100)));
-}
-
-/**
- * 某一段该用的腾讯云档位：英语按老师语速放慢，中文固定自然语速。
- */
-export function tencentSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
-  return segment.language === 'en' ? tencentSpeedForTeacherSpeed(teacherSpeed) : NEUTRAL_TENCENT_SPEED;
-}
-
-/** 某一段该用的讯飞速度值：英语按老师语速放慢，中文固定自然语速。 */
-export function iflytekSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
-  return segment.language === 'en' ? iflytekSpeedForTeacherSpeed(teacherSpeed) : NEUTRAL_IFLYTEK_SPEED;
 }

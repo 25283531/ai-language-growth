@@ -5,8 +5,7 @@ import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } fr
 import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shared-contracts';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
 import { audioFingerprint } from './audio-fingerprint';
-import { iflytekSpeedForSegment, splitByLanguage } from './language-speed';
-
+import { splitByLanguage, type SpeechSegment } from './language-speed';
 export interface IflytekSpeechOptions {
   alias: string;
   baseUrl: string;
@@ -112,6 +111,13 @@ function decodeIatResult(value: string): string {
     if (typeof text === 'string') words.push(text);
   }
   return words.join('');
+}
+
+/** speed 取值 0—100，50 为自然语速；英语段按老师语速换算，中文段固定 50。 */
+export function iflytekSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
+  if (segment.language !== 'en') return 50;
+  const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
+  return Math.max(0, Math.min(100, Math.round(((value - 0.25) / 1.75) * 100)));
 }
 
 export class IflytekTtsAdapter implements TtsAdapter {

@@ -5,7 +5,7 @@ import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shar
 import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } from './protocol';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
 import { audioFingerprint } from './audio-fingerprint';
-import { splitByLanguage, tencentSpeedForSegment } from './language-speed';
+import { splitByLanguage, type SpeechSegment } from './language-speed';
 
 export interface TencentCloudSpeechOptions {
   alias: string;
@@ -68,6 +68,24 @@ async function callTencent(config: TencentCloudSpeechOptions, action: string, ve
     throw new Error(`腾讯云语音服务错误 ${error.Code ?? ''}: ${error.Message ?? ''}`);
   }
   return result;
+}
+
+/** Speed 是档位不是倍率：-2→0.6x、-1→0.8x、0→1.0x、1→1.2x、2→1.5x。 */
+const SPEED_GEARS: ReadonlyArray<readonly [ratio: number, gear: number]> = [
+  [0.6, -2],
+  [0.8, -1],
+  [1.0, 0],
+  [1.2, 1],
+  [1.5, 2],
+];
+
+/** 英语段按老师语速取最近档位；中文段不受慢速教学影响，固定自然语速。 */
+export function tencentSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
+  if (segment.language !== 'en') return 0;
+  const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
+  return SPEED_GEARS.reduce((best, gear) =>
+    Math.abs(gear[0] - value) < Math.abs(best[0] - value) ? gear : best,
+  )[1];
 }
 
 export class TencentCloudTtsAdapter implements TtsAdapter {
