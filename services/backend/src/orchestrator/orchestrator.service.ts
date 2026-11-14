@@ -1942,7 +1942,9 @@ export class OrchestratorService {
     // 课程资源身份：contentId 用运行时稳定可得的 activityId；contentVersion 由
     // 已读出的 row.content 直接哈希，发布内容变更即可让旧课程音频整体失效。
     const scopeSeed: DirectiveScopeSeed = {
-      contentId: input.activityId,
+      // contentId 统一取内容里的稳定 id：planner/客户端传的就是它，预生成
+      // 可能传行主键（UUID）。两者必须归一到同一个值，否则缓存键不同、永不命中。
+      contentId: (item.content as { id?: string } | null)?.id ?? input.activityId,
       contentVersion: createHash('sha256').update(JSON.stringify(item?.content ?? input.activityId)).digest('hex'),
       // 先保守视为动态，等 resolveDemonstration 算出文本后再判断是否等于发布态示范。
       dynamicDemonstration: true,
