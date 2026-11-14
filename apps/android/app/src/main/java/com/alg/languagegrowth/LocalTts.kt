@@ -45,15 +45,15 @@ object LocalTts {
                             model = model.absolutePath,
                             tokens = File(dir, "tokens.txt").absolutePath,
                             lexicon = File(dir, "lexicon.txt").absolutePath,
-                            // 数字/日期/电话号码等文本归一化规则，中英混排时避免读成乱码。
-                            ruleFsts = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
-                                .map { File(dir, it).absolutePath }
-                                .filter { File(it).exists() }
-                                .joinToString(","),
                         ),
                         numThreads = 2,
                         debug = false,
                     ),
+                    // 数字/日期/电话号码等文本归一化规则，中英混排时避免读成乱码（ruleFsts 属于顶层配置）。
+                    ruleFsts = listOf("phone.fst", "date.fst", "number.fst", "new_heteronym.fst")
+                        .map { File(dir, it).absolutePath }
+                        .filter { File(it).exists() }
+                        .joinToString(","),
                     maxNumSentences = 1,
                 )
             }
