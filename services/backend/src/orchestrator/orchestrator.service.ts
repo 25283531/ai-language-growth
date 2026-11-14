@@ -2172,6 +2172,24 @@ export class OrchestratorService {
           learnerId: input.learnerId,
           lessonSessionId: '',
         });
+        // 预生成同样消耗供应商字符，必须进账本；命中缓存的条目 characters=0 不重复计费。
+        if (speech.characters > 0) {
+          await this.router.recordUsage(
+            usageRecord({
+              id: `usage-pregenerate-tts-${activityId}-${Date.now()}`,
+              learnerId: input.learnerId,
+              // 预生成不属于任何课堂会话，用固定标记便于成本看板单列。
+              lessonSessionId: 'pregenerate',
+              serviceKind: 'tts',
+              taskRoute: 'tts.dynamic_teaching',
+              level: speech.meta.effectiveLevel,
+              providerAlias: speech.meta.providerAlias,
+              modelAlias: speech.meta.modelAlias,
+              ttsCharacters: speech.characters,
+              latencyMs: speech.meta.latencyMs ?? 0,
+            }),
+          );
+        }
         results.push({
           activityId,
           status: speech.speech.cached ? 'cached' : 'generated',
