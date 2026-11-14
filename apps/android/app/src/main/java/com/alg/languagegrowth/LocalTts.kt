@@ -33,7 +33,7 @@ object LocalTts {
 
     private data class PiperSpec(val assetDir: String, val modelName: String, val label: String)
 
-    val piperSpecs: Map<String, PiperSpec> = mapOf(
+    private val piperSpecs: Map<String, PiperSpec> = mapOf(
         VOICE_PIPER_ZH to PiperSpec("tts-piper/zh_CN-huayan-medium", "zh_CN-huayan-medium.onnx", "huayan-medium"),
         VOICE_PIPER_EN_MEDIUM to PiperSpec("tts-piper/en_US-amy-medium", "en_US-amy-medium.onnx", "amy-medium"),
         VOICE_PIPER_EN_HIGH to PiperSpec("tts-piper/en_US-lessac-high", "en_US-lessac-high.onnx", "lessac-high"),

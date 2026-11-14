@@ -148,7 +148,7 @@ object LocalTtsBench {
                 val (enSamples, enRate) = LocalTts.generateSamples(context, enVoice, THREADS, 0, enPart, speed)
                 val enMs = (System.nanoTime() - t2) / 1_000_000
 
-                val wavName = "split_huayan+$tag__03_mixed__x$speed.wav"
+                val wavName = "split_huayan+${tag}__03_mixed__x${speed}.wav"
                 val audioMs = LocalTts.concatWavWithGap(context, listOf(zhSamples, enSamples), GAP_MS, rate, wavName)
                 val splitMs = zhMs + enMs
                 Log.i(
