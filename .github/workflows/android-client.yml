@@ -56,42 +56,27 @@ jobs:
         run: gradle --no-daemon -p apps/android testDebugUnitTest
       - name: Quality gate - lint
         run: gradle --no-daemon -p apps/android lintDebug
-      # 端侧 TTS 评估用：Piper 英文女声模型（约 63MB）+ 英文词典，构建时下载，不进仓库。
-      - name: Fetch offline TTS model (sherpa-onnx Piper)
+      # 端侧 TTS 评测用（Kokoro）：官方 int8 多语种模型，构建时下载并校验，不进仓库。
+      - name: Fetch offline TTS model (sherpa-onnx Kokoro)
         run: |
           set -euo pipefail
-          MODEL_DIR=apps/android/app/src/main/assets/tts
-          mkdir -p "$MODEL_DIR"
-          curl -fsSL -o /tmp/amy.tar.bz2 \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-medium.tar.bz2
-          tar -xjf /tmp/amy.tar.bz2 -C /tmp
-          cp /tmp/vits-piper-en_US-amy-medium/en_US-amy-medium.onnx "$MODEL_DIR/"
-          cp /tmp/vits-piper-en_US-amy-medium/tokens.txt "$MODEL_DIR/"
-          curl -fsSL -o "$MODEL_DIR/lexicon-en-us.txt" \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/lexicon-en-us.txt
-          ls -lh "$MODEL_DIR"
-          # 中英双语模型（Melo TTS），用于验证中文教师话语能否端侧合成。
-          MELO_DIR=apps/android/app/src/main/assets/tts-melo
-          mkdir -p "$MELO_DIR"
-          curl -fsSL -o /tmp/melo.tar.bz2 \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2
-          tar -xjf /tmp/melo.tar.bz2 -C /tmp
-          cp /tmp/vits-melo-tts-zh_en/model.onnx "$MELO_DIR/"
-          cp /tmp/vits-melo-tts-zh_en/tokens.txt "$MELO_DIR/"
-          cp /tmp/vits-melo-tts-zh_en/lexicon.txt "$MELO_DIR/"
-          cp /tmp/vits-melo-tts-zh_en/*.fst "$MELO_DIR/"
-          ls -lh "$MELO_DIR"
-          # 官方包内的 model.int8.onnx 实为 133 字节 Git LFS 指针（LFS 对象 404），
-          # 因此构建时用 onnxruntime 自行量化（同一权重、同一音色，只改精度）。
-          echo "official int8 bytes: $(stat -c %s /tmp/vits-melo-tts-zh_en/model.int8.onnx)"
-          python3 -m pip install --quiet onnxruntime onnx
-          INT8_DIR=apps/android/app/src/main/assets/tts-melo-int8
-          mkdir -p "$INT8_DIR"
-          python3 tools/quantize_tts.py /tmp/vits-melo-tts-zh_en/model.onnx "$INT8_DIR/model.int8.onnx"
-          cp /tmp/vits-melo-tts-zh_en/tokens.txt "$INT8_DIR/"
-          cp /tmp/vits-melo-tts-zh_en/lexicon.txt "$INT8_DIR/"
-          cp /tmp/vits-melo-tts-zh_en/*.fst "$INT8_DIR/"
-          ls -lh "$INT8_DIR"
+          KOKORO_DIR=apps/android/app/src/main/assets/tts-kokoro
+          mkdir -p "$KOKORO_DIR"
+          curl -fsSL -o /tmp/kokoro.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2
+          tar -xjf /tmp/kokoro.tar.bz2 -C /tmp
+          SRC=/tmp/kokoro-int8-multi-lang-v1_0
+          echo "model.int8.onnx bytes: $(stat -c %s $SRC/model.int8.onnx)"
+          # 验收门槛：必须 >100MB；只有 133 字节说明是坏的 LFS 指针，直接失败。
+          test "$(stat -c %s $SRC/model.int8.onnx)" -gt 104857600
+          cp "$SRC/model.int8.onnx" "$KOKORO_DIR/"
+          cp "$SRC/voices.bin" "$KOKORO_DIR/"
+          cp "$SRC/tokens.txt" "$KOKORO_DIR/"
+          cp "$SRC/lexicon-us-en.txt" "$KOKORO_DIR/"
+          cp "$SRC/lexicon-zh.txt" "$KOKORO_DIR/"
+          cp "$SRC"/*.fst "$KOKORO_DIR/"
+          cp -r "$SRC/espeak-ng-data" "$KOKORO_DIR/"
+          du -sh "$KOKORO_DIR"
           # JNI 原生库同样在构建时拉取，避免 51MB 二进制进仓库。
           curl -fsSL -o /tmp/sherpa-android.tar.bz2 \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-android.tar.bz2

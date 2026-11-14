@@ -2,98 +2,125 @@ package com.alg.languagegrowth
 
 import android.content.Context
 import android.util.Log
+import kotlin.concurrent.thread
 
 /**
- * 端侧 TTS 评测台：线程扫描 + 语速矩阵 + fp32/int8 对照。
+ * Kokoro int8 头对头评测台（纯 CPU，4 线程，无 NNAPI）。
  *
- * 只通过 adb 触发，不影响正常课堂：
- * adb shell am start -n com.alg.languagegrowth/.MainActivity --ez localtts_bench true
+ * 触发：adb shell am start -n com.alg.languagegrowth/.MainActivity --ez localtts_bench true
  *
- * 顺序设计：先把保证能跑完的矩阵数据落盘（普通 generate），最后再做可能触发原生崩溃的
- * 流式回调探测，避免一个崩溃吞掉全部结果。
+ * 执行顺序刻意设计：先跑不依赖流式回调的完整矩阵（保证数据落袋），再跑中英混排的
+ * “单 sid / 分段切 sid”对照，最后才在独立 IO 线程上做回调首音探测（已知该回调路径
+ * 在部分机型会原生崩溃，崩溃时前面的数据已经写完）。
  */
 object LocalTtsBench {
     private const val TAG = "LocalTtsBench"
+    private const val THREADS = 4
 
-    private data class Sentence(val id: String, val text: String)
+    private data class Sentence(val id: String, val text: String, val sid: Int)
 
     private val sentences = listOf(
-        Sentence("greeting", "欢迎回来"),
-        Sentence("zh_teacher", "欢迎回来。上次我们一起练习了身边物品，今天继续学习。"),
-        Sentence("mixed", "我们来读这个单词，family。"),
-        Sentence("en_sentence", "Hello! Let us read this word together."),
-        Sentence("word", "family"),
+        Sentence("greeting", "欢迎回来", LocalTts.SID_ZH_ZF_XIAOBEI),
+        Sentence("zh_teacher", "欢迎回来。上次我们一起练习了身边物品，今天继续学习。", LocalTts.SID_ZH_ZF_XIAOBEI),
+        Sentence("mixed", "我们来读这个单词，family。", LocalTts.SID_ZH_ZF_XIAOBEI),
+        Sentence("en_sentence", "Hello! Let us read this word together.", LocalTts.SID_EN_AF_HEART),
+        Sentence("word", "family", LocalTts.SID_EN_AF_HEART),
     )
 
     private val speeds = listOf(1.0f, 0.8f, 0.65f)
 
     fun run(context: Context) {
         try {
-            Log.i(TAG, "ASSET_INT8=${assetState(context, "tts-melo-int8", "model.int8.onnx")}")
-            Log.i(TAG, "ASSET_FP32=${assetState(context, "tts-melo", "model.onnx")}")
+            val t0 = System.currentTimeMillis()
+            val tts = LocalTts.engine(context, LocalTts.VOICE_KOKORO, THREADS)
+            Log.i(TAG, "INIT|${LocalTts.initCostOf(LocalTts.VOICE_KOKORO, THREADS)}|ms_since_start=${System.currentTimeMillis() - t0}|rate=${tts.sampleRate()}|speakers=${tts.numSpeakers()}")
 
-            for (voice in listOf(LocalTts.VOICE_ZH_EN_INT8, LocalTts.VOICE_ZH_EN)) {
-                val tag = if (voice == LocalTts.VOICE_ZH_EN_INT8) "int8" else "fp32"
-                val best = sweep(context, voice, tag)
-                Log.i(TAG, "BEST_$tag=$best")
-                for (s in sentences) {
-                    for (speed in speeds) {
-                        repeat(3) { rep ->
-                            val wav = if (rep == 0) "x_${s.id}_${speed}_$tag.wav" else null
-                            val b = LocalTts.bench(context, voice, best, s.text, speed, wav)
-                            row(tag, s, b, rep)
-                        }
+            // 热身：一个字母，避免把首次加载的抖动算进第一句
+            LocalTts.synth(context, LocalTts.VOICE_KOKORO, THREADS, LocalTts.SID_EN_AF_HEART, "a", 1.0f)
+
+            for (s in sentences) {
+                for (speed in speeds) {
+                    repeat(3) { rep ->
+                        val wav = if (rep == 0) "k_${s.id}_${speed}.wav" else null
+                        val b = LocalTts.synth(context, LocalTts.VOICE_KOKORO, THREADS, s.sid, s.text, speed, wav)
+                        row(s, b, rep)
                     }
                 }
             }
-
             Log.i(TAG, "MATRIX_DONE")
-            // 最后才做流式回调（首音延迟）；若原生层崩溃，前面的矩阵结果已全部落盘。
-            val five = "Welcome back, let us read this word together."
-            for (voice in listOf(LocalTts.VOICE_ZH_EN_INT8, LocalTts.VOICE_ZH_EN)) {
-                val tag = if (voice == LocalTts.VOICE_ZH_EN_INT8) "int8" else "fp32"
-                val b = LocalTts.bench(context, voice, 4, five, 0.65f, useCallback = true)
-                Log.i(TAG, "FIRST|$tag|${b.firstAudioMs}|${b.totalMs}|${b.audioMs}|${"%.2f".format(b.rtf)}")
-            }
+
+            // 中英混排两种读法：整句单 sid vs 按语言分段切 sid
+            mixCompare(context)
+
+            // 最后才碰流式回调
+            probeCallback(context)
+
             Log.i(TAG, "BENCH_DONE")
         } catch (error: Throwable) {
             Log.e(TAG, "BENCH_FAIL", error)
         }
     }
 
-    private fun sweep(context: Context, voice: String, tag: String): Int {
-        val probe = listOf(sentences[1], sentences[3])
-        val avgs = LinkedHashMap<Int, Double>()
-        for (threads in listOf(2, 3, 4)) {
-            var sum = 0.0
-            var n = 0
-            for (s in probe) {
-                repeat(3) { rep ->
-                    val b = LocalTts.bench(context, voice, threads, s.text, 1.0f)
-                    row(tag, s, b, rep)
-                    sum += b.rtf
-                    n++
-                }
-            }
-            avgs[threads] = sum / n
+    private fun mixCompare(context: Context) {
+        val zhPart = "我们来读这个单词，"
+        val enPart = "family"
+        for (speed in listOf(1.0f, 0.8f)) {
+            val t0 = System.nanoTime()
+            LocalTts.synth(context, LocalTts.VOICE_KOKORO, THREADS, LocalTts.SID_ZH_ZF_XIAOBEI, "$zhPart$enPart。", speed, "k_mixed_singlesid_$speed.wav")
+            val singleMs = (System.nanoTime() - t0) / 1_000_000
+
+            val t1 = System.nanoTime()
+            val (zhSamples, rate) = LocalTts.generateSamples(context, LocalTts.VOICE_KOKORO, THREADS, LocalTts.SID_ZH_ZF_XIAOBEI, zhPart, speed)
+            val (enSamples, _) = LocalTts.generateSamples(context, LocalTts.VOICE_KOKORO, THREADS, LocalTts.SID_EN_AF_HEART, enPart, speed)
+            val audioMs = LocalTts.concatWav(context, listOf(zhSamples, enSamples), rate, "k_mixed_split_$speed.wav")
+            val splitMs = (System.nanoTime() - t1) / 1_000_000
+            Log.i(TAG, "MIX|speed=$speed|singleSidMs=$singleMs|splitSidMs=$splitMs|splitAudioMs=$audioMs")
         }
-        Log.i(TAG, "SWEEP_$tag=" + avgs.entries.joinToString(",") { "${it.key}:${"%.2f".format(it.value)}" })
-        return avgs.minByOrNull { it.value }!!.key
     }
 
-    private fun row(tag: String, s: Sentence, b: LocalTts.Bench, rep: Int) {
+    /**
+     * 流式回调探测：独立 IO 线程 + 显式 object 回调 + 每次调用加锁；
+     * 先用一个字母热身，再试短句。
+     */
+    private fun probeCallback(context: Context) {
+        val worker = thread(name = "kokoro-callback-probe") {
+            try {
+                Log.i(TAG, "CB|start")
+                LocalTts.synth(context, LocalTts.VOICE_KOKORO, THREADS, LocalTts.SID_EN_AF_HEART, "a", 1.0f)
+                Log.i(TAG, "CB|warmup_ok")
+                var first = -1L
+                val started = System.nanoTime()
+                val b = LocalTts.synthWithCallback(
+                    context,
+                    LocalTts.VOICE_KOKORO,
+                    THREADS,
+                    LocalTts.SID_EN_AF_HEART,
+                    "Hello",
+                    0.65f,
+                ) { first = (System.nanoTime() - started) / 1_000_000 }
+                Log.i(TAG, "CB|short_ok|firstMs=${if (first < 0) b.firstAudioMs else first}|totalMs=${b.totalMs}|audioMs=${b.audioMs}")
+                Log.i(TAG, "CB|zh_probe")
+                val bz = LocalTts.synthWithCallback(
+                    context,
+                    LocalTts.VOICE_KOKORO,
+                    THREADS,
+                    LocalTts.SID_ZH_ZF_XIAOBEI,
+                    "欢迎回来",
+                    0.65f,
+                ) { }
+                Log.i(TAG, "CB|zh_ok|firstMs=${bz.firstAudioMs}|totalMs=${bz.totalMs}")
+            } catch (error: Throwable) {
+                Log.e(TAG, "CB|FAIL", error)
+            }
+        }
+        worker.join(180_000)
+        Log.i(TAG, "CB|joined alive=${worker.isAlive}")
+    }
+
+    private fun row(s: Sentence, b: LocalTts.Bench, rep: Int) {
         Log.i(
             TAG,
-            "ROW|$tag|${s.id}|${b.threads}|${b.speed}|$rep|${b.initMs}|${b.firstAudioMs}|" +
-                "${b.totalMs}|${b.audioMs}|${"%.2f".format(b.rtf)}|${b.peakPssKb / 1024}",
+            "ROW|${s.id}|${b.sid}|${b.speed}|$rep|${b.initMs}|${b.totalMs}|${b.audioMs}|${"%.2f".format(b.rtf)}|${b.peakPssKb / 1024}",
         )
     }
-
-    private fun assetState(context: Context, dir: String, file: String): String =
-        try {
-            val size = context.assets.open("$dir/$file").use { it.available().toLong() }
-            if (size < 4096) "pointer($size bytes)" else "ok($size bytes)"
-        } catch (e: Throwable) {
-            "missing(${e.message})"
-        }
 }
