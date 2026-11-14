@@ -7,7 +7,6 @@ export * from './protocol';
 export * from './http';
 export * from './audio-fingerprint';
 export * from './language-speed';
-export * from './speech-units';
 export * from './signed-tts';
 export * from './provider-presets';
 export * from './vendor-pronunciation';
