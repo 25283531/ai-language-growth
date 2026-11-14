@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // 端侧语音（sherpa-onnx 的 piper-phonemize）发布在 JitPack 上
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

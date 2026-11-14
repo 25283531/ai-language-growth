@@ -134,6 +134,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 端侧 TTS 评测入口（不影响正常使用）：
+        // adb shell am start -n com.alg.languagegrowth/.MainActivity --ez localtts_test true
+        if (intent?.getBooleanExtra("localtts_test", false) == true) {
+            Thread {
+                try {
+                    val sentence = "Hello! Let us read this word together."
+                    for (speed in listOf(0.6f, 0.8f, 1.0f, 1.2f)) {
+                        LocalTts.synthesizeToWav(this, sentence, speed, "local_tts_$speed.wav")
+                    }
+                    repeat(3) { index ->
+                        LocalTts.synthesizeToWav(this, sentence, 1.0f, "local_tts_stability_$index.wav")
+                    }
+                    LocalTts.synthesizeToWav(this, "family", 0.6f, "local_tts_word_family_06.wav")
+                    LocalTts.synthesizeToWav(this, "family", 1.0f, "local_tts_word_family_10.wav")
+                    android.util.Log.i("LocalTts", "TEST DONE initMs=${LocalTts.initMs}")
+                } catch (error: Throwable) {
+                    android.util.Log.e("LocalTts", "TEST FAIL", error)
+                }
+            }.start()
+        }
         val appearance = getSharedPreferences("appearance", MODE_PRIVATE)
         val account = getSharedPreferences("account", MODE_PRIVATE)
         setContent {

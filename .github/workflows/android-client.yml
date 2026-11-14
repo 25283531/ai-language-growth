@@ -56,6 +56,27 @@ jobs:
         run: gradle --no-daemon -p apps/android testDebugUnitTest
       - name: Quality gate - lint
         run: gradle --no-daemon -p apps/android lintDebug
+      # 端侧 TTS 评估用：Piper 英文女声模型（约 63MB）+ 英文词典，构建时下载，不进仓库。
+      - name: Fetch offline TTS model (sherpa-onnx Piper)
+        run: |
+          set -euo pipefail
+          MODEL_DIR=apps/android/app/src/main/assets/tts
+          mkdir -p "$MODEL_DIR"
+          curl -fsSL -o /tmp/amy.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-medium.tar.bz2
+          tar -xjf /tmp/amy.tar.bz2 -C /tmp
+          cp /tmp/vits-piper-en_US-amy-medium/en_US-amy-medium.onnx "$MODEL_DIR/"
+          cp /tmp/vits-piper-en_US-amy-medium/tokens.txt "$MODEL_DIR/"
+          curl -fsSL -o "$MODEL_DIR/lexicon-en-us.txt" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/lexicon-en-us.txt
+          ls -lh "$MODEL_DIR"
+          # JNI 原生库同样在构建时拉取，避免 51MB 二进制进仓库。
+          curl -fsSL -o /tmp/sherpa-android.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-android.tar.bz2
+          tar -xjf /tmp/sherpa-android.tar.bz2 -C /tmp
+          mkdir -p apps/android/app/src/main/jniLibs
+          cp -r /tmp/jniLibs/arm64-v8a /tmp/jniLibs/armeabi-v7a apps/android/app/src/main/jniLibs/
+          ls -lh apps/android/app/src/main/jniLibs/arm64-v8a
       - name: Prepare release signing
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' }}
         env:
