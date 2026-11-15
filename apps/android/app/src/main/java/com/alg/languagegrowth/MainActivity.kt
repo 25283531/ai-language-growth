@@ -233,6 +233,8 @@ private fun GrowthApp(
     var asrReservationId by remember { mutableStateOf("") }
     var speechBusy by remember { mutableStateOf(false) }
     var speechStatus by remember { mutableStateOf("") }
+    // 三档重听：当前正在播放的 teacherSpeed（1.0 正常 / 0.8 慢速 / 0.65 很慢）
+    var replaySpeed by remember { mutableStateOf<Double?>(null) }
     var wordProgress by remember { mutableStateOf(0f) }
     var sentenceRecording by remember { mutableStateOf(false) }
     var sentenceAttempts by remember { mutableStateOf(0) }
@@ -278,11 +280,15 @@ private fun GrowthApp(
         }
     }
 
-    fun replayWord() {
+    fun replayWord(speed: Double? = null) {
         val current = directive ?: return
         wordProgress = 0f
+        replaySpeed = speed
+        // 切换档位先停掉上一档，避免两个速度叠在一起。
+        if (speed != null) teacherSpeech.stop(clearAudio = false)
         teacherSpeech.playWord(
             base(), token().orEmpty(), learnerId, current, lessonSpeech,
+            speed = speed,
             onState = { active, message ->
                 speechBusy = active
                 speechStatus = message
@@ -651,8 +657,9 @@ private fun GrowthApp(
                             onStart = ::startSession,
                             speechBusy = speechBusy,
                             speechStatus = speechStatus,
-                            onReplay = { replayWord() },
+                            onReplay = { replayWord(it) },
                             onExplain = { playTeacher(true) },
+                            activeSpeed = replaySpeed,
                             onNarratePhonics = { praise -> narratePhonics(praise) },
                             onNarrateUsage = { narrateUsage() },
                             onPickImage = { imageId -> scope.launch { submitTurn(null, null, 0, imageId) } },
@@ -1178,7 +1185,8 @@ private fun LearnScreen(
     wordProgress: Float,
     onStart: () -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
-    speechBusy: Boolean, speechStatus: String, onReplay: () -> Unit, onExplain: () -> Unit,
+    speechBusy: Boolean, speechStatus: String, onReplay: (Double) -> Unit, onExplain: () -> Unit,
+    activeSpeed: Double? = null,
     onNarratePhonics: (Boolean) -> Unit, onNarrateUsage: () -> Unit,
     onPickImage: (String) -> Unit,
     onSpeakCoaching: (String) -> Unit,
@@ -1260,20 +1268,24 @@ private fun LearnScreen(
         )
 
         if (passes < target) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GrowthSecondaryButton(
-                    "重听发音",
-                    onReplay,
-                    modifier = Modifier.weight(1f),
-                    enabled = !speechBusy && !recording && !busy,
-                )
-                GrowthSecondaryButton(
-                    "重听讲解",
-                    onExplain,
-                    modifier = Modifier.weight(1f),
-                    enabled = !speechBusy && !recording && !busy,
-                )
+            // 三速并排：正常 1.0 / 慢速 0.8 / 很慢 0.65，播放中的那一档高亮。
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(1.0 to "正常", 0.8 to "慢速", 0.65 to "很慢").forEach { (speed, label) ->
+                    val playing = speechBusy && activeSpeed == speed
+                    GrowthSecondaryButton(
+                        if (playing) "▶ $label" else label,
+                        { onReplay(speed) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !speechBusy && !recording && !busy,
+                    )
+                }
             }
+            GrowthSecondaryButton(
+                "重听讲解",
+                onExplain,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !speechBusy && !recording && !busy,
+            )
             HoldToSpeakButton(
                 recording = recording,
                 enabled = !busy && !speechBusy,
