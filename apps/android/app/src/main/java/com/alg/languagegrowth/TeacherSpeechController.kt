@@ -76,6 +76,8 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         speech: JSONObject?,
         replay: Boolean = false,
         texts: List<String>? = null,
+        /** 覆盖本轮 teacherSpeed：1.0 正常 / 0.8 慢速 / 0.65 很慢；null 表示沿用服务端下发值。 */
+        speed: Double? = null,
         onState: (Boolean, String) -> Unit,
     ) {
         val previous = task
@@ -133,7 +135,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 if (parts.isEmpty()) {
                     val resolved = mutableListOf<AudioPart>()
                     for (text in fallbackTexts) {
-                        val body = voiceBody(directive, text, speech)
+                        val body = voiceBody(directive, text, speech, speed)
                         // 先检查服务端缓存资源，命中即复用，不产生供应商 TTS 调用。
                         val lookup = withContext(Dispatchers.IO) {
                             http(base, "/speech/cache/lookup", "POST", body, token, learnerHeaders)
@@ -221,10 +223,13 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         learnerId: String,
         directive: JSONObject,
         speech: JSONObject?,
+        speed: Double? = null,
         onState: (Boolean, String) -> Unit,
         onProgress: ((Float) -> Unit)? = null,
     ) {
         val word = targetWordOf(directive)
+        // 缓存键带上速度，避免“正常”与“很慢”互相复用错档音频。
+        val wordKey = if (speed == null) word else "$word@$speed"
         if (word.isBlank()) {
             onState(false, "这一轮还没有可重放的单词。")
             return
@@ -242,7 +247,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
             var settled = false
             emit(true, "正在准备单词发音…")
             try {
-                if (cachedWordKey == word && cachedWordParts.isNotEmpty() && cachedWordParts.all { it.first.isFile }) {
+                if (cachedWordKey == wordKey && cachedWordParts.isNotEmpty() && cachedWordParts.all { it.first.isFile }) {
                     emit(true, "正在读单词…")
                     playParts(cachedWordParts, onProgress)
                     emit(false, "单词发音播放完毕，可以再听")
@@ -251,7 +256,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 require(token.isNotBlank() && learnerId.isNotBlank()) { "登录或学习者信息已失效，请重新登录" }
                 clearWordCache()
                 val learnerHeaders = mapOf("X-Learner-Id" to learnerId)
-                val body = voiceBody(directive, word, speech)
+                val body = voiceBody(directive, word, speech, speed)
                 val estimatedSeconds = ceil(word.length / 5.0).coerceIn(6.0, 30.0)
                 // 媒体下载接口要求有效额度租约；即使命中缓存也先建租约，
                 // 缓存命中时按 0 秒结算，不会产生新的供应商 TTS 费用。
@@ -295,7 +300,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                     settled = true
                     pendingFiles.clear()
                     cachedWordParts = downloaded
-                    cachedWordKey = word
+                    cachedWordKey = wordKey
                     emit(false, "单词发音播放完毕，可以再听")
                     return@launch
                 }
@@ -326,7 +331,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 settled = true
                 pendingFiles.clear()
                 cachedWordParts = downloaded
-                cachedWordKey = word
+                cachedWordKey = wordKey
                 emit(false, "单词发音播放完毕，可以再听")
             } catch (e: CancellationException) {
                 throw e
@@ -402,7 +407,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         return if (text.isBlank()) emptyList() else listOf(text)
     }
 
-    private fun voiceBody(directive: JSONObject, text: String, speech: JSONObject?): JSONObject {
+    private fun voiceBody(directive: JSONObject, text: String, speech: JSONObject?, speed: Double? = null): JSONObject {
         require(text.codePointCount(0, text.length) <= 500) { "本轮老师文本超过语音接口上限，请先阅读课堂文字" }
         val body = JSONObject().put("text", text)
         // 原样透传服务端 speech.scope（课程级缓存归属）；缺失时不臆造，由服务端 fail-closed 到 PRIVATE。
@@ -410,6 +415,11 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         val voice = directive.optJSONObject("voice")
         listOf("teacherSpeed", "voiceStyle", "pauseAfterSentenceMs", "pronunciationMode").forEach { key ->
             if (voice != null && voice.has(key) && !voice.isNull(key)) body.put(key, voice.get(key))
+        }
+        // 重听三档：用户点击的速度优先于服务端默认值，服务端按 teacherSpeed 统一换算厂商 speed。
+        if (speed != null) {
+            require(speed in 0.25..4.0) { "重听速度不合法" }
+            body.put("teacherSpeed", speed)
         }
         return body
     }

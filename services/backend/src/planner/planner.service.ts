@@ -599,17 +599,37 @@ export class PlannerService {
 
       const consecutiveSuccesses = input.succeeded ? review.consecutiveSuccesses + 1 : 0;
       const intervalDays = nextReviewIntervalDays(review.consecutiveSuccesses, input.succeeded);
-      await tx.review_schedules.create({
-        data: {
-          learnerId: review.learnerId,
-          skillNodeId: review.skillNodeId,
-          learningItemId: review.learningItemId,
-          activeKey: this.activeReviewKey(review.learnerId, review.skillNodeId, review.learningItemId),
-          consecutiveSuccesses,
-          intervalDays,
-          dueAt: new Date(now.getTime() + intervalDays * 86400000),
-        },
-      });
+      const nextActiveKey = this.activeReviewKey(
+        review.learnerId,
+        review.skillNodeId,
+        review.learningItemId,
+      );
+      // 同一 (learner, skill, item) 可能已有一条待复习行（并发首排或历史遗留）。
+      // 直接 create 会撞 activeKey 唯一约束，事务回滚会把本轮作答一起丢掉，
+      // 客户端表现为「点了没反应 / 一直停在原页面」。这种情况改为更新已有行。
+      const pending = await tx.review_schedules.findUnique({ where: { activeKey: nextActiveKey } });
+      if (pending) {
+        await tx.review_schedules.update({
+          where: { id: pending.id },
+          data: {
+            consecutiveSuccesses,
+            intervalDays,
+            dueAt: new Date(now.getTime() + intervalDays * 86400000),
+          },
+        });
+      } else {
+        await tx.review_schedules.create({
+          data: {
+            learnerId: review.learnerId,
+            skillNodeId: review.skillNodeId,
+            learningItemId: review.learningItemId,
+            activeKey: nextActiveKey,
+            consecutiveSuccesses,
+            intervalDays,
+            dueAt: new Date(now.getTime() + intervalDays * 86400000),
+          },
+        });
+      }
       this.logger.log(
         `复习完成 ${review.skillNodeId}：${input.succeeded ? '成功' : '未通过'}，下次间隔 ${intervalDays} 天`,
       );

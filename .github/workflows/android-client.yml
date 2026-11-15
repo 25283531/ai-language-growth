@@ -56,6 +56,36 @@ jobs:
         run: gradle --no-daemon -p apps/android testDebugUnitTest
       - name: Quality gate - lint
         run: gradle --no-daemon -p apps/android lintDebug
+      # 端侧 TTS 评测用（Kokoro）：官方 int8 多语种模型，构建时下载并校验，不进仓库。
+      - name: Fetch offline TTS model (sherpa-onnx Kokoro)
+        run: |
+          set -euo pipefail
+          KOKORO_DIR=apps/android/app/src/main/assets/tts-kokoro
+          mkdir -p "$KOKORO_DIR"
+          curl -fsSL -o /tmp/kokoro.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2
+          tar -xjf /tmp/kokoro.tar.bz2 -C /tmp
+          SRC=/tmp/kokoro-int8-multi-lang-v1_0
+          echo "model.int8.onnx bytes: $(stat -c %s $SRC/model.int8.onnx)"
+          # 验收门槛：必须 >100MB；只有 133 字节说明是坏的 LFS 指针，直接失败。
+          test "$(stat -c %s $SRC/model.int8.onnx)" -gt 104857600
+          cp "$SRC/model.int8.onnx" "$KOKORO_DIR/"
+          cp "$SRC/voices.bin" "$KOKORO_DIR/"
+          cp "$SRC/tokens.txt" "$KOKORO_DIR/"
+          cp "$SRC/lexicon-us-en.txt" "$KOKORO_DIR/"
+          cp "$SRC/lexicon-zh.txt" "$KOKORO_DIR/"
+          cp "$SRC"/*.fst "$KOKORO_DIR/"
+          cp -r "$SRC/espeak-ng-data" "$KOKORO_DIR/"
+          du -sh "$KOKORO_DIR"
+          # JNI 原生库同样在构建时拉取，避免 51MB 二进制进仓库。
+          # 版本必须 < 2.0.0：sherpa-onnx >= 2.0.0 已废弃并**忽略** --vits-data-dir，
+          # Piper 模型因此无法用内置 espeak 音素化（实测报 phoneme_codepoints is empty）。
+          curl -fsSL -o /tmp/sherpa-android.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.20/sherpa-onnx-v1.12.20-android.tar.bz2
+          tar -xjf /tmp/sherpa-android.tar.bz2 -C /tmp
+          mkdir -p apps/android/app/src/main/jniLibs
+          cp -r /tmp/jniLibs/arm64-v8a /tmp/jniLibs/armeabi-v7a apps/android/app/src/main/jniLibs/
+          ls -lh apps/android/app/src/main/jniLibs/arm64-v8a
       - name: Prepare release signing
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' }}
         env:
