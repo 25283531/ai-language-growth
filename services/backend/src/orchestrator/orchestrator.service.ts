@@ -60,6 +60,18 @@ import { PronunciationCoachService } from '../agents/pronunciation-coach.service
  * 完全内置、不查库、不调用任何外部服务 —— 数据库与网络都不可用时
  * 仍能给孩子一段可播放、可跟读的教学内容，保证课程不中断。
  */
+/**
+ * 客户端只认三档语速（正常 1.0 / 慢速 0.8 / 很慢 0.65）。
+ * 方法阶梯会按 speedFactor 连续调节，直接下发就会出现 0.46 这种档外值，
+ * 客户端无法高亮当前档，服务端缓存也会被拆碎。这里统一吸附到最近的一档。
+ */
+export function snapTeacherSpeedTier(raw: number): 1.0 | 0.8 | 0.65 {
+  if (!Number.isFinite(raw)) return 0.65;
+  if (raw >= 0.9) return 1.0;
+  if (raw >= 0.725) return 0.8;
+  return 0.65;
+}
+
 const OFFLINE_DIRECTIVE: TeachingDirective = {
   targetSkillNodeId: 'LA.LISTEN.greeting_core',
   taskType: 'listening_comprehension',
@@ -806,7 +818,7 @@ export class OrchestratorService {
     if (input.intent === 'repeat_request') {
       speech.cached = true;
     } else {
-      directive.voice.teacherSpeed = Math.max(0.25, Math.round((directive.voice.teacherSpeed - 0.15) * 100) / 100);
+      directive.voice.teacherSpeed = snapTeacherSpeedTier(directive.voice.teacherSpeed - 0.15);
       // 慢速重播沿用上一轮持久化的课程作用域身份；缺失时 fail-closed 到 PRIVATE_DYNAMIC。
       const persistedScope = speech.scope;
       const synthesized = await this.synthesize(directive, routingDecision, {
@@ -1338,23 +1350,27 @@ export class OrchestratorService {
    * 铁律：兜底不写证据、不改掌握状态、不计费 ——
    * 没有可靠证据就不能声称学习发生，也不能污染成本账本。
    */
-  offlineFallback(input: {
+  async offlineFallback(input: {
     lessonSessionId: string;
     learnerId: string;
     reason: string;
-  }): TurnResponse {
+  }): Promise<TurnResponse> {
     this.logger.warn(`教学回合进入离线兜底 (${input.learnerId}): ${input.reason}`);
-    return {
+    const build = (
+      directive: TeachingDirective,
+      audioRef: string | null,
+      cached: boolean,
+    ): TurnResponse => ({
       lessonSessionId: input.lessonSessionId,
       turnIndex: 0,
-      directive: OFFLINE_DIRECTIVE,
+      directive,
       speech: {
-        audioRef: 'offline://fixed-course/hello',
-        cached: true,
-        teacherSpeed: OFFLINE_DIRECTIVE.voice.teacherSpeed,
-        voiceStyle: OFFLINE_DIRECTIVE.voice.voiceStyle,
-        pauseAfterSentenceMs: OFFLINE_DIRECTIVE.voice.pauseAfterSentenceMs,
-        pronunciationMode: OFFLINE_DIRECTIVE.voice.pronunciationMode,
+        audioRef,
+        cached,
+        teacherSpeed: directive.voice.teacherSpeed,
+        voiceStyle: directive.voice.voiceStyle,
+        pauseAfterSentenceMs: directive.voice.pauseAfterSentenceMs,
+        pronunciationMode: directive.voice.pronunciationMode,
       },
       assessment: {
         performedPronunciationAssessment: false,
@@ -1395,7 +1411,28 @@ export class OrchestratorService {
       intent: 'no_answer',
       lessonFinished: false,
       summary: null,
-    };
+    });
+
+    // 优先保留孩子当前正在做的活动：业务异常（如写库冲突）时不应把孩子
+    // 拎去另一节课，那会让孩子以为自己「回到了 hello」。内容、选项、语速都不变。
+    try {
+      const session = await this.prisma.lesson_sessions.findUnique({
+        where: { id: input.lessonSessionId },
+        select: { currentDirective: true },
+      });
+      const raw = session?.currentDirective as unknown as TeachingDirective | null;
+      if (raw && typeof raw === 'object' && raw.taskType && raw.voice) {
+        const directive: TeachingDirective = {
+          ...raw,
+          teacherUtterance: `老师这边卡了一下，我们先不换内容，再试一次，好吗？${raw.teacherUtterance ?? ''}`,
+        };
+        // 文本变了，旧音频对不上；audioRef 置空让客户端按新文本重新取音频。
+        return build(directive, null, false);
+      }
+    } catch {
+      // 数据库也不可用时，退回完全内置的固定课程（D-015 最后一级）。
+    }
+    return build(OFFLINE_DIRECTIVE, 'offline://fixed-course/hello', true);
   }
 
   // ——————————————————— 内部实现 ———————————————————
@@ -1985,7 +2022,7 @@ export class OrchestratorService {
       ? teacherProfile.adjustable as Record<string, unknown>
       : {};
     const baseSpeed = typeof adjustable.speakingRate === 'number' ? Math.min(0.85, Math.max(0.45, adjustable.speakingRate)) : 0.65;
-    const teacherSpeed = resolveTeacherSpeed(baseSpeed, input.methodState.current);
+    const teacherSpeed = snapTeacherSpeedTier(resolveTeacherSpeed(baseSpeed, input.methodState.current));
     const syllables = splitWord(targetWord);
     const meaningZh = input.isReview ? '' : (vocabulary?.meaningZh ?? '').trim().slice(0, 40);
     const phonetic = !input.isReview && vocabulary?.phonetic ? vocabulary.phonetic.trim().slice(0, 60) : '';
