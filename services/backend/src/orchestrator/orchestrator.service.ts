@@ -818,7 +818,9 @@ export class OrchestratorService {
     if (input.intent === 'repeat_request') {
       speech.cached = true;
     } else {
-      directive.voice.teacherSpeed = snapTeacherSpeedTier(directive.voice.teacherSpeed - 0.15);
+      // “慢一点”是回合内的自适应微调，需要真比上一轮更低，因此不做三档吸附；
+      // 三档只约束下发到客户端用于重听按钮的基准语速。
+      directive.voice.teacherSpeed = Math.max(0.25, Math.round((directive.voice.teacherSpeed - 0.15) * 100) / 100);
       // 慢速重播沿用上一轮持久化的课程作用域身份；缺失时 fail-closed 到 PRIVATE_DYNAMIC。
       const persistedScope = speech.scope;
       const synthesized = await this.synthesize(directive, routingDecision, {
