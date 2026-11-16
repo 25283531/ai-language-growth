@@ -5,7 +5,11 @@ import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shar
 import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } from './protocol';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
 import { audioFingerprint } from './audio-fingerprint';
-import { splitByLanguage, type SpeechSegment } from './language-speed';
+import {
+  resolveEffectiveTeacherSpeed,
+  splitByLanguage,
+  type SpeechSegment,
+} from './language-speed';
 
 export interface TencentCloudSpeechOptions {
   alias: string;
@@ -86,9 +90,8 @@ const SPEED_ANCHORS: ReadonlyArray<readonly [ratio: number, speed: number]> = [
   [2.5, 6],
 ];
 
-/** 英语段按老师语速插值到官方倍率锚点（保留两位小数）；中文段不受慢速教学影响，固定自然语速 0 档。 */
-export function tencentSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
-  if (segment.language !== 'en') return 0;
+/** 英语段按老师语速插值到官方倍率锚点（保留两位小数）。 */
+export function tencentSpeedValue(teacherSpeed: number): number {
   const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
   const slowest = SPEED_ANCHORS[0]!;
   const fastest = SPEED_ANCHORS[SPEED_ANCHORS.length - 1]!;
@@ -123,10 +126,11 @@ export class TencentCloudTtsAdapter implements TtsAdapter {
     const sampleRate = Number(this.config.options?.sampleRate ?? 16000);
     const primaryLanguage = Number(this.config.options?.primaryLanguage ?? 1);
     const volume = Number(this.config.options?.volume ?? 0);
-    // 慢速教学只针对英语：中英混排时按书写系统切段，英语段用慢速档位，中文段用自然语速。
+    // 语速口径统一：纯英文按档变速，混排固定 0.8，纯中文自然语速。切段只用于选音色。
+    const effective = resolveEffectiveTeacherSpeed(request.text, request.voice.teacherSpeed ?? 1);
     const segments = splitByLanguage(request.text);
     if (!segments.length) throw new Error('腾讯云 TTS 的文本为空');
-    const speeds = segments.map((segment) => tencentSpeedForSegment(segment, request.voice.teacherSpeed ?? 0.65));
+    const speedValue = tencentSpeedValue(effective.speed);
     const parts: Buffer[] = [];
     for (const [index, segment] of segments.entries()) {
       const result = await callTencent(this.config, 'TextToVoice', '2019-08-23', {
@@ -136,7 +140,7 @@ export class TencentCloudTtsAdapter implements TtsAdapter {
         Codec: codec,
         SampleRate: sampleRate,
         PrimaryLanguage: primaryLanguage,
-        Speed: speeds[index],
+        Speed: speedValue,
         Volume: volume,
       }, request.timeoutMs ?? 15000);
       const audio = String(result.Audio ?? '');
@@ -149,7 +153,7 @@ export class TencentCloudTtsAdapter implements TtsAdapter {
     // voiceStyle/pronunciationMode、移除 pauseAfterSentenceMs。不同课程同文本
     // 必得不同指纹；同一课程不同用户/时间得到相同指纹。
     const fingerprint = audioFingerprint(request, {
-      speed: speeds.join(','),
+      speed: speedValue,
       voice: voiceType,
       modelAlias: this.config.modelAlias ?? '',
       extra: [codec, sampleRate, primaryLanguage, volume, request.voiceIdentity, this.config.baseUrl, 'lang-speed-v1'],

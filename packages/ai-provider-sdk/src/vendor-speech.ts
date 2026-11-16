@@ -5,7 +5,11 @@ import type { AsrAdapter, ProviderCapabilities, ProviderPricing, TtsAdapter } fr
 import type { AsrRequest, AsrResponse, TtsRequest, TtsResponse } from '@alg/shared-contracts';
 import { loadAudio, resolveAudioDir, resolveAudioUrlPrefix } from './http';
 import { audioFingerprint } from './audio-fingerprint';
-import { splitByLanguage, type SpeechSegment } from './language-speed';
+import {
+  resolveEffectiveTeacherSpeed,
+  splitByLanguage,
+  type SpeechSegment,
+} from './language-speed';
 export interface IflytekSpeechOptions {
   alias: string;
   baseUrl: string;
@@ -126,10 +130,15 @@ function decodeIatResult(value: string): string {
  * 正常与很慢听感几乎无差，就是真机上反馈的「慢速和正常一样」。
  * 中文段不受慢速教学影响，固定自然语速 50。
  */
+export function iflytekSpeedValue(speed: number): number {
+  const value = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  return Math.max(0, Math.min(100, Math.round(50 + (value - 1) * 171)));
+}
+
+/** @deprecated 改用 {@link iflytekSpeedValue}；语速判定已统一到 resolveEffectiveTeacherSpeed。 */
 export function iflytekSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
   if (segment.language !== 'en') return 50;
-  const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
-  return Math.max(0, Math.min(100, Math.round(50 + (value - 1) * 171)));
+  return iflytekSpeedValue(teacherSpeed);
 }
 
 /**
@@ -172,10 +181,13 @@ export class IflytekTtsAdapter implements TtsAdapter {
     const voiceFor = (segment: SpeechSegment): string =>
       iflytekVoiceForSegment(segment, voice, englishVoice);
     const isSuperSmart = /\/v1\/private\//i.test(this.config.baseUrl);
-    // 慢速教学只针对英语：中英混排时按书写系统切段，英语段放慢，中文段保持自然语速。
+    // 语速口径：纯英文按档位变速，中英混排固定 0.8，纯中文自然语速（见 resolveEffectiveTeacherSpeed）。
+    // 切段只用于选音色，不再逐段算不同的速度，否则混排句会被拆成一快一慢。
     const segments = splitByLanguage(request.text);
     if (!segments.length) throw new Error('讯飞 TTS 的文本为空');
-    const speeds = segments.map((segment) => iflytekSpeedForSegment(segment, request.voice.teacherSpeed ?? 0.65));
+    const effective = resolveEffectiveTeacherSpeed(request.text, request.voice.teacherSpeed ?? 1);
+    const speedValue = iflytekSpeedValue(effective.speed);
+    const speeds = segments.map(() => speedValue);
     const parts: Buffer[] = [];
     for (const [index, segment] of segments.entries()) {
       const speed = speeds[index];

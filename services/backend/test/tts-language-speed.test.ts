@@ -1,12 +1,14 @@
 /**
- * 语言感知语速回归（2026-11-14 用户要求）：
- * 慢速教学只针对英语——英语单词 / 例句 / 短文放慢，中文讲解保持自然语速。
+ * 语速口径回归：
+ *
+ * 2026-11-17 产品更正：中英混排句子不是跟读内容（跟读项是纯英文单词/例句），
+ * 因此混排统一用 0.8 倍速，不跟「正常/慢速/很慢」三档变；纯中文讲解保持自然语速；
+ * **只有纯英文才按档变速**。
  *
  * 覆盖：
- *  - 中英混排按语言边界切段，纯中文 / 纯英文仍是一段（不返回原“按长度切分”）；
- *  - 标点跟随前一段，短片段并入相邻段，避免逐字合成的断句感；
- *  - 档位型供应商的英语段按老师语速取档位、中文段固定自然档；
- *  - 连续型供应商（0—100）英语段按老师语速换算、中文段固定 50。
+ *  - 中英混排按语言边界切段（仅用于选音色），纯中文 / 纯英文仍是一段；
+ *  - 语速判定：纯英文跟档、混排固定 0.8、纯中文 1.0；
+ *  - 适配器把同一个语速用在所有段上，不拆成一快一慢。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -15,10 +17,11 @@ import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import type { TtsRequest } from '@alg/shared-contracts';
 import {
-  iflytekSpeedForSegment,
+  iflytekSpeedValue,
+  resolveEffectiveTeacherSpeed,
   splitByLanguage,
   TencentCloudTtsAdapter,
-  tencentSpeedForSegment,
+  tencentSpeedValue,
 } from '@alg/ai-provider-sdk';
 
 const originalFetch = globalThis.fetch;
@@ -58,34 +61,50 @@ describe('splitByLanguage', () => {
   });
 });
 
-describe('每段速率：英语放慢，中文自然', () => {
-  it('浮点型：英语段按官方倍率锚点插值，中文段固定 0 档', () => {
-    assert.equal(tencentSpeedForSegment(en('apple'), 0.44), -2);
-    // 0.65 落在官方 -2(0.6x) 与 -1(0.8x) 之间，插值得 -1.75，而不是粗档 -2（0.6x）。
-    assert.equal(tencentSpeedForSegment(en('apple'), 0.65), -1.75);
-    assert.equal(tencentSpeedForSegment(en('apple'), 0.7), -1.5);
-    assert.equal(tencentSpeedForSegment(en('apple'), 0.8), -1);
-    assert.equal(tencentSpeedForSegment(en('apple'), 1.0), 0);
-    assert.equal(tencentSpeedForSegment(en('apple'), 1.2), 1);
-    assert.equal(tencentSpeedForSegment(en('apple'), 1.6), 2.4);
-    // 中文段不受慢速教学影响
-    assert.equal(tencentSpeedForSegment(zh('苹果'), 0.44), 0);
-    assert.equal(tencentSpeedForSegment(zh('苹果'), 1.2), 0);
+describe('语速判定：只有纯英文跟档位', () => {
+  it('纯英文按老师选的档位', () => {
+    assert.deepEqual(resolveEffectiveTeacherSpeed('apple', 0.65), { speed: 0.65, mode: 'tier' });
+    assert.deepEqual(resolveEffectiveTeacherSpeed('Listen and say apple.', 0.8), { speed: 0.8, mode: 'tier' });
+    assert.deepEqual(resolveEffectiveTeacherSpeed('Good morning.', 1.0), { speed: 1, mode: 'tier' });
   });
 
-  it('连续型：英语段按老师语速换算到 0—100，中文段固定 50', () => {
-    assert.equal(iflytekSpeedForSegment(zh('苹果'), 0.44), 50);
-    assert.equal(iflytekSpeedForSegment(zh('苹果'), 1.2), 50);
-    // 实测标定：50=1.00x，每单位约 0.0058x，所以 speed = clamp(round(50 + (target-1)*171), 0, 100)。
-    assert.equal(iflytekSpeedForSegment(en('apple'), 1.0), 50);
-    assert.equal(iflytekSpeedForSegment(en('apple'), 0.8), 16);
-    assert.equal(iflytekSpeedForSegment(en('apple'), 1.2), 84);
+  it('中英混排固定 0.8，不随三档变化', () => {
+    for (const tier of [1.0, 0.8, 0.65]) {
+      assert.deepEqual(resolveEffectiveTeacherSpeed('跟我读：apple。', tier), {
+        speed: 0.8,
+        mode: 'mixed',
+      });
+    }
+    assert.equal(resolveEffectiveTeacherSpeed('这是 apple，那是 banana。', 0.65).speed, 0.8);
+  });
+
+  it('纯中文讲解保持自然语速，不被「很慢」拖慢', () => {
+    assert.deepEqual(resolveEffectiveTeacherSpeed('苹果是一种水果。', 0.65), { speed: 1, mode: 'natural' });
+    assert.deepEqual(resolveEffectiveTeacherSpeed('   ', 0.65), { speed: 1, mode: 'natural' });
+  });
+});
+
+describe('供应商换算：把有效语速换成各自的参数', () => {
+  it('档位型：官方倍率锚点插值', () => {
+    assert.equal(tencentSpeedValue(0.44), -2);
+    // 0.65 落在官方 -2(0.6x) 与 -1(0.8x) 之间，插值得 -1.75，而不是粗档 -2。
+    assert.equal(tencentSpeedValue(0.65), -1.75);
+    assert.equal(tencentSpeedValue(0.7), -1.5);
+    assert.equal(tencentSpeedValue(0.8), -1);
+    assert.equal(tencentSpeedValue(1.0), 0);
+    assert.equal(tencentSpeedValue(1.2), 1);
+    assert.equal(tencentSpeedValue(1.6), 2.4);
+  });
+
+  it('连续型：0—100，实测标定', () => {
+    // 实测：50=1.00x，每单位约 0.0058x，所以 speed = clamp(round(50 + (target-1)*171), 0, 100)。
+    assert.equal(iflytekSpeedValue(1.0), 50);
+    assert.equal(iflytekSpeedValue(0.8), 16);
+    assert.equal(iflytekSpeedValue(1.2), 84);
     // 0.65 已越过该发音人下限（0.74x≈speed 0），夹到 0 而不是给负值。
-    assert.equal(iflytekSpeedForSegment(en('apple'), 0.65), 0);
-    assert.equal(iflytekSpeedForSegment(en('apple'), 0.44), 0);
-    assert.ok(iflytekSpeedForSegment(en('apple'), 0.44) < iflytekSpeedForSegment(en('apple'), 1.0));
-    // 正常档不得再被“顺带放慢”：旧的 (s-0.25)/1.75*100 会把 1.0 压成 0.95x。
-    assert.equal(iflytekSpeedForSegment(en('apple'), 1.0), 50);
+    assert.equal(iflytekSpeedValue(0.65), 0);
+    assert.equal(iflytekSpeedValue(0.44), 0);
+    assert.ok(iflytekSpeedValue(0.44) < iflytekSpeedValue(1.0));
   });
 });
 
@@ -123,19 +142,20 @@ describe('适配器：按语言分段请求并拼接音频', () => {
     } as TtsRequest;
   }
 
-  it('中文讲解 + 英语例句：两次请求，英语段更慢、中文段自然', async () => {
+  it('中英混排：两段都用混排语速 -1，不拆成一快一慢', async () => {
     process.env.AI_AUDIO_DIR = mkdtempSync(join(tmpdir(), 'alg-tts-lang-'));
     const bodies = stubFetch();
     await adapter(process.env.AI_AUDIO_DIR).invoke(request('这是苹果。跟我读：apple。'));
 
     assert.equal(bodies.length, 2);
-    assert.equal(bodies[0]!.Speed, 0);
+    // 混排固定 0.8 倍速 → 腾讯 -1 档，中文段也是 -1（旧行为是 0）。
+    assert.equal(bodies[0]!.Speed, -1);
     assert.ok(bodies[0]!.Text.includes('苹果'));
-    assert.equal(bodies[1]!.Speed, -2);
+    assert.equal(bodies[1]!.Speed, -1);
     assert.ok(bodies[1]!.Text.includes('apple'));
   });
 
-  it('纯英文只请求一次，不该为了分段多花一次调用', async () => {
+  it('纯英文只请求一次，按档位变速', async () => {
     process.env.AI_AUDIO_DIR = mkdtempSync(join(tmpdir(), 'alg-tts-lang-'));
     const bodies = stubFetch();
     await adapter(process.env.AI_AUDIO_DIR).invoke(request('Listen and say apple.'));

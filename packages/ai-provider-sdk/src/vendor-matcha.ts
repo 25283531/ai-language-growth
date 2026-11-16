@@ -28,6 +28,7 @@ import {
   type HttpServiceOptions,
 } from './http';
 import { audioFingerprint } from './audio-fingerprint';
+import { resolveEffectiveTeacherSpeed } from './language-speed';
 
 /** 服务端文档声明：speed 允许 0.5–2.0，超出自动钳制；文本规范化后上限 800 字符。 */
 export const MATCHA_SPEED_RANGE = { min: 0.5, max: 2 } as const;
@@ -98,7 +99,9 @@ export class MatchaTtsAdapter implements TtsAdapter {
     }
 
     const codec = this.options.codec === 'wav' ? 'wav' : 'mp3';
-    const speed = matchaSpeedForTeacherSpeed(request.voice.teacherSpeed ?? 1);
+    // 语速口径：纯英文按档位，混排固定 0.8，纯中文自然语速；此处再转成倍率参数。
+    const effective = resolveEffectiveTeacherSpeed(text, request.voice.teacherSpeed ?? 1);
+    const speed = matchaSpeedForTeacherSpeed(effective.speed);
     const headerName = this.options.apiKeyHeader ?? 'x-api-key';
     const started = Date.now();
 

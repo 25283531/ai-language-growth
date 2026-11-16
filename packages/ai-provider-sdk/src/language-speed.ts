@@ -10,6 +10,46 @@
 
 export type SpeechLanguage = 'zh' | 'en';
 
+/**
+ * 中英混排句子的固定语速。
+ *
+ * 产品口径（2026-11-17）：混排句子不是让孩子跟读的内容（跟读项是纯英文单词/例句），
+ * 所以不需要跟着「正常/慢速/很慢」三档变，统一用一个略慢的自然语速即可；
+ * 只有纯英文才需要按档变速。
+ */
+export const MIXED_SENTENCE_SPEED = 0.8;
+
+/** 本次合成实际采用的语速以及原因，便于日志与预生成工具复用同一套判定。 */
+export interface EffectiveSpeechSpeed {
+  /** 相对倍率，1 为自然语速 */
+  speed: number;
+  /** tier=纯英文按档变速，mixed=混排固定语速，natural=纯中文自然语速 */
+  mode: 'tier' | 'mixed' | 'natural';
+}
+
+/**
+ * 决定一次合成该用多快。
+ *
+ * - 纯英文（只有拉丁字母，没有汉字）：用调用方给的档位，三档差异只在这里生效；
+ * - 中英混排：固定 {@link MIXED_SENTENCE_SPEED}，不跟档位；
+ * - 纯中文（讲解、提示）：自然语速 1.0，不因为孩子选了「很慢」就把讲解拖慢。
+ */
+export function resolveEffectiveTeacherSpeed(
+  text: string,
+  teacherSpeed: number,
+): EffectiveSpeechSpeed {
+  const body = (text ?? '').trim();
+  if (!body) return { speed: 1, mode: 'natural' };
+  const hasCjk = CJK.test(body);
+  const hasLatin = LATIN.test(body);
+  if (hasLatin && !hasCjk) {
+    const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
+    return { speed: value, mode: 'tier' };
+  }
+  if (hasCjk && hasLatin) return { speed: MIXED_SENTENCE_SPEED, mode: 'mixed' };
+  return { speed: 1, mode: 'natural' };
+}
+
 export interface SpeechSegment {
   text: string;
   language: SpeechLanguage;
