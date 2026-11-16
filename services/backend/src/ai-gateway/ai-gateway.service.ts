@@ -33,6 +33,7 @@ import {
   SpeechacePronunciationAdapter,
   ChivoxPronunciationAdapter,
   IflytekTtsAdapter,
+  MatchaTtsAdapter,
   IflytekAsrAdapter,
   TencentCloudAsrAdapter,
   TencentCloudTtsAdapter,
@@ -312,7 +313,14 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         this.registry.register('llm', new HttpLlmAdapter(options));
         break;
       case 'tts':
-        this.registry.register('tts', config.providerPresetId === 'iflytek-spark'
+        this.registry.register('tts', config.providerPresetId === 'matcha-tts'
+          ? new MatchaTtsAdapter({
+            ...options,
+            baseUrl: config.baseUrl,
+            credentials: config.credentials,
+            ...(typeof config.options.codec === 'string' ? { codec: config.options.codec as 'mp3' | 'wav' } : {}),
+          })
+          : config.providerPresetId === 'iflytek-spark'
           ? new IflytekTtsAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })
           : config.providerPresetId === 'tencent-cloud'
             ? new TencentCloudTtsAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })

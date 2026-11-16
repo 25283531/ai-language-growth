@@ -9,6 +9,7 @@ export * from './audio-fingerprint';
 export * from './pregen-text';
 export * from './language-speed';
 export * from './signed-tts';
+export * from './vendor-matcha';
 export * from './provider-presets';
 export * from './vendor-pronunciation';
 export * from './vendor-speech';

@@ -152,5 +152,16 @@
     "credentialRequired": true,
     "documentationUrl": "https://api-account.cloud.chivox.com/zh/docs",
     "documentationUrls": { "pronunciation": "https://api-account.cloud.chivox.com/zh/docs" }
+  },
+  {
+    "id": "matcha-tts",
+    "name": "Matcha 中英双语 TTS（自建）",
+    "protocol": "matcha_http",
+    "defaultBaseUrls": { "tts": "https://tts.250886.xyz" },
+    "services": ["tts"],
+    "credentialRequired": true,
+    "documentationUrl": "https://tts.250886.xyz/docs",
+    "documentationUrls": { "tts": "https://tts.250886.xyz/docs" },
+    "credentialFields": [{ "key": "apiKey", "label": "接口口令（X-API-Key）", "required": true }]
   }
 ]
