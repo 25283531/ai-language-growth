@@ -21,11 +21,15 @@ const activityById = (id: string) => {
 };
 
 describe('复习形态可渲染判定', () => {
-  it('图片选择题可渲染：复习轮保留选项与目标词，孩子能作答', () => {
-    assert.equal(isReviewRenderable(activityById('act-greet-tap-picture')), true);
+  it('带选项的图片选择题可渲染：复习轮保留选项与目标词，孩子能作答', () => {
+    assert.equal(isReviewRenderable(activityById('act-obj-pick-pictures')), true);
   });
 
-  it('听力理解不可渲染：复习轮清空目标词与示范文本，客户端只剩空卡片', () => {
+  it('没有选项的图片选择题不可渲染：客户端会退化成空跟读卡（真机卡住的 act-greet-tap-picture）', () => {
+    assert.equal(isReviewRenderable(activityById('act-greet-tap-picture')), false);
+  });
+
+  it('听力理解不可渲染：复习轮清空目标词与示范文本', () => {
     assert.equal(isReviewRenderable(activityById('act-greet-listen-greeting')), false);
   });
 
