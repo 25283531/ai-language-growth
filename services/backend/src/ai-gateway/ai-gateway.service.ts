@@ -143,10 +143,27 @@ interface TtsCacheEntry extends TtsScopeIdentity {
  * 时由客户端 playbackRate 微调；量化值同时用于 TTS 请求、缓存键与对外返回的
  * speech.teacherSpeed，保证三者一致。
  */
-export function quantizeTeacherSpeed(raw: number): number {
-  if (!Number.isFinite(raw)) return 0.65;
+export function quantizeTeacherSpeed(raw: number): number {  if (!Number.isFinite(raw)) return 0.65;
   const clamped = Math.min(1.0, Math.max(0.25, raw));
   return Number((Math.round(clamped / 0.05) * 0.05).toFixed(2));
+}
+
+/**
+ * 解析 TTS_CACHE_BYPASS_LANGS（逗号分隔语种码）。默认空集：不按语种旁路，缓存契约不变。
+ * 部署时设成 en，就让英文语音永远不读缓存、直接走在线合成。
+ */
+export function parseTtsCacheBypassLangs(raw: string | undefined): Set<string> {
+  return new Set(
+    (raw ?? '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** 文本是否命中按语种旁路：配置了 en 且文本里出现英文字母。导出仅为单测复用。 */
+export function textBypassesTtsCache(text: string, langs: ReadonlySet<string>): boolean {
+  return langs.has('en') && /[A-Za-z]/.test(text);
 }
 
 @Injectable()
@@ -166,6 +183,16 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   private readonly cacheBypass = ['on', 'true', '1'].includes(
     (process.env.TTS_CACHE_BYPASS ?? 'off').trim().toLowerCase(),
   );
+
+  /**
+   * 按语种旁路读缓存：英文语音一律走在线合成。
+   *
+   * 英文段已改用英文发音人（vimary），旧缓存里是中文音色 xiaoyan 读的英文，
+   * 既不能变速也不能复用，所以带英文字母的文本就不读缓存；中文讲解仍走缓存。
+   * 默认空集（不旁路），由部署环境 TTS_CACHE_BYPASS_LANGS=en 显式打开，
+   * 以免破坏“命中不重新计费 / 跨用户复用 / 隐私边界”这几条缓存契约。
+   */
+  private readonly cacheBypassLangs = parseTtsCacheBypassLangs(process.env.TTS_CACHE_BYPASS_LANGS);
   /** Coalesce simultaneous requests for the same utterance within this process. */
   private readonly ttsInFlight = new Map<string, Promise<GatewayCallResult<TtsResponse>>>();
   private readonly providerTimeouts = new Map<string, number>();
@@ -392,8 +419,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     cacheKey: string,
   ): Promise<GatewayCallResult<TtsResponse>> {
     // —— 缓存命中：反复播放不重新消耗 TTS ——
-    // 临时旁路打开时视为永远 miss，全部走在线合成（用于验证厂商语速参数）。
-    const cached = this.cacheBypass ? undefined : await this.findTtsCache(cacheKey, normalizedRequest);
+    // 旁路打开（或文本含英文）时视为 miss，全部走在线合成。
+    const cached = this.shouldBypassCacheRead(normalizedRequest.text)
+      ? undefined
+      : await this.findTtsCache(cacheKey, normalizedRequest);
     if (cached) {
       this.ttsCacheHits += 1;
       return this.cachedTtsOutcome(cached.outcome);
@@ -451,8 +480,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
    * 归属于该 learner 的资产（键中已含 learnerId，这里再显式校验归属，双保险）。
    */
   async peekTtsCache(request: TtsRequest): Promise<TtsResponse | null> {
-    // 旁路开关开着时，播放前的只读探测也一律报“未命中”，把请求逼到在线合成。
-    if (this.cacheBypass) return null;
+    // 旁路开关或英文文本：播放前的只读探测一律报“未命中”，把请求逼到在线合成。
+    if (this.shouldBypassCacheRead(request.text)) return null;
     const normalized = this.normalizeTtsRequest(request);
     const hit = await this.findTtsCache(this.ttsCacheKey(normalized), normalized);
     if (!hit) return null;
@@ -465,8 +494,13 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     return { ...hit.outcome.result, cached: true, characters: 0, latencyMs: 0 };
   }
 
-  private normalizeTtsRequest(request: TtsRequest): NormalizedTtsRequest {
-    const s = request.cacheScope;
+  /** 文本含英文字母时按语种旁路读缓存（需部署显式打开 en）。 */
+  private shouldBypassCacheRead(text: string): boolean {
+    if (this.cacheBypass) return true;
+    return textBypassesTtsCache(text, this.cacheBypassLangs);
+  }
+
+  private normalizeTtsRequest(request: TtsRequest): NormalizedTtsRequest {    const s = request.cacheScope;
     return {
       ...request,
       voice: {

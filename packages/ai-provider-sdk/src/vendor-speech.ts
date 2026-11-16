@@ -132,6 +132,21 @@ export function iflytekSpeedForSegment(segment: SpeechSegment, teacherSpeed: num
   return Math.max(0, Math.min(100, Math.round(50 + (value - 1) * 171)));
 }
 
+/**
+ * 按语种选音色：英文段用英文发音人，中文段（及其它）保留原音色。
+ *
+ * 背景：中文发音人 xiaoyan 读英文时几乎不认 business.speed（实测 hello 全档仅 0.76→0.68s），
+ * 而英文发音人 vimary 同一句是 1.37→0.54s。因此语种与音色必须分开配。导出仅供单测复用。
+ */
+export function iflytekVoiceForSegment(
+  segment: SpeechSegment,
+  chineseVoice: string,
+  englishVoice: string,
+): string {
+  const english = englishVoice.trim();
+  return segment.language === 'en' && english ? english : chineseVoice;
+}
+
 export class IflytekTtsAdapter implements TtsAdapter {
   readonly alias: string;
   readonly serviceKind = 'tts' as const;
@@ -148,6 +163,14 @@ export class IflytekTtsAdapter implements TtsAdapter {
     const { apiKey = '', apiSecret = '', appId = '' } = this.config.credentials;
     if (!apiKey || !apiSecret || !appId) throw new Error('讯飞 TTS 需要 AppID、API Key 和 API Secret');
     const voice = String(this.config.options?.voice ?? request.voiceIdentity);
+    const englishVoice = String(this.config.options?.englishVoice ?? '').trim();
+    /**
+     * 按语种分音色：中文音色（xiaoyan）读英文时几乎不认 speed——实测 hello 从 speed 0 到 100
+     * 只有 0.76→0.68s（≈6%），而英文发音人 vimary 同一句是 1.37→0.54s（≈2.5 倍）。
+     * 所以英文段用英文发音人，中文段保留中文音色，两者的语速档位才能各自生效。
+     */
+    const voiceFor = (segment: SpeechSegment): string =>
+      iflytekVoiceForSegment(segment, voice, englishVoice);
     const isSuperSmart = /\/v1\/private\//i.test(this.config.baseUrl);
     // 慢速教学只针对英语：中英混排时按书写系统切段，英语段放慢，中文段保持自然语速。
     const segments = splitByLanguage(request.text);
@@ -156,6 +179,7 @@ export class IflytekTtsAdapter implements TtsAdapter {
     const parts: Buffer[] = [];
     for (const [index, segment] of segments.entries()) {
       const speed = speeds[index];
+      const vcn = voiceFor(segment);
       const payload = JSON.stringify(isSuperSmart
         ? {
           header: { app_id: appId, status: 2 },
@@ -167,7 +191,7 @@ export class IflytekTtsAdapter implements TtsAdapter {
               stop_split: Number(this.config.options?.stopSplit ?? 0),
             },
             tts: {
-              vcn: voice,
+              vcn,
               speed,
               volume: 50,
               pitch: 50,
@@ -189,7 +213,7 @@ export class IflytekTtsAdapter implements TtsAdapter {
             },
           },
         }
-        : { common: { app_id: appId }, business: { aue: 'lame', sfl: 1, tte: 'UTF8', vcn: voice, speed, volume: 50, pitch: 50 }, data: { status: 2, text: Buffer.from(segment.text).toString('base64') } });
+        : { common: { app_id: appId }, business: { aue: 'lame', sfl: 1, tte: 'UTF8', vcn, speed, volume: 50, pitch: 50 }, data: { status: 2, text: Buffer.from(segment.text).toString('base64') } });
       const chunk = Buffer.from(await connectAndSend(signedUrl(this.config.baseUrl, apiKey, apiSecret), payload, request.timeoutMs ?? 20000, (message) => {
       const header = message.header as { code?: number; message?: string; status?: number } | undefined;
       const code = header?.code ?? (typeof message.code === 'number' ? message.code : 0);
@@ -226,6 +250,8 @@ export class IflytekTtsAdapter implements TtsAdapter {
         this.config.options?.sparkAssist ?? 1,
         this.config.options?.remain ?? 0,
         this.config.options?.stopSplit ?? 0,
+        // 按语种分音色后，英文段的音色是独立变量，必须进指纹，否则中英文指纹会撞在一起。
+        englishVoice,
         'lang-speed-v1',
       ],
     });
