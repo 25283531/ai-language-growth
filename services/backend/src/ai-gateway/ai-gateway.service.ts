@@ -156,14 +156,15 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   /** TTS 音频缓存：结构化课程级缓存键 → 音频引用与归属身份。 */
   private readonly ttsCache = new Map<string, TtsCacheEntry>();
   /**
-   * 缓存旁路开关（临时验证用）：跳过内存/持久/预生成三层读缓存，强制每次走在线合成，
-   * 用于确认厂商语速参数是否真的送到并生效。写缓存照旧，便于关掉后直接复用新合成的音频。
+   * 缓存旁路开关（临时验证用）：TTS_CACHE_BYPASS=on 时跳过内存/持久/预生成三层读缓存，
+   * 强制每次走在线合成，用于确认厂商语速参数是否真的送到并生效。写缓存照旧，便于关掉后
+   * 直接复用新合成的音频。
    *
-   * 默认值现为 on（主理人 2026-11-16 要求“先暂时屏蔽缓存调用，采用在线合成”做语速验证）；
-   * 验证结束后把这里的默认值改回 'off'，或部署时设 TTS_CACHE_BYPASS=off 立即恢复缓存读。
+   * 默认必须为 off：缓存语义（命中不重新计费、跨用户复用、隐私边界）是既有契约，
+   * 由缓存用例逐条守住；把默认值改成 on 会让它们集体变红。开关只通过部署环境变量打开。
    */
   private readonly cacheBypass = ['on', 'true', '1'].includes(
-    (process.env.TTS_CACHE_BYPASS ?? 'on').trim().toLowerCase(),
+    (process.env.TTS_CACHE_BYPASS ?? 'off').trim().toLowerCase(),
   );
   /** Coalesce simultaneous requests for the same utterance within this process. */
   private readonly ttsInFlight = new Map<string, Promise<GatewayCallResult<TtsResponse>>>();
