@@ -6,6 +6,7 @@
 export * from './protocol';
 export * from './http';
 export * from './audio-fingerprint';
+export * from './pregen-text';
 export * from './language-speed';
 export * from './signed-tts';
 export * from './provider-presets';

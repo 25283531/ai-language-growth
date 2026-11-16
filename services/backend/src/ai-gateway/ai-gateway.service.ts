@@ -10,7 +10,7 @@
  *  2. 重复播放同一段语音不重新消耗 TTS —— 走本地缓存（D-014 / 验收硬指标一）。
  *  3. 所有降级都必须如实上报，不得静默掩盖。
  */
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -54,6 +54,7 @@ import type {
 import { MOCK_PROVIDER_ALIASES, ModelRouterImpl } from '@alg/model-router';
 import { ProviderConfigService, type RuntimeProviderConfig } from '../providers/provider-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PregenerationIndexService } from '../speech/pregeneration-index.service';
 
 /** 一次调用的结果与降级信息。 */
 export interface GatewayCallResult<T> {
@@ -163,6 +164,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   private ttsCacheMisses = 0;
   private ttsCoalesced = 0;
   private ttsCharactersSynthesized = 0;
+  /** 预生成索引命中次数（不计供应商字符，命中即 0 字符）。 */
+  private ttsPregenHits = 0;
   private pronunciationCandidates: string[] = [];
   private readonly runtimeCandidates: Record<'llm' | 'tts' | 'asr', string[]> = {
     llm: [],
@@ -176,6 +179,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     @Inject(ModelRouterImpl) private readonly modelRouter: ModelRouterImpl,
     @Inject(ProviderConfigService) private readonly providerConfigs: ProviderConfigService,
     private readonly prisma: PrismaService,
+    /** 预生成索引；测试中未注入时视为关闭，不影响既有缓存行为。 */
+    @Optional() private readonly pregeneration?: PregenerationIndexService,
   ) {
     this.registry = registerAdapters(new AdapterRegistry(), loadProviderConfig());
     this.logger.log(
@@ -496,7 +501,93 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       }
     }
     cached ??= await this.loadPersistentTtsCache(cacheKey, request);
+    cached ??= await this.findPregeneratedTtsCache(cacheKey, request);
     return cached;
+  }
+
+  /**
+   * 第 3 步：预生成索引（设计文档第 4 节）。
+   *
+   * 命中且文件与字节校验通过后，立即回写内存与磁盘索引 —— 第二次请求走第 2 步，
+   * 不再产生数据库查询。任何不确定性（索引未建、文件缺失、字节被替换、shadow 模式）
+   * 都退回 miss，绝不阻断供应商回退链。
+   */
+  private async findPregeneratedTtsCache(
+    cacheKey: string,
+    request: NormalizedTtsRequest,
+  ): Promise<TtsCacheEntry | undefined> {
+    const index = this.pregeneration;
+    if (!index?.enabled) return undefined;
+
+    const lookup = await index.lookupForTts({
+      text: request.text,
+      teacherSpeed: request.voice.teacherSpeed,
+      scope: request.cacheScope.scope,
+    });
+    const clip = lookup.clip;
+    if (!clip) return undefined;
+    if (lookup.outcome === 'shadow_hit') {
+      this.logger.log(
+        `预生成语音本可命中（shadow）：lang=${clip.lang} tier=${clip.speedTier} file=${clip.audioFile}`,
+      );
+      return undefined;
+    }
+    if (lookup.outcome !== 'hit') return undefined;
+
+    const audioFile = clip.audioRef.split('/').pop() ?? '';
+    if (!/^[a-f0-9]{24}\.(mp3|wav|m4a)$/i.test(audioFile)) {
+      index.invalidate(clip.id);
+      return undefined;
+    }
+    try {
+      await access(join(resolveAudioDir(), audioFile));
+      const actualSha256 = await this.audioSha256(clip.audioRef);
+      // 文件缺失与被替换都视为不可用：宁可多花一次供应商调用，也不给孩子放错音频。
+      if (!actualSha256 || actualSha256 !== clip.sha256) throw new Error('audio bytes mismatch');
+    } catch (error) {
+      index.invalidate(clip.id);
+      this.logger.warn(`预生成音频不可用，回落供应商：${audioFile}（${(error as Error).message}）`);
+      return undefined;
+    }
+
+    // 预生成音频本身就是按目标档位渲染的，客户端不需要再变速；
+    // 若这里声明 playback，播放器会二次放慢，比下发语速更慢。
+    const outcome: GatewayCallResult<TtsResponse> = {
+      result: {
+        audioRef: clip.audioRef,
+        characters: 0,
+        latencyMs: 0,
+        providerAlias: 'pregenerated',
+        modelAlias: clip.voiceId,
+        cached: true,
+        requestedTeacherSpeed: request.voice.teacherSpeed,
+        speedMode: 'native',
+        playbackRate: 1,
+      },
+      degraded: false,
+      reasons: ['pregenerated_index_hit'],
+      effectiveLevel: 'L0',
+      providerAlias: 'pregenerated',
+      latencyMs: 0,
+    };
+    const identity = this.ttsScopeIdentity(request, clip.sha256);
+    const entry: TtsCacheEntry = {
+      ...identity,
+      audioRef: clip.audioRef,
+      characters: 0,
+      text: request.text,
+      teacherSpeed: request.voice.teacherSpeed,
+      voiceIdentity: request.voiceIdentity,
+      outcome,
+    };
+    this.ttsCache.set(cacheKey, entry);
+    if (this.ttsCache.size > 1000) this.ttsCache.delete(this.ttsCache.keys().next().value!);
+    this.ttsPregenHits += 1;
+    // 回写磁盘索引：下次直接在第 2 步命中，不再查库。
+    await this.storePersistentTtsCache(cacheKey, request, outcome, identity).catch((error) =>
+      this.logger.warn(`预生成命中回写磁盘索引失败：${(error as Error).message}`),
+    );
+    return entry;
   }
 
   private ttsSpeedMetadata(request: TtsRequest, providerAlias: string): {
@@ -669,6 +760,9 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       }), 'utf8');
       await rename(temporary, target);
     } finally { await unlink(temporary).catch(() => undefined); }
+    // 预生成音频在导入时已写入 media_assets（id=pregen-<checksum>、cacheStatus=cached）。
+    // 命中这里只回写旁车索引；再造一条 tts-<checksum> 资产只会在同一文件上留下重复元数据。
+    if (result.providerAlias === 'pregenerated') return;
     const audioFile = result.audioRef.split('/').pop();
     if (audioFile && !audioFile.includes('..')) {
       const extension = audioFile.split('.').pop() || null;
@@ -928,6 +1022,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     misses: number;
     hitRate: number;
     charactersSynthesized: number;
+    pregenHits: number;
   } {
     let saved = 0;
     for (const v of this.ttsCache.values()) {
@@ -943,6 +1038,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       misses: this.ttsCacheMisses,
       hitRate: this.ttsRequests ? Number((avoided / this.ttsRequests).toFixed(4)) : 0,
       charactersSynthesized: this.ttsCharactersSynthesized,
+      pregenHits: this.ttsPregenHits,
     };
   }
 }

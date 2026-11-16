@@ -22,6 +22,7 @@ import {
 } from './speech/speech.controller';
 import { TtsCacheAdminController } from './speech/tts-cache-admin.controller';
 import { TtsCacheMaintenanceService } from './speech/tts-cache-maintenance.service';
+import { PregenerationIndexService } from './speech/pregeneration-index.service';
 import { MediaController } from './media/media.controller';
 import { ImageCacheService } from './media/image-cache.service';
 import { ProviderConfigController } from './providers/provider-config.controller';
@@ -95,6 +96,7 @@ import { ReplayModule } from './replay/replay.module';
     OrchestratorService,
     SpeechQuotaService,
     TtsCacheMaintenanceService,
+  PregenerationIndexService,
     UsageCostService,
     UsageBudgetService,
     RoutingConfigService,
