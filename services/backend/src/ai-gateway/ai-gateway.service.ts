@@ -559,7 +559,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     let audioRef = clip.audioRef;
     let audioSha256 = clip.sha256;
     let deliveredSegments: TtsResponse['segments'];
-    const segments = await index.segmentsFor(clip.id);
+    // 索引服务可能来自旧版本/测试替身；没有 segmentsFor 时按“无分段”处理。
+    const segments = typeof index.segmentsFor === 'function' ? await index.segmentsFor(clip.id) : [];
     if (segments.length > 0) {
       const resolved: NonNullable<TtsResponse['segments']> = [];
       let intact = true;

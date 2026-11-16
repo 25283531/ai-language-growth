@@ -25,6 +25,7 @@ import { AiGatewayService } from '../src/ai-gateway/ai-gateway.service.ts';
 import type {
   PregenerationClip,
   PregenerationLookupResult,
+  PregenerationSegment,
 } from '../src/speech/pregeneration-index.service.ts';
 
 type Internals = AiGatewayService & {
@@ -96,9 +97,10 @@ interface FakeIndex {
   invalidated: string[];
   lookupForTts(input: { text: string; teacherSpeed: number; scope: string }): Promise<PregenerationLookupResult>;
   invalidate(id: string): void;
+  segmentsFor(clipId: string): Promise<PregenerationSegment[]>;
 }
 
-function makeIndex(result: PregenerationLookupResult): FakeIndex {
+function makeIndex(result: PregenerationLookupResult, segments: PregenerationSegment[] = []): FakeIndex {
   return {
     enabled: true,
     lookups: 0,
@@ -110,6 +112,32 @@ function makeIndex(result: PregenerationLookupResult): FakeIndex {
     invalidate(id: string) {
       this.invalidated.push(id);
     },
+    async segmentsFor() {
+      return segments;
+    },
+  };
+}
+
+/** 写一个分段音频文件，并返回可在索引里声明的 segment。 */
+function writeSegment(
+  dir: string,
+  segmentIndex: number,
+  lang: 'zh' | 'en',
+  bytes: string,
+): PregenerationSegment {
+  const buffer = Buffer.from(bytes);
+  const sha256 = createHash('sha256').update(buffer).digest('hex');
+  const audioFile = `${sha256.slice(0, 24)}.mp3`;
+  writeFileSync(join(dir, audioFile), buffer);
+  return {
+    segmentIndex,
+    lang,
+    text: lang === 'zh' ? '第一遍听,选择正确的单词:' : 'play',
+    audioFile,
+    audioRef: `/api/v1/media/audio/${audioFile}`,
+    sha256,
+    bytes: buffer.length,
+    durationMs: 500,
   };
 }
 
@@ -169,6 +197,43 @@ describe('预生成音频索引命中链路', () => {
     assert.equal(outcome.result.speedMode, 'native');
     assert.equal(outcome.result.playbackRate, 1);
     assert.equal(gateway.ttsCacheStats().pregenHits, 1);
+  });
+
+  it('命中且带分段：按顺序下发 segments，audioRef 指向第一段', async () => {
+    const dir = makeDir();
+    const clip = writeClip(dir);
+    const zh = writeSegment(dir, 0, 'zh', 'ID3-segment-zh-01');
+    const en = writeSegment(dir, 1, 'en', 'ID3-segment-en-02');
+    const index = makeIndex({ outcome: 'hit', clip }, [zh, en]);
+    const { gateway, calls } = makeGateway(dir, index);
+    const outcome = await gateway.ttsWithResult(request, decision);
+    assert.equal(calls.length, 0, '分段命中同样不得调用供应商');
+    assert.equal(outcome.result.audioRef, zh.audioRef, '旧客户端只读 audioRef，必须拿到第一段');
+    assert.equal(outcome.result.segments?.length, 2);
+    assert.equal(outcome.result.segments?.[0]?.audioRef, zh.audioRef);
+    assert.equal(outcome.result.segments?.[1]?.audioRef, en.audioRef);
+    // 每段已按目标档位渲染，不能再叠加播放器变速
+    assert.equal(outcome.result.segments?.[1]?.speedMode, 'native');
+    assert.equal(outcome.result.segments?.[1]?.playbackRate, 1);
+  });
+
+  it('分段文件缺失：不播半句，整体回退整句音频', async () => {
+    const dir = makeDir();
+    const clip = writeClip(dir);
+    const zh = writeSegment(dir, 0, 'zh', 'ID3-segment-zh-01');
+    const broken: PregenerationSegment = {
+      ...zh,
+      segmentIndex: 1,
+      lang: 'en',
+      audioFile: 'deadbeefdeadbeefdeadbeef.mp3',
+      audioRef: '/api/v1/media/audio/deadbeefdeadbeefdeadbeef.mp3',
+    };
+    const index = makeIndex({ outcome: 'hit', clip }, [zh, broken]);
+    const { gateway, calls } = makeGateway(dir, index);
+    const outcome = await gateway.ttsWithResult(request, decision);
+    assert.equal(calls.length, 0);
+    assert.equal(outcome.result.audioRef, clip.audioRef, '任一段缺失必须回退整句文件');
+    assert.equal(outcome.result.segments, undefined);
   });
 
   it('命中后回写缓存：第二次请求不再查索引', async () => {
