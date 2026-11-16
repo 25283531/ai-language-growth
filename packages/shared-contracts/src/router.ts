@@ -181,6 +181,17 @@ export const ttsResponseSchema = z.object({
   requestedTeacherSpeed: z.number().min(0.25).max(4).optional(),
   speedMode: z.enum(['native', 'playback']).optional(),
   playbackRate: z.number().min(0.25).max(4).optional(),
+  /**
+   * 分段音频（按语言切分的中英混合句）：按数组顺序播放即为整句。
+   * 中文段保持自然语速、英文段按档位放慢，因此三档只在英文段有差异。
+   * audioRef 始终指向第一段，旧客户端只读 audioRef 也能播（但听不到后段）。
+   */
+  segments: z.array(z.object({
+    audioRef: z.string(),
+    cached: z.boolean().default(false),
+    speedMode: z.enum(['native', 'playback']).optional(),
+    playbackRate: z.number().min(0.25).max(4).optional(),
+  })).optional(),
 });
 
 export type TtsResponse = z.infer<typeof ttsResponseSchema>;

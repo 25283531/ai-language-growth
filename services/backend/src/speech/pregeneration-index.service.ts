@@ -26,6 +26,18 @@ export interface PregenerationClip {
   engineVersion: string;
 }
 
+/** 一句混合语中的一个语音段：中文段自然语速（三档共用），英文段按档位渲染。 */
+export interface PregenerationSegment {
+  segmentIndex: number;
+  lang: 'zh' | 'en';
+  text: string;
+  audioFile: string;
+  audioRef: string;
+  sha256: string;
+  bytes: number;
+  durationMs: number;
+}
+
 export type PregenerationLookupOutcome =
   | 'hit'
   | 'miss'
@@ -39,6 +51,8 @@ export interface PregenerationLookupResult {
   clip?: PregenerationClip;
   /** 未命中的可读原因，用于日志与排查；不含任何文本内容。 */
   reason?: string;
+  /** 分段音频（按顺序播放即整句）；为空表示该条目只有整句文件。 */
+  segments?: PregenerationSegment[];
 }
 
 interface CacheItem<T> {
@@ -70,6 +84,8 @@ export class PregenerationIndexService implements OnModuleInit {
   private readonly mode: PregenerationMode;
   /** 命中过的 clip，10 分钟内不再查库。 */
   private readonly positiveCache = new Map<string, CacheItem<PregenerationClip>>();
+  /** clipId → 分段列表；分段表不可用时记为空数组，回退整句文件。 */
+  private readonly segmentCache = new Map<string, CacheItem<PregenerationSegment[]>>();
   /** 未命中的 key，5 分钟内不再查库。 */
   private readonly negativeCache = new Map<string, number>();
   /** 表缺失/权限错误的退避截止时间。 */
@@ -194,8 +210,57 @@ export class PregenerationIndexService implements OnModuleInit {
 
   /** 把不可用的 clip 从正缓存剔除，避免同一请求反复命中坏文件。 */
   invalidate(clipId: string): void {
+    this.segmentCache.delete(clipId);
     for (const [key, item] of this.positiveCache) {
       if (item.value.id === clipId) this.positiveCache.delete(key);
+    }
+  }
+
+  /**
+   * 取该条目的分段音频（按 segmentIndex 升序）。
+   *
+   * 分段表未迁移 / 该条目未做分段时返回空数组：调用方据此回退到整句文件，
+   * 而不是把半句话当成整句下发。
+   */
+  async segmentsFor(clipId: string): Promise<PregenerationSegment[]> {
+    const cached = this.segmentCache.get(clipId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    if (Date.now() < this.tableUnavailableUntil) return [];
+    try {
+      const rows = await this.prisma.$queryRaw<PregenerationSegmentRow[]>(Prisma.sql`
+        SELECT "segmentIndex"  AS "segmentIndex",
+               lang,
+               "segmentText"   AS "text",
+               "audioFile"     AS "audioFile",
+               "audioRef"      AS "audioRef",
+               sha256,
+               bytes,
+               "durationMs"    AS "durationMs"
+          FROM pregenerated_clip_segments
+         WHERE "clipId" = ${clipId}
+         ORDER BY "segmentIndex" ASC
+      `);
+      const value: PregenerationSegment[] = rows.map((row) => ({
+        segmentIndex: Number(row.segmentIndex),
+        lang: row.lang === 'en' ? 'en' : 'zh',
+        text: String(row.text),
+        audioFile: String(row.audioFile),
+        audioRef: String(row.audioRef),
+        sha256: String(row.sha256),
+        bytes: Number(row.bytes),
+        durationMs: Number(row.durationMs),
+      }));
+      this.segmentCache.set(clipId, { value, expiresAt: Date.now() + POSITIVE_TTL_MS });
+      return value;
+    } catch (error) {
+      const message = (error as Error).message ?? String(error);
+      if (/relation .* does not exist|permission denied/i.test(message)) {
+        this.tableUnavailableUntil = Date.now() + 10 * 60 * 1000;
+        this.logger.warn(`预生成分段表不可用，回退整句文件 10 分钟：${message.slice(0, 160)}`);
+      } else {
+        this.logger.warn(`读取预生成分段失败：${message.slice(0, 160)}`);
+      }
+      return [];
     }
   }
 
@@ -311,4 +376,15 @@ interface PregenerationClipRow {
   bytes: number;
   voiceId: string;
   engineVersion: string;
+}
+
+interface PregenerationSegmentRow {
+  segmentIndex: number | string;
+  lang: string;
+  text: string;
+  audioFile: string;
+  audioRef: string;
+  sha256: string;
+  bytes: number | string;
+  durationMs: number | string;
 }

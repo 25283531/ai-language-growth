@@ -2335,12 +2335,21 @@ export class OrchestratorService {
         voiceStyle: voice.voiceStyle,
         pauseAfterSentenceMs: voice.pauseAfterSentenceMs,
         pronunciationMode: voice.pronunciationMode,
-        segments: [{
-          audioRef: outcome.result.audioRef,
-          cached: outcome.result.cached,
-          ...(outcome.result.speedMode ? { speedMode: outcome.result.speedMode } : {}),
-          ...(typeof outcome.result.playbackRate === 'number' ? { playbackRate: outcome.result.playbackRate } : {}),
-        }],
+        // 预生成的分段音频（中文段自然语速 + 英文段按档）必须原样透传，
+        // 不能被当成“仅一段”：否则客户端只播第一段就停下来。
+        segments: outcome.result.segments && outcome.result.segments.length > 0
+          ? outcome.result.segments.map((segment) => ({
+              audioRef: segment.audioRef,
+              cached: segment.cached ?? outcome.result.cached,
+              ...(segment.speedMode ? { speedMode: segment.speedMode } : {}),
+              ...(typeof segment.playbackRate === 'number' ? { playbackRate: segment.playbackRate } : {}),
+            }))
+          : [{
+              audioRef: outcome.result.audioRef,
+              cached: outcome.result.cached,
+              ...(outcome.result.speedMode ? { speedMode: outcome.result.speedMode } : {}),
+              ...(typeof outcome.result.playbackRate === 'number' ? { playbackRate: outcome.result.playbackRate } : {}),
+            }],
         scope: {
           kind: scopeName,
           topicId: cacheScope.topicId,

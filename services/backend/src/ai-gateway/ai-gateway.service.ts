@@ -552,9 +552,46 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
 
     // 预生成音频本身就是按目标档位渲染的，客户端不需要再变速；
     // 若这里声明 playback，播放器会二次放慢，比下发语速更慢。
+    //
+    // 分段优先：中英混合句的中文段固定自然语速、英文段按档位渲染，
+    // 一次请求把各段按顺序下发（客户端顺序播放即为整句），与线上供应商行为一致。
+    // 任何一段缺文件或字节不符 → 整条不用分段，避免只放出半句话。
+    let audioRef = clip.audioRef;
+    let audioSha256 = clip.sha256;
+    let deliveredSegments: TtsResponse['segments'];
+    const segments = await index.segmentsFor(clip.id);
+    if (segments.length > 0) {
+      const resolved: NonNullable<TtsResponse['segments']> = [];
+      let intact = true;
+      for (const segment of segments) {
+        const file = segment.audioRef.split('/').pop() ?? '';
+        if (!/^[a-f0-9]{24}\.(mp3|wav|m4a)$/i.test(file)) {
+          intact = false;
+          break;
+        }
+        try {
+          await access(join(resolveAudioDir(), file));
+          const actual = await this.audioSha256(segment.audioRef);
+          if (!actual || actual !== segment.sha256) throw new Error('segment bytes mismatch');
+        } catch {
+          intact = false;
+          break;
+        }
+        resolved.push({ audioRef: segment.audioRef, cached: true, speedMode: 'native', playbackRate: 1 });
+      }
+      if (intact && resolved.length === segments.length) {
+        deliveredSegments = resolved;
+        // 旧客户端只读 audioRef：指向第一段，保证至少能正常发音。
+        audioRef = resolved[0]!.audioRef;
+        audioSha256 = segments[0]!.sha256;
+      } else {
+        this.logger.warn(`预生成分段不完整，改用整句文件：${clip.audioFile}`);
+      }
+    }
+
     const outcome: GatewayCallResult<TtsResponse> = {
       result: {
-        audioRef: clip.audioRef,
+        audioRef,
         characters: 0,
         latencyMs: 0,
         providerAlias: 'pregenerated',
@@ -563,6 +600,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
         requestedTeacherSpeed: request.voice.teacherSpeed,
         speedMode: 'native',
         playbackRate: 1,
+        ...(deliveredSegments ? { segments: deliveredSegments } : {}),
       },
       degraded: false,
       reasons: ['pregenerated_index_hit'],
@@ -570,10 +608,10 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       providerAlias: 'pregenerated',
       latencyMs: 0,
     };
-    const identity = this.ttsScopeIdentity(request, clip.sha256);
+    const identity = this.ttsScopeIdentity(request, audioSha256);
     const entry: TtsCacheEntry = {
       ...identity,
-      audioRef: clip.audioRef,
+      audioRef,
       characters: 0,
       text: request.text,
       teacherSpeed: request.voice.teacherSpeed,
