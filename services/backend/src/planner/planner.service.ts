@@ -36,6 +36,21 @@ export interface PlannedStep {
 
 const REVIEW_CLAIM_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * 复习形态可渲染的活动类型。
+ *
+ * 复习轮不提前给答案：`buildDirective` 会清空 targetWords 与 demonstrationText。
+ * 清空后只有图片选择题（tap_image）在客户端仍有可作答界面；听力理解、跟读类
+ * 会退化成“没有单词的跟读卡”，孩子只能看到空白题目区。因此复习候选只从可渲染
+ * 类型里选，而不是下发后再靠客户端兜底。
+ */
+const REVIEW_RENDERABLE_TASK_TYPES: ReadonlySet<string> = new Set(['image_identification']);
+
+/** 复习轮是否能在客户端渲染并作答；导出仅为单测复用。 */
+export function isReviewRenderable(activity: { taskType: string }): boolean {
+  return REVIEW_RENDERABLE_TASK_TYPES.has(activity.taskType);
+}
+
 @Injectable()
 export class PlannerService {
   private readonly logger = new Logger(PlannerService.name);
@@ -85,7 +100,9 @@ export class PlannerService {
         ],
       },
       orderBy: { dueAt: 'asc' },
-      take: 10,
+      // 取多一些：部分复习项的候选活动全部不适合复习形态（见 isReviewRenderable），
+      // 只取 10 条时可能被这类项占满，导致后面的到期复习永远轮不到。
+      take: 30,
     });
 
     for (const review of dueReviews) {
@@ -93,6 +110,7 @@ export class PlannerService {
         .filter((activity) =>
           !input.excludeActivityIds.includes(activity.id) &&
           typeAllowed(activity) &&
+          isReviewRenderable(activity) &&
           this.isWithinProgressiveAccess(activity, states),
         );
       const originalActivity = review.learningItemId
