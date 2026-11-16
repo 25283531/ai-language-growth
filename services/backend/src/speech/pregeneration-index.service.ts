@@ -237,7 +237,7 @@ export class PregenerationIndexService implements OnModuleInit {
                bytes,
                "durationMs"    AS "durationMs"
           FROM pregenerated_clip_segments
-         WHERE "clipId" = ${clipId}
+         WHERE "clipId" = ${clipId}::uuid
          ORDER BY "segmentIndex" ASC
       `);
       const value: PregenerationSegment[] = rows.map((row) => ({
