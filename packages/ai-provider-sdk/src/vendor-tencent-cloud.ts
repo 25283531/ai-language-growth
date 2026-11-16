@@ -70,22 +70,39 @@ async function callTencent(config: TencentCloudSpeechOptions, action: string, ve
   return result;
 }
 
-/** Speed 是档位不是倍率：-2→0.6x、-1→0.8x、0→1.0x、1→1.2x、2→1.5x。 */
-const SPEED_GEARS: ReadonlyArray<readonly [ratio: number, gear: number]> = [
+/**
+ * 腾讯云 TextToVoice 的 Speed 是浮点档位，不是整数倍率。官方文档（
+ * https://cloud.tencent.com/document/product/1073/37995）给出：Speed 范围[-2，6]，
+ * -2→0.6 倍、-1→0.8 倍、0→1.0 倍、1→1.2 倍、2→1.5 倍、6→2.5 倍，
+ * 并明确“如果需要更细化的语速，可以保留小数点后两位，例如 0.5/1.25/2.81 等”。
+ * 所以不再只能取 5 个整数档，而是在官方锚点之间做线性插值，直接命中目标倍率。
+ */
+const SPEED_ANCHORS: ReadonlyArray<readonly [ratio: number, speed: number]> = [
   [0.6, -2],
   [0.8, -1],
   [1.0, 0],
   [1.2, 1],
   [1.5, 2],
+  [2.5, 6],
 ];
 
-/** 英语段按老师语速取最近档位；中文段不受慢速教学影响，固定自然语速。 */
+/** 英语段按老师语速插值到官方倍率锚点（保留两位小数）；中文段不受慢速教学影响，固定自然语速 0 档。 */
 export function tencentSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
   if (segment.language !== 'en') return 0;
   const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
-  return SPEED_GEARS.reduce((best, gear) =>
-    Math.abs(gear[0] - value) < Math.abs(best[0] - value) ? gear : best,
-  )[1];
+  const slowest = SPEED_ANCHORS[0]!;
+  const fastest = SPEED_ANCHORS[SPEED_ANCHORS.length - 1]!;
+  if (value <= slowest[0]) return slowest[1];
+  if (value >= fastest[0]) return fastest[1];
+  for (let index = 1; index < SPEED_ANCHORS.length; index += 1) {
+    const [lowRatio, lowSpeed] = SPEED_ANCHORS[index - 1]!;
+    const [highRatio, highSpeed] = SPEED_ANCHORS[index]!;
+    if (value <= highRatio) {
+      const ratio = (value - lowRatio) / (highRatio - lowRatio);
+      return Math.round((lowSpeed + ratio * (highSpeed - lowSpeed)) * 100) / 100;
+    }
+  }
+  return fastest[1];
 }
 
 export class TencentCloudTtsAdapter implements TtsAdapter {

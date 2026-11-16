@@ -113,11 +113,23 @@ function decodeIatResult(value: string): string {
   return words.join('');
 }
 
-/** speed 取值 0—100，50 为自然语速；英语段按老师语速换算，中文段固定 50。 */
+/**
+ * 讯飞普通版 WebAPI（wss://tts-api.xfyun.cn/v2/tts）的 business.speed 是 0—100 的整数，50 为自然语速。
+ *
+ * 官方文档只给了区间（https://www.xfyun.cn/doc/tts/online_tts/API.html：语速，可选值[0-100]，默认为50），
+ * 每单位对应的真实倍率必须实测标定。同账号 xiaoyan 发音人、74 字符英文句，直连 v2 接口只改 speed：
+ * 0→0.74x、25→0.89x、50→1.00x、75→1.14x、100→1.34x，近似线性，斜率约 0.0058x/单位。
+ * 所以 target→speed 反解为 50 + (target - 1) / 0.0058 ≈ 50 + (target - 1) * 171。
+ *
+ * 注意：该发音人下限约 0.74x（speed=0 触底），0.65 及更慢的档位靠这个参数到不了，需播放端兜底。
+ * 旧实现假设 0.5x—2x 区间（(s-0.25)/1.75*100），1.0 只下发 43（=0.95x）、0.65 下发 23（=0.82x），
+ * 正常与很慢听感几乎无差，就是真机上反馈的「慢速和正常一样」。
+ * 中文段不受慢速教学影响，固定自然语速 50。
+ */
 export function iflytekSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
   if (segment.language !== 'en') return 50;
   const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
-  return Math.max(0, Math.min(100, Math.round(((value - 0.25) / 1.75) * 100)));
+  return Math.max(0, Math.min(100, Math.round(50 + (value - 1) * 171)));
 }
 
 export class IflytekTtsAdapter implements TtsAdapter {

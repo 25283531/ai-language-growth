@@ -59,13 +59,15 @@ describe('splitByLanguage', () => {
 });
 
 describe('每段速率：英语放慢，中文自然', () => {
-  it('档位型：英语段按老师语速取最近档位，中文段固定 0 档', () => {
+  it('浮点型：英语段按官方倍率锚点插值，中文段固定 0 档', () => {
     assert.equal(tencentSpeedForSegment(en('apple'), 0.44), -2);
-    assert.equal(tencentSpeedForSegment(en('apple'), 0.65), -2);
+    // 0.65 落在官方 -2(0.6x) 与 -1(0.8x) 之间，插值得 -1.75，而不是粗档 -2（0.6x）。
+    assert.equal(tencentSpeedForSegment(en('apple'), 0.65), -1.75);
+    assert.equal(tencentSpeedForSegment(en('apple'), 0.7), -1.5);
     assert.equal(tencentSpeedForSegment(en('apple'), 0.8), -1);
     assert.equal(tencentSpeedForSegment(en('apple'), 1.0), 0);
     assert.equal(tencentSpeedForSegment(en('apple'), 1.2), 1);
-    assert.equal(tencentSpeedForSegment(en('apple'), 1.6), 2);
+    assert.equal(tencentSpeedForSegment(en('apple'), 1.6), 2.4);
     // 中文段不受慢速教学影响
     assert.equal(tencentSpeedForSegment(zh('苹果'), 0.44), 0);
     assert.equal(tencentSpeedForSegment(zh('苹果'), 1.2), 0);
@@ -74,8 +76,16 @@ describe('每段速率：英语放慢，中文自然', () => {
   it('连续型：英语段按老师语速换算到 0—100，中文段固定 50', () => {
     assert.equal(iflytekSpeedForSegment(zh('苹果'), 0.44), 50);
     assert.equal(iflytekSpeedForSegment(zh('苹果'), 1.2), 50);
-    assert.equal(iflytekSpeedForSegment(en('apple'), 1.0), 43);
+    // 实测标定：50=1.00x，每单位约 0.0058x，所以 speed = clamp(round(50 + (target-1)*171), 0, 100)。
+    assert.equal(iflytekSpeedForSegment(en('apple'), 1.0), 50);
+    assert.equal(iflytekSpeedForSegment(en('apple'), 0.8), 16);
+    assert.equal(iflytekSpeedForSegment(en('apple'), 1.2), 84);
+    // 0.65 已越过该发音人下限（0.74x≈speed 0），夹到 0 而不是给负值。
+    assert.equal(iflytekSpeedForSegment(en('apple'), 0.65), 0);
+    assert.equal(iflytekSpeedForSegment(en('apple'), 0.44), 0);
     assert.ok(iflytekSpeedForSegment(en('apple'), 0.44) < iflytekSpeedForSegment(en('apple'), 1.0));
+    // 正常档不得再被“顺带放慢”：旧的 (s-0.25)/1.75*100 会把 1.0 压成 0.95x。
+    assert.equal(iflytekSpeedForSegment(en('apple'), 1.0), 50);
   });
 });
 
