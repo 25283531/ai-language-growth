@@ -155,6 +155,16 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
   private readonly registry: AdapterRegistry;
   /** TTS 音频缓存：结构化课程级缓存键 → 音频引用与归属身份。 */
   private readonly ttsCache = new Map<string, TtsCacheEntry>();
+  /**
+   * 缓存旁路开关（临时验证用）：跳过内存/持久/预生成三层读缓存，强制每次走在线合成，
+   * 用于确认厂商语速参数是否真的送到并生效。写缓存照旧，便于关掉后直接复用新合成的音频。
+   *
+   * 默认值现为 on（主理人 2026-11-16 要求“先暂时屏蔽缓存调用，采用在线合成”做语速验证）；
+   * 验证结束后把这里的默认值改回 'off'，或部署时设 TTS_CACHE_BYPASS=off 立即恢复缓存读。
+   */
+  private readonly cacheBypass = ['on', 'true', '1'].includes(
+    (process.env.TTS_CACHE_BYPASS ?? 'on').trim().toLowerCase(),
+  );
   /** Coalesce simultaneous requests for the same utterance within this process. */
   private readonly ttsInFlight = new Map<string, Promise<GatewayCallResult<TtsResponse>>>();
   private readonly providerTimeouts = new Map<string, number>();
@@ -381,7 +391,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     cacheKey: string,
   ): Promise<GatewayCallResult<TtsResponse>> {
     // —— 缓存命中：反复播放不重新消耗 TTS ——
-    const cached = await this.findTtsCache(cacheKey, normalizedRequest);
+    // 临时旁路打开时视为永远 miss，全部走在线合成（用于验证厂商语速参数）。
+    const cached = this.cacheBypass ? undefined : await this.findTtsCache(cacheKey, normalizedRequest);
     if (cached) {
       this.ttsCacheHits += 1;
       return this.cachedTtsOutcome(cached.outcome);
@@ -439,6 +450,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
    * 归属于该 learner 的资产（键中已含 learnerId，这里再显式校验归属，双保险）。
    */
   async peekTtsCache(request: TtsRequest): Promise<TtsResponse | null> {
+    // 旁路开关开着时，播放前的只读探测也一律报“未命中”，把请求逼到在线合成。
+    if (this.cacheBypass) return null;
     const normalized = this.normalizeTtsRequest(request);
     const hit = await this.findTtsCache(this.ttsCacheKey(normalized), normalized);
     if (!hit) return null;
