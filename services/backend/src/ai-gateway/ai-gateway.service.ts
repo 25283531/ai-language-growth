@@ -79,6 +79,31 @@ export interface AsrTrace {
 
 /** 缓存键版本。升位即让旧格式索引整体逻辑失效，无需物理删除。 */
 const TTS_KEY_VERSION = 'tts-v4-natural-voice';
+
+/**
+ * TTS 引擎世代（2026-11-17 起进入缓存键与索引文件名）。
+ *
+ * 背景：索引文件名原来只由缓存键哈希决定，键里也没有引擎版本，于是换模型/重渲染后
+ * 旧索引仍被命中 —— 实测「很慢」档一直回放旧模型的 972ms 音频（app 被读成 app ple），
+ * 而预生成表里已经是新模型的 1152ms。现在把引擎版本并进键与文件名：
+ * 改 `TTS_PREGEN_ENGINE_VERSION` 即自动失效全部旧索引，不需要再人工清 `.tts-*.json`。
+ *
+ * 取值只用环境变量本体（不读 DB），保证同一进程内稳定、且回滚旧版本时能读回旧索引。
+ */
+function ttsEngineEpoch(): string {
+  const raw = (process.env.TTS_PREGEN_ENGINE_VERSION ?? '').trim().toLowerCase();
+  return raw || 'no-pregen';
+}
+
+/** 写入索引 / media_assets 的 keyVersion：基础版本 + 引擎世代，任一变化都不再命中。 */
+function ttsKeyVersion(): string {
+  return `${TTS_KEY_VERSION}@${ttsEngineEpoch()}`;
+}
+
+/** 索引文件名里的引擎标签（只保留 [a-z0-9-]，避免非法文件名）。 */
+function ttsEngineTag(): string {
+  return ttsEngineEpoch().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'no-pregen';
+}
 /** PRIVATE_DYNAMIC 资产的短 TTL（毫秒），到期后索引与音频都视为 miss。 */
 const PRIVATE_TTS_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -724,7 +749,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
       request.voice.pronunciationMode,
     ])).digest('hex');
     const keyMaterial = {
-      keyVersion: TTS_KEY_VERSION,
+      keyVersion: ttsKeyVersion(),
       scope: s.scope,
       topicId: s.topicId,
       contentId: s.contentId,
@@ -757,7 +782,7 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
     const s = request.cacheScope;
     const isPrivate = s.scope === 'PRIVATE_DYNAMIC';
     return {
-      keyVersion: TTS_KEY_VERSION,
+      keyVersion: ttsKeyVersion(),
       scope: s.scope,
       topicId: s.topicId,
       contentId: s.contentId,
@@ -902,7 +927,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
 
   private ttsCacheIndexPath(cacheKey: string): string {
     const key = createHash('sha256').update(cacheKey).digest('hex');
-    return join(resolveAudioDir(), `.tts-${key}.json`);
+    // 文件名带上引擎世代：换模型后旧索引天然不可达，不会再把旧音频放出去。
+    return join(resolveAudioDir(), `.tts-${ttsEngineTag()}-${key}.json`);
   }
 
   // ——————————————————— ASR ———————————————————

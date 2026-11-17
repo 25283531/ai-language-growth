@@ -79,7 +79,9 @@ describe('适配器：请求形态与落盘', () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0]!.url, 'https://tts.example.test/tts');
     assert.equal(calls[0]!.headers['x-api-key'], 'TEST_TOKEN');
-    assert.deepEqual(calls[0]!.payload, { text: 'hello', speed: 0.8, format: 'mp3' });
+    // 慢速档（0.8）在适配器内按 ENGLISH_TIER_RENDER_SPEED 渲染为 0.7；
+    // 档位标签与缓存键仍是 0.8，只有送给供应商的 speed 变了。
+    assert.deepEqual(calls[0]!.payload, { text: 'hello', speed: 0.7, format: 'mp3' });
   });
 
   it('音频写入音频目录，并返回 media 路由下的 audioRef', async () => {

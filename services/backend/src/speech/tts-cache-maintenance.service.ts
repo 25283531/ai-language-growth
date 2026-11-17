@@ -18,7 +18,8 @@ import { resolveAudioDir } from '@alg/ai-provider-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 
 const AUDIO_FILE = /^[a-f0-9]{24}\.(?:mp3|wav|m4a)$/i;
-const INDEX_FILE = /^\.tts-[a-f0-9]{64}\.json$/i;
+// 索引文件名：`.tts-<引擎世代标签>-<sha256>.json`；旧的无标签格式仍然识别，便于清理历史残留。
+const INDEX_FILE = /^\.tts-(?:[a-z0-9-]+-)?[a-f0-9]{64}\.json$/i;
 const PUBLIC_SCOPES = new Set(['PUBLIC_CURRICULUM', 'PRONUNCIATION']);
 const DEFAULT_ORPHAN_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;

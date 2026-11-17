@@ -103,7 +103,7 @@ function writeAudio(fileName: string, bytes: Buffer | string = Buffer.from('fake
 }
 
 function indexFiles(): string[] {
-  return readdirSync(audioDir).filter((name) => /^\.tts-[a-f0-9]{64}\.json$/.test(name));
+  return readdirSync(audioDir).filter((name) => /^\.tts-(?:[a-z0-9-]+-)?[a-f0-9]{64}\.json$/.test(name));
 }
 
 /** 按 audioRef 定位对应的持久化索引（同一临时目录会累积多个用例的索引）。 */
@@ -209,6 +209,30 @@ describe('网关缓存隐私边界', () => {
 
     const restarted = makeGateway(ref);
     assert.equal(await restarted.gateway.peekTtsCache(privateRequest('learner-a', ref, 'legacy index check')), null);
+  });
+
+  it('引擎版本进入缓存键与索引文件名：换引擎后旧索引自动失效', async () => {
+    const ref = writeAudio(`${'d'.repeat(24)}.mp3`);
+    const original = process.env.TTS_PREGEN_ENGINE_VERSION;
+    try {
+      process.env.TTS_PREGEN_ENGINE_VERSION = 'epoch-a';
+      const first = makeGateway(ref);
+      await first.gateway.ttsWithResult(privateRequest('learner-a', ref, 'engine epoch check'), decision);
+      // 同世代能命中，且索引文件名带了引擎标签（不是纯 64 位哈希）。
+      assert.ok(await first.gateway.peekTtsCache(privateRequest('learner-a', ref, 'engine epoch check')));
+      assert.match(indexFor(ref), /^\.tts-epoch-a-[a-f0-9]{64}\.json$/);
+
+      process.env.TTS_PREGEN_ENGINE_VERSION = 'epoch-b';
+      const second = makeGateway(ref);
+      assert.equal(
+        await second.gateway.peekTtsCache(privateRequest('learner-a', ref, 'engine epoch check')),
+        null,
+        '换了引擎版本就不应再命中旧索引',
+      );
+    } finally {
+      if (original === undefined) delete process.env.TTS_PREGEN_ENGINE_VERSION;
+      else process.env.TTS_PREGEN_ENGINE_VERSION = original;
+    }
   });
 });
 
