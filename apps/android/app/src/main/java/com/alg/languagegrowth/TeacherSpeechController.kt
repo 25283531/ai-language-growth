@@ -76,7 +76,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         speech: JSONObject?,
         replay: Boolean = false,
         texts: List<String>? = null,
-        /** 覆盖本轮 teacherSpeed：1.0 正常 / 0.8 慢速 / 0.65 很慢；null 表示沿用服务端下发值。 */
+        /** 覆盖本轮 teacherSpeed：1.0 正常 / 0.65 很慢；null 表示沿用服务端下发值。 */
         speed: Double? = null,
         onState: (Boolean, String) -> Unit,
     ) {

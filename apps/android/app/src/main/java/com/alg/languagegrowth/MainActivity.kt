@@ -233,7 +233,7 @@ private fun GrowthApp(
     var asrReservationId by remember { mutableStateOf("") }
     var speechBusy by remember { mutableStateOf(false) }
     var speechStatus by remember { mutableStateOf("") }
-    // 三档重听：当前正在播放的 teacherSpeed（1.0 正常 / 0.8 慢速 / 0.65 很慢）
+    // 两档重听：当前正在播放的 teacherSpeed（1.0 正常 / 0.65 很慢）
     var replaySpeed by remember { mutableStateOf<Double?>(null) }
     var wordProgress by remember { mutableStateOf(0f) }
     var sentenceRecording by remember { mutableStateOf(false) }
@@ -1268,9 +1268,11 @@ private fun LearnScreen(
         )
 
         if (passes < target) {
-            // 三速并排：正常 1.0 / 慢速 0.8 / 很慢 0.65，播放中的那一档高亮。
+            // 两档语速：正常 1.0 / 很慢 0.65（2026-11-17 取消中间的 0.8 档）。
+            // 变速全部由服务端在合成时完成（Matcha v3.1：原速合成 + 波形拉伸），
+            // 客户端只按档位请求，不做任何播放端变速。
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(1.0 to "正常", 0.8 to "慢速", 0.65 to "很慢").forEach { (speed, label) ->
+                listOf(1.0 to "正常", 0.65 to "很慢").forEach { (speed, label) ->
                     val playing = speechBusy && activeSpeed == speed
                     GrowthSecondaryButton(
                         if (playing) "▶ $label" else label,
