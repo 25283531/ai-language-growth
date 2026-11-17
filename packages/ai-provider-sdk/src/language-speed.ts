@@ -8,6 +8,31 @@
  * 本文件只做切段与语言判定，不含任何厂商参数，保证模型/供应商可替换。
  */
 
+/**
+ * 纯英文三档的「渲染语速」：档位标签不变，但合成时用更慢的值。
+ *
+ * 实测（2026-11-17，Matcha）：0.8 档对短词几乎无声学差异（hello ×1.07、apple ×1.03、
+ * dog ×1.04，`Sorry!` 甚至反向），孩子点「慢速」和「正常」听不出区别。
+ * 因此把 0.8 档实际渲染成 0.7（实测区间 ×1.2 上下），用档位差换听感差；
+ * 「很慢」0.65 本来就有 ×1.25—1.46，保持不变。
+ *
+ * 注意：成本档位（speedTier）仍按客户端传来的 0.8 判定，所以缓存键、预生成索引不受影响。
+ */
+export const ENGLISH_TIER_RENDER_SPEED: Readonly<Record<number, number>> = {
+  1: 1,
+  0.8: 0.7,
+  0.65: 0.65,
+};
+
+/** 把档位语速换成实际渲染语速；非档位值（如 0.9）原样透传。 */
+export function renderSpeedForTier(teacherSpeed: number): number {
+  const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
+  for (const [tier, render] of Object.entries(ENGLISH_TIER_RENDER_SPEED)) {
+    if (Math.abs(value - Number(tier)) < 1e-6) return render;
+  }
+  return value;
+}
+
 export type SpeechLanguage = 'zh' | 'en';
 
 /**
@@ -43,8 +68,7 @@ export function resolveEffectiveTeacherSpeed(
   const hasCjk = CJK.test(body);
   const hasLatin = LATIN.test(body);
   if (hasLatin && !hasCjk) {
-    const value = Number.isFinite(teacherSpeed) && teacherSpeed > 0 ? teacherSpeed : 1;
-    return { speed: value, mode: 'tier' };
+    return { speed: renderSpeedForTier(teacherSpeed), mode: 'tier' };
   }
   if (hasCjk && hasLatin) return { speed: MIXED_SENTENCE_SPEED, mode: 'mixed' };
   return { speed: 1, mode: 'natural' };

@@ -62,10 +62,13 @@ describe('splitByLanguage', () => {
 });
 
 describe('语速判定：只有纯英文跟档位', () => {
-  it('纯英文按老师选的档位', () => {
+  it('纯英文按老师选的档位，慢速档实际渲染到 0.7', () => {
     assert.deepEqual(resolveEffectiveTeacherSpeed('apple', 0.65), { speed: 0.65, mode: 'tier' });
-    assert.deepEqual(resolveEffectiveTeacherSpeed('Listen and say apple.', 0.8), { speed: 0.8, mode: 'tier' });
+    // 0.8 档实测与 1.0 听不出差别，渲染成 0.7 换听感差（档位标签/缓存键仍是 0.8）。
+    assert.deepEqual(resolveEffectiveTeacherSpeed('Listen and say apple.', 0.8), { speed: 0.7, mode: 'tier' });
     assert.deepEqual(resolveEffectiveTeacherSpeed('Good morning.', 1.0), { speed: 1, mode: 'tier' });
+    // 非档位值原样透传，不自行改档
+    assert.equal(resolveEffectiveTeacherSpeed('apple', 0.9).speed, 0.9);
   });
 
   it('中英混排固定 0.8，不随三档变化', () => {
@@ -75,6 +78,7 @@ describe('语速判定：只有纯英文跟档位', () => {
         mode: 'mixed',
       });
     }
+    // 混排不跟纯英文的渲染映射，仍是字面 0.8
     assert.equal(resolveEffectiveTeacherSpeed('这是 apple，那是 banana。', 0.65).speed, 0.8);
   });
 
