@@ -32,7 +32,7 @@
 
 JVM 单测覆盖 `LessonPassageTest`：解析段落/中英文/双速引用、拒绝不安全引用、旧响应缺少 `passage` 时返回空。工作流的 `testDebugUnitTest` 会执行这些用例。
 
-> 当前开发机仅有 JDK 17，没有 Android SDK 与 Gradle，本轮 Android 代码**未在本机编译**；通过 `.github/workflows/android-client.yml` 执行 `testDebugUnitTest`、`lintDebug` 和 `assembleDebug` 后再做真机验证。
+> 当前开发机仅有 JDK 17，没有 Android SDK 与 Gradle，本轮未做本机编译；GitHub Android 工作流 [run 44295179269](https://github.com/25283531/ai-language-growth/actions/runs/44295179269) 已通过 `testDebugUnitTest`、`lintDebug` 与 `assembleDebug`，产物为 `android-client-debug-0.0.3`（约 154 MB）。真机交互仍待验收。
 
 ## 云端构建
 
@@ -47,9 +47,9 @@ The Android client talks to the same backend and the same `/lessons/{id}/turn` o
 
 ## 客户端界面（视觉层）
 
-本轮为**视觉层改版**：只重构 Jetpack Compose 的 UI 呈现，网络请求、API 契约、数据模型、教学逻辑与业务状态机保持原样。设计令牌集中定义在 `app/src/main/java/com/alg/languagegrowth/AppDesign.kt`（与 `MainActivity.kt` 同包），`MainActivity.kt` 只保留业务与页面组装；未新增第三方依赖，未改动 `app/build.gradle.kts` 与 `AndroidManifest.xml`。
+本轮为**视觉层改版**：只重构 Jetpack Compose 的 UI 呈现，网络请求、API 契约、数据模型、教学逻辑与业务状态机保持原样。设计令牌集中定义在 `app/src/main/java/com/alg/languagegrowth/AppDesign.kt`（与 `MainActivity.kt` 同包），`MainActivity.kt` 只保留业务与页面组装；该次视觉层改版未新增第三方依赖，也未改动 `app/build.gradle.kts` 与 `AndroidManifest.xml`（P2-05 后续仅在测试源集新增 JUnit/org.json 依赖）。
 
-> **改动需重新构建 APK 才生效。** 源码变更不会自动进入已安装的 APK；请通过 `.github/workflows/android-client.yml` 重新构建，或在具备 JDK 17 / Android SDK / Gradle 8.7 的环境执行 `gradle --no-daemon assembleDebug` 后重新安装。当前开发机仅有 JDK 17，没有 Android SDK 与 Gradle，本轮改动未经本机编译器验证。
+> **改动需重新构建 APK 才生效。** 源码变更不会自动进入已安装的 APK；请通过 `.github/workflows/android-client.yml` 重新构建，或在具备 JDK 17 / Android SDK / Gradle 8.7 的环境执行 `gradle --no-daemon assembleDebug` 后重新安装。当前开发机仅有 JDK 17，没有 Android SDK 与 Gradle，本轮由 GitHub Actions 完成编译验证（run 44295179269）。
 
 一份不依赖 APK 的静态视觉预览稿位于仓库外的交付目录 `G:/workbuddy/英语/deliverables/gstack/android-child-ui-preview.html`，纯 HTML + 内联 CSS，可在浏览器直接打开（示意数据，不可交互）。
 
