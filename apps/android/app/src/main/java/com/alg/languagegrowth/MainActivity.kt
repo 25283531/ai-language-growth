@@ -253,6 +253,18 @@ private fun GrowthApp(
     var passageStatus by remember { mutableStateOf("") }
     var passageSequenceMode by remember { mutableStateOf<String?>(null) }
     var passageShowChinese by rememberSaveable { mutableStateOf(false) }
+    // P2-06 重点词拆读：当前词、当前高亮片段、陪练轮次与错误定位
+    var focusIndex by remember { mutableStateOf(0) }
+    var focusClipKey by remember { mutableStateOf("") }
+    var focusRound by remember { mutableStateOf(0) }
+    var focusStatus by remember { mutableStateOf("") }
+    var focusErrorUnits by remember { mutableStateOf(emptyList<String>()) }
+    // P2-07 整句跟读：目标句、录音态、尝试次数与得分
+    var followSentenceId by remember { mutableStateOf("") }
+    var followRecording by remember { mutableStateOf(false) }
+    var followAttempts by remember { mutableStateOf(0) }
+    var followScore by remember { mutableStateOf<Double?>(null) }
+    var followStatus by remember { mutableStateOf("") }
     val teacherSpeech = remember(activity) { TeacherSpeechController(activity.cacheDir) }
 
     DisposableEffect(activity, teacherSpeech) {
@@ -386,6 +398,124 @@ private fun GrowthApp(
         )
     }
 
+    /** P2-06：按服务端顺序播放重点词拆读片段，并高亮当前单位。 */
+    fun playFocusWord(wordIndex: Int, errorOnly: Boolean = false) {
+        val word = lessonPassage?.focusWords?.getOrNull(wordIndex) ?: return
+        val steps = focusDrillSteps(word, if (errorOnly) focusErrorUnits else emptyList())
+        val items = steps.mapNotNull { step ->
+            step.clip.audioRef?.let { PassageAudioItem(step.clip.key, it) }
+        }
+        clearPassageState()
+        focusIndex = wordIndex
+        if (items.isEmpty()) {
+            focusClipKey = ""
+            focusStatus = "这个词的拆读音频还在准备中，先听整句吧。"
+            return
+        }
+        focusStatus = "跟着老师一小段一小段读。"
+        speechBusy = false
+        speechStatus = ""
+        teacherSpeech.stop(clearAudio = false)
+        teacherSpeech.playPassageSequence(
+            base(), token().orEmpty(), learnerId, items,
+            onSentence = { key -> focusClipKey = key },
+            onState = { active, message ->
+                if (!active) focusClipKey = ""
+                focusStatus = message
+            },
+        )
+    }
+
+    fun playFocusClip(wordIndex: Int, clip: FocusWordClip) {
+        val ref = clip.audioRef ?: return
+        clearPassageState()
+        focusIndex = wordIndex
+        focusClipKey = clip.key
+        focusStatus = "正在听「${clipLabel(clip)}」"
+        speechBusy = false
+        speechStatus = ""
+        teacherSpeech.stop(clearAudio = false)
+        teacherSpeech.playPassage(base(), token().orEmpty(), learnerId, ref) { active, message ->
+            if (!active) focusClipKey = ""
+            focusStatus = message
+        }
+    }
+
+    fun startFocusPractice(wordIndex: Int) {
+        focusErrorUnits = emptyList()
+        focusRound = 0
+        playFocusWord(wordIndex)
+    }
+
+    // evaluateSentence 定义在本函数之后；用函数引用避免 Kotlin 局部函数的前向引用限制。
+    var evaluateSentenceFx: (suspend (String, String, Long, Double?, Int) -> JSONObject)? = null
+
+    /** P2-07：整句跟读。目标句就是课文原句，分数与错音直接用于定向练习。 */
+    fun recordPassageSentence(sentence: PassageSentence, pressed: Boolean) {
+        teacherSpeech.stop(clearAudio = false)
+        speechBusy = false
+        scope.launch {
+            if (pressed) {
+                if (followRecording) return@launch
+                if (!activity.hasAudioPermission()) {
+                    activity.requestAudioPermission()
+                    followStatus = "请允许麦克风权限后再跟读这句。"
+                    return@launch
+                }
+                try {
+                    activity.startRecording()
+                    recordingStartedAt = System.currentTimeMillis()
+                    followRecording = true
+                    followSentenceId = sentence.id
+                    followStatus = ""
+                } catch (e: Exception) {
+                    followStatus = "录音没有开始，再按住试一次。"
+                }
+            } else if (followRecording) {
+                val path = try {
+                    activity.stopRecording().first
+                } catch (e: Exception) {
+                    followRecording = false
+                    followStatus = "这次录音没有保存好，再按住试一次。"
+                    return@launch
+                }
+                followRecording = false
+                val durationMs = System.currentTimeMillis() - recordingStartedAt
+                try {
+                    val encoded = withContext(Dispatchers.IO) {
+                        Base64.encodeToString(java.io.File(path).readBytes(), Base64.NO_WRAP)
+                    }
+                    val evaluator = evaluateSentenceFx ?: error("发音评测未就绪")
+                    val result = evaluator(
+                        encoded, sentence.english, durationMs, followScore, followAttempts + 1,
+                    )
+                    followAttempts += 1
+                    val score = result.optDouble("score", Double.NaN)
+                    val units = result.optJSONArray("units")
+                    focusErrorUnits = (0 until (units?.length() ?: 0)).mapNotNull { index ->
+                        val unit = units?.optJSONObject(index) ?: return@mapNotNull null
+                        if (unit.optBoolean("correct", true)) null
+                        else unit.optString("text", "").trim().takeIf { it.isNotEmpty() }
+                    }
+                    if (score.isFinite()) {
+                        followScore = score
+                        val passed = score >= 85.0
+                        followStatus = if (passed) {
+                            "这句读得很清楚，可以换下一句啦。"
+                        } else {
+                            drillStatusText(focusRound + 1, false, score)
+                        }
+                        focusRound = nextDrillRound(focusRound, passed)
+                    } else {
+                        followStatus = "这次没有听清楚，再试一次。"
+                    }
+                } catch (e: Exception) {
+                    followStatus = "跟读评测暂时不可用，先听老师读一遍。"
+                }
+            }
+        }
+    }
+
     LaunchedEffect(loggedIn, learnerId, tab, screen, directive, finishResult) {
         teacherSpeech.stop()
         speechBusy = false
@@ -506,6 +636,8 @@ private fun GrowthApp(
             }
         }
     }
+
+    evaluateSentenceFx = ::evaluateSentence
 
     suspend fun fetchWeeklyReport() {
         if (learnerId.isBlank()) return
@@ -766,6 +898,17 @@ private fun GrowthApp(
                             onPlayPassageSentence = ::playPassageSentence,
                             onPlayPassageAll = ::playPassageAll,
                             onTogglePassageChinese = { passageShowChinese = !passageShowChinese },
+                            focusIndex = focusIndex,
+                            focusClipKey = focusClipKey,
+                            focusRound = focusRound,
+                            focusStatus = focusStatus,
+                            followSentenceId = followSentenceId,
+                            followRecording = followRecording,
+                            followScore = followScore,
+                            followStatus = followStatus,
+                            onStartFocusPractice = ::startFocusPractice,
+                            onPlayFocusClip = ::playFocusClip,
+                            onFollowRecord = ::recordPassageSentence,
                             speechBusy = speechBusy,
                             speechStatus = speechStatus,
                             onReplay = { replayWord(it) },
@@ -1312,6 +1455,17 @@ private fun LearnScreen(
     onPlayPassageSentence: (PassageSentence, Boolean) -> Unit,
     onPlayPassageAll: (Boolean) -> Unit,
     onTogglePassageChinese: () -> Unit,
+    focusIndex: Int,
+    focusClipKey: String,
+    focusRound: Int,
+    focusStatus: String,
+    followSentenceId: String,
+    followRecording: Boolean,
+    followScore: Double?,
+    followStatus: String,
+    onStartFocusPractice: (Int) -> Unit,
+    onPlayFocusClip: (Int, FocusWordClip) -> Unit,
+    onFollowRecord: (PassageSentence, Boolean) -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: (Double) -> Unit, onExplain: () -> Unit,
     activeSpeed: Double? = null,
@@ -1367,6 +1521,17 @@ private fun LearnScreen(
             onPlaySentence = onPlayPassageSentence,
             onPlayAll = onPlayPassageAll,
             onToggleChinese = onTogglePassageChinese,
+            focusIndex = focusIndex,
+            focusClipKey = focusClipKey,
+            focusRound = focusRound,
+            focusStatus = focusStatus,
+            followSentenceId = followSentenceId,
+            followRecording = followRecording,
+            followScore = followScore,
+            followStatus = followStatus,
+            onStartFocusPractice = onStartFocusPractice,
+            onPlayFocusClip = onPlayFocusClip,
+            onFollowRecord = onFollowRecord,
         )
     }
 
@@ -1520,6 +1685,17 @@ private fun PassageReaderCard(
     onPlaySentence: (PassageSentence, Boolean) -> Unit,
     onPlayAll: (Boolean) -> Unit,
     onToggleChinese: () -> Unit,
+    focusIndex: Int,
+    focusClipKey: String,
+    focusRound: Int,
+    focusStatus: String,
+    followSentenceId: String,
+    followRecording: Boolean,
+    followScore: Double?,
+    followStatus: String,
+    onStartFocusPractice: (Int) -> Unit,
+    onPlayFocusClip: (Int, FocusWordClip) -> Unit,
+    onFollowRecord: (PassageSentence, Boolean) -> Unit,
 ) {
     val readyCount = passage.sentences.count {
         it.audio.normalRef != null || it.audio.slowRef != null
@@ -1590,6 +1766,22 @@ private fun PassageReaderCard(
             )
         }
 
+        if (passage.focusWords.isNotEmpty()) {
+            Text("重点词慢速拆读", style = MaterialTheme.typography.titleSmall, color = GrowthColors.Ink)
+            passage.focusWords.forEachIndexed { index, word ->
+                FocusWordDrillCard(
+                    word = word,
+                    active = index == focusIndex,
+                    playingKey = if (index == focusIndex) focusClipKey else "",
+                    round = if (index == focusIndex) focusRound else 0,
+                    status = if (index == focusIndex) focusStatus else "",
+                    enabled = !busy && !followRecording,
+                    onPractice = { onStartFocusPractice(index) },
+                    onPlayClip = { clip -> onPlayFocusClip(index, clip) },
+                )
+            }
+        }
+
         if (readyCount == 0 && status.isBlank()) {
             Text(
                 "老师正在准备课文音频，先看着文字读一读。",
@@ -1651,8 +1843,99 @@ private fun PassageReaderCard(
                             enabled = !busy && sentence.audio.slowRef != null,
                         )
                     }
+                    if (selected) {
+                        // P2-07：选中句才能跟读，目标文本就是这句话本身。
+                        HoldToSpeakButton(
+                            recording = followRecording && followSentenceId == sentence.id,
+                            enabled = !busy,
+                            onPress = { onFollowRecord(sentence, true) },
+                            onRelease = { onFollowRecord(sentence, false) },
+                        )
+                        Text(
+                            "按住说一遍，老师听听这句读得怎么样。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GrowthColors.InkSoft,
+                        )
+                        if (followScore != null && followSentenceId == sentence.id) {
+                            Text(
+                                "这句得分 ${followScore.roundToInt()} 分",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = GrowthColors.PrimaryDeep,
+                            )
+                        }
+                        if (followStatus.isNotBlank() && followSentenceId == sentence.id) {
+                            Text(followStatus, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FocusWordDrillCard(
+    word: FocusWord,
+    active: Boolean,
+    playingKey: String,
+    round: Int,
+    status: String,
+    enabled: Boolean,
+    onPractice: () -> Unit,
+    onPlayClip: (FocusWordClip) -> Unit,
+) {
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = if (active) GrowthColors.MintWash else GrowthColors.Surface,
+        outline = (if (active) GrowthColors.MintDeep else GrowthColors.Outline).copy(alpha = 0.30f),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(word.word, style = MaterialTheme.typography.titleMedium, color = GrowthColors.Ink)
+                if (word.phonetic.isNotBlank()) {
+                    Text(word.phonetic, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                }
+                if (word.meaningZh.isNotBlank()) {
+                    Text(word.meaningZh, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                }
+            }
+            GrowthPill(
+                if (round > 0) "第 ${round.coerceAtMost(FOCUS_DRILL_MAX_ROUNDS)} 轮" else "拆读",
+                GrowthColors.MintDeep,
+                GrowthColors.MintWash,
+            )
+        }
+        if (word.syllables.isNotEmpty()) {
+            Text(
+                "音节：${word.syllables.joinToString(" · ")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
+        if (word.difficultPhonemes.isNotEmpty()) {
+            Text(
+                "难音：${word.difficultPhonemes.joinToString(" ")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
+        GrowthSecondaryButton(
+            if (active && playingKey.isNotBlank()) "▶ 正在读" else "整词拆读一遍",
+            onPractice,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = enabled && word.playableClips.isNotEmpty(),
+        )
+        word.playableClips.forEach { clip ->
+            val playing = clip.key == playingKey
+            GrowthSecondaryButton(
+                if (playing) "▶ ${clipLabel(clip)}" else clipLabel(clip),
+                { onPlayClip(clip) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = enabled,
+            )
+        }
+        if (status.isNotBlank()) {
+            Text(status, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
         }
     }
 }

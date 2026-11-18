@@ -15,6 +15,8 @@ internal data class LessonPassage(
     val audioReady: Boolean,
     val title: String,
     val paragraphs: List<PassageParagraph>,
+    /** 重点词拆读包；旧服务端不下发时为空，课文正文不受影响。 */
+    val focusWords: List<FocusWord> = emptyList(),
 ) {
     val sentences: List<PassageSentence> = paragraphs.flatMap { it.sentences }
 }
@@ -69,6 +71,7 @@ internal fun parseLessonPassage(raw: JSONObject?): LessonPassage? {
         audioReady = raw.optBoolean("audioReady", false),
         title = raw.cleanString("title").ifBlank { "课文" },
         paragraphs = paragraphs,
+        focusWords = parseFocusWords(raw),
     )
 }
 
