@@ -15,9 +15,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +39,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -243,6 +247,12 @@ private fun GrowthApp(
     var sentenceStatus by remember { mutableStateOf("") }
     var praisedWord by remember { mutableStateOf("") }
     var lessonSpeech by remember { mutableStateOf<JSONObject?>(null) }
+    var lessonPassage by remember { mutableStateOf<LessonPassage?>(null) }
+    var activePassageSentenceId by remember { mutableStateOf("") }
+    var passagePlayingKey by remember { mutableStateOf("") }
+    var passageStatus by remember { mutableStateOf("") }
+    var passageSequenceMode by remember { mutableStateOf<String?>(null) }
+    var passageShowChinese by rememberSaveable { mutableStateOf(false) }
     val teacherSpeech = remember(activity) { TeacherSpeechController(activity.cacheDir) }
 
     DisposableEffect(activity, teacherSpeech) {
@@ -251,6 +261,9 @@ private fun GrowthApp(
                 teacherSpeech.stop()
                 speechBusy = false
                 speechStatus = "语音已停止，可返回课堂后重试"
+                passagePlayingKey = ""
+                passageStatus = "课文音频已停止，可返回课堂后重试"
+                passageSequenceMode = null
             }
         }
         activity.lifecycle.addObserver(observer)
@@ -271,8 +284,15 @@ private fun GrowthApp(
     }
     fun token() = account.getString("token", null)
 
+    fun clearPassageState() {
+        passagePlayingKey = ""
+        passageStatus = ""
+        passageSequenceMode = null
+    }
+
     fun playTeacher(replay: Boolean = false) {
         val current = directive ?: return
+        clearPassageState()
         wordProgress = 0f
         teacherSpeech.play(base(), token().orEmpty(), learnerId, current, lessonSpeech, replay) { active, message ->
             speechBusy = active
@@ -282,6 +302,7 @@ private fun GrowthApp(
 
     fun replayWord(speed: Double? = null) {
         val current = directive ?: return
+        clearPassageState()
         wordProgress = 0f
         replaySpeed = speed
         // 切换档位先停掉上一档，避免两个速度叠在一起。
@@ -298,10 +319,78 @@ private fun GrowthApp(
         )
     }
 
+    /** 播放当前课文的一句；同一句第二次点击会直接使用本地缓存。 */
+    fun playPassageSentence(sentence: PassageSentence, slow: Boolean) {
+        val ref = if (slow) sentence.audio.slowRef else sentence.audio.normalRef
+        clearPassageState()
+        activePassageSentenceId = sentence.id
+        if (ref == null) {
+            teacherSpeech.stop(clearAudio = false)
+            passageStatus = "这一句的音频还在准备中，先看着文字读一读。"
+            return
+        }
+        val key = "${sentence.id}:${if (slow) "slow" else "normal"}"
+        passagePlayingKey = key
+        passageStatus = "正在准备这一句…"
+        speechBusy = false
+        speechStatus = ""
+        teacherSpeech.stop(clearAudio = false)
+        teacherSpeech.playPassage(
+            base(), token().orEmpty(), learnerId, ref,
+        ) { active, message ->
+            passagePlayingKey = if (active) key else ""
+            passageStatus = message
+        }
+    }
+
+    /** 停止整篇连播，但保留已经下载的课文音频缓存。 */
+    fun stopPassageSequence(message: String = "已停止整篇播放") {
+        teacherSpeech.stop(clearAudio = false)
+        clearPassageState()
+        passageStatus = message
+    }
+
+    /** 从第一句开始连续播放；再次点击当前档位会停止。 */
+    fun playPassageAll(slow: Boolean) {
+        val passage = lessonPassage ?: return
+        val mode = if (slow) "slow" else "normal"
+        if (passageSequenceMode == mode) {
+            stopPassageSequence()
+            return
+        }
+        val items = passage.playbackItems(slow)
+        clearPassageState()
+        if (items.isEmpty()) {
+            passageStatus = "这一档还没有可连续播放的课文音频。"
+            return
+        }
+        passageSequenceMode = mode
+        activePassageSentenceId = items.first().sentenceId
+        passageStatus = "正在准备整篇课文…"
+        speechBusy = false
+        speechStatus = ""
+        teacherSpeech.stop(clearAudio = false)
+        teacherSpeech.playPassageSequence(
+            base(), token().orEmpty(), learnerId, items,
+            onSentence = { sentenceId ->
+                activePassageSentenceId = sentenceId
+                passagePlayingKey = "$sentenceId:$mode"
+            },
+            onState = { active, message ->
+                if (!active) {
+                    passageSequenceMode = null
+                    passagePlayingKey = ""
+                }
+                passageStatus = message
+            },
+        )
+    }
+
     LaunchedEffect(loggedIn, learnerId, tab, screen, directive, finishResult) {
         teacherSpeech.stop()
         speechBusy = false
         speechStatus = ""
+        clearPassageState()
         wordProgress = 0f
         if (loggedIn && learnerId.isNotBlank() && tab == "learn" && screen == "tabs" && directive != null && finishResult == null) {
             // 进入课堂先听单词；发音纠正文字已显示在卡片里，完整讲解由按钮触发。
@@ -312,6 +401,7 @@ private fun GrowthApp(
     /** 把一组句子交给老师语音逐句播放（一句一段音频，按顺序播）。 */
     fun narrateLines(lines: List<String>) {
         val current = directive ?: return
+        clearPassageState()
         val texts = lines.map { it.trim() }.filter { it.isNotBlank() }
         if (texts.isEmpty()) {
             speechStatus = "这一步暂时没有可播放的讲解。"
@@ -476,6 +566,17 @@ private fun GrowthApp(
                 practiceCount = 0
                 lessonSpeech = response.optJSONObject("speech")
                 directive = response.optJSONObject("directive")
+                // passage 是增量可选字段：旧服务端不下发时保持 null，课堂页退回原流程。
+                teacherSpeech.stop()
+                teacherSpeech.clearPassageAudio()
+                val passage = parseLessonPassage(response.optJSONObject("passage"))
+                lessonPassage = passage
+                activePassageSentenceId = ""
+                passageSequenceMode = null
+                passagePlayingKey = ""
+                passageStatus = if (passage != null && !passage.audioReady) {
+                    "老师正在准备课文音频，先看着文字读一读。"
+                } else ""
                 finishResult = null; responseText = ""; recordingSaved = false
                 tab = "learn"
                 pageStatus = ""
@@ -655,6 +756,16 @@ private fun GrowthApp(
                             directive, finishResult, recording, busy, pageStatus,
                             wordProgress = wordProgress,
                             onStart = ::startSession,
+                            lessonPassage = lessonPassage,
+                            activePassageSentenceId = activePassageSentenceId,
+                            passagePlayingKey = passagePlayingKey,
+                            passageStatus = passageStatus,
+                            passageSequenceMode = passageSequenceMode,
+                            passageShowChinese = passageShowChinese,
+                            onSelectPassageSentence = { id -> activePassageSentenceId = id },
+                            onPlayPassageSentence = ::playPassageSentence,
+                            onPlayPassageAll = ::playPassageAll,
+                            onTogglePassageChinese = { passageShowChinese = !passageShowChinese },
                             speechBusy = speechBusy,
                             speechStatus = speechStatus,
                             onReplay = { replayWord(it) },
@@ -664,6 +775,7 @@ private fun GrowthApp(
                             onNarrateUsage = { narrateUsage() },
                             onPickImage = { imageId -> scope.launch { submitTurn(null, null, 0, imageId) } },
                             onSpeakCoaching = { text ->
+                                clearPassageState()
                                 teacherSpeech.play(
                                     base(), token().orEmpty(), learnerId, directive ?: JSONObject(), lessonSpeech, false,
                                     onState = { active, message ->
@@ -681,6 +793,7 @@ private fun GrowthApp(
                             onSentenceRecord = { pressed ->
                                 teacherSpeech.stop(clearAudio = false)
                                 speechBusy = false
+                                clearPassageState()
                                 scope.launch {
                                     if (pressed) {
                                         if (!sentenceRecording) {
@@ -753,6 +866,7 @@ private fun GrowthApp(
                             onRecord = { pressed ->
                                 teacherSpeech.stop(clearAudio = false)
                                 speechBusy = false
+                                clearPassageState()
                                 scope.launch {
                                     if (pressed) {
                                         if (!recording) {
@@ -821,8 +935,12 @@ private fun GrowthApp(
                                         // 结课成功就回到学习入口（directive 置空），孩子可以直接开始下一课。
                                         val finishedDirective = directive
                                         teacherSpeech.stop()
+                                        teacherSpeech.clearPassageAudio()
                                         directive = null
                                         lessonSpeech = null
+                                        lessonPassage = null
+                                        activePassageSentenceId = ""
+                                        clearPassageState()
                                         lessonSessionId = ""
                                         practiceCount = 0
                                         finishResult = null
@@ -1184,6 +1302,16 @@ private fun LearnScreen(
     busy: Boolean, status: String,
     wordProgress: Float,
     onStart: () -> Unit,
+    lessonPassage: LessonPassage?,
+    activePassageSentenceId: String,
+    passagePlayingKey: String,
+    passageStatus: String,
+    passageSequenceMode: String?,
+    passageShowChinese: Boolean,
+    onSelectPassageSentence: (String) -> Unit,
+    onPlayPassageSentence: (PassageSentence, Boolean) -> Unit,
+    onPlayPassageAll: (Boolean) -> Unit,
+    onTogglePassageChinese: () -> Unit,
     onRecord: (Boolean) -> Unit, onFinish: () -> Unit,
     speechBusy: Boolean, speechStatus: String, onReplay: (Double) -> Unit, onExplain: () -> Unit,
     activeSpeed: Double? = null,
@@ -1223,6 +1351,23 @@ private fun LearnScreen(
         }
         if (status.isNotBlank()) GrowthStatusPill(status)
         return
+    }
+
+    // 课文点读卡放在课堂内容最上方；普通预置课程没有 passage，保持原页面不变。
+    lessonPassage?.let { passage ->
+        PassageReaderCard(
+            passage = passage,
+            activeSentenceId = activePassageSentenceId,
+            playingKey = passagePlayingKey,
+            status = passageStatus,
+            sequenceMode = passageSequenceMode,
+            showChinese = passageShowChinese,
+            busy = busy,
+            onSelectSentence = onSelectPassageSentence,
+            onPlaySentence = onPlayPassageSentence,
+            onPlayAll = onPlayPassageAll,
+            onToggleChinese = onTogglePassageChinese,
+        )
     }
 
     // 图片选择题：服务端下发选项，孩子点图作答；不进入跟读流程。
@@ -1360,6 +1505,156 @@ private fun LearnScreen(
         }
     }
     if (status.isNotBlank()) GrowthStatusPill(status)
+}
+
+@Composable
+private fun PassageReaderCard(
+    passage: LessonPassage,
+    activeSentenceId: String,
+    playingKey: String,
+    status: String,
+    sequenceMode: String?,
+    showChinese: Boolean,
+    busy: Boolean,
+    onSelectSentence: (String) -> Unit,
+    onPlaySentence: (PassageSentence, Boolean) -> Unit,
+    onPlayAll: (Boolean) -> Unit,
+    onToggleChinese: () -> Unit,
+) {
+    val readyCount = passage.sentences.count {
+        it.audio.normalRef != null || it.audio.slowRef != null
+    }
+    val normalCount = passage.sentences.count { it.audio.normalRef != null }
+    val slowCount = passage.sentences.count { it.audio.slowRef != null }
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.BlueWash,
+        outline = GrowthColors.Blue.copy(alpha = 0.22f),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                GrowthSectionTitle(passage.title, "📖")
+                Text(
+                    "点一句会高亮；可打开中文看译文，也可以整篇连播。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+            GrowthPill(
+                if (readyCount > 0) "$readyCount 句可点读" else "音频准备中",
+                if (readyCount > 0) GrowthColors.MintDeep else GrowthColors.SunDeep,
+                if (readyCount > 0) GrowthColors.MintWash else GrowthColors.SunWash,
+            )
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(GrowthColors.Surface.copy(alpha = 0.74f))
+                .toggleable(
+                    value = showChinese,
+                    role = Role.Switch,
+                    onValueChange = { onToggleChinese() },
+                )
+                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("中文翻译", style = MaterialTheme.typography.titleSmall, color = GrowthColors.Ink)
+                Text(
+                    if (showChinese) "显示全部中文" else "只显示英文",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+            Switch(checked = showChinese, onCheckedChange = null)
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrowthSecondaryButton(
+                if (sequenceMode == "normal") "■ 停止连播" else "▶ 整篇正常",
+                { onPlayAll(false) },
+                modifier = Modifier.weight(1f),
+                enabled = !busy && (sequenceMode == "normal" || normalCount > 0),
+            )
+            GrowthSecondaryButton(
+                if (sequenceMode == "slow") "■ 停止连播" else "▶ 整篇慢速",
+                { onPlayAll(true) },
+                modifier = Modifier.weight(1f),
+                enabled = !busy && (sequenceMode == "slow" || slowCount > 0),
+            )
+        }
+
+        if (readyCount == 0 && status.isBlank()) {
+            Text(
+                "老师正在准备课文音频，先看着文字读一读。",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
+        if (status.isNotBlank()) {
+            Text(
+                status,
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
+
+        passage.paragraphs.forEach { paragraph ->
+            paragraph.sentences.forEach { sentence ->
+                val selected = sentence.id == activeSentenceId
+                val normalPlaying = playingKey == "${sentence.id}:normal"
+                val slowPlaying = playingKey == "${sentence.id}:slow"
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (selected) GrowthColors.Surface else Color.Transparent)
+                        .border(
+                            1.5.dp,
+                            if (selected) GrowthColors.Primary else GrowthColors.Outline,
+                            RoundedCornerShape(16.dp),
+                        )
+                        .clickable { onSelectSentence(sentence.id) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        sentence.english,
+                        style = MaterialTheme.typography.titleMedium,
+                        lineHeight = 30.sp,
+                        color = if (selected) GrowthColors.PrimaryDeep else GrowthColors.Ink,
+                    )
+                    if (showChinese && sentence.chinese.isNotBlank()) {
+                        Text(
+                            sentence.chinese,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GrowthColors.InkSoft,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GrowthSecondaryButton(
+                            if (normalPlaying) "▶ 正常" else "正常语速",
+                            { onPlaySentence(sentence, false) },
+                            modifier = Modifier.weight(1f),
+                            enabled = !busy && sentence.audio.normalRef != null,
+                        )
+                        GrowthSecondaryButton(
+                            if (slowPlaying) "▶ 慢速" else "慢速",
+                            { onPlaySentence(sentence, true) },
+                            modifier = Modifier.weight(1f),
+                            enabled = !busy && sentence.audio.slowRef != null,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

@@ -16,6 +16,24 @@
 - 缺少 `speech.segments` 时才降级为 `POST /speech/cache/lookup`（只读查缓存）→ 未命中再 `POST /speech/synthesize`。当前一轮音频下载到本地后，「再听一次」只播放本地文件，不产生网络请求、合成或额度结算。
 - 监护人账户和家长中心仍按 M3 后续节点接入。
 
+## 课堂课文点读（P2-05）
+
+当 `POST /api/v1/lessons/start` 返回 `passage` 时，「今天学什么」页顶部显示课文点读卡，再继续原有单词跟读/图片选择流程；旧服务端不下发 `passage` 时页面完全保持原样。
+
+- 句子按段落顺序列出，英文为主；点选句子后高亮该句。
+- 卡片提供「中文翻译」开关：关闭时只显示英文，打开后每句显示中文译文；开关状态在旋转屏幕后保留。
+- 每句提供「正常语速」「慢速」两个按钮，分别使用服务端预生成的 `audio.normalRef` / `audio.slowRef`；不走客户端变速，不重新合成。
+- 提供「整篇正常」「整篇慢速」连播：按段落顺序逐句播放，当前句同步高亮；播放中按钮变为「停止连播」，再次点击、切单句、切档、离页或切后台都会停止。
+- 音频未就绪时仍显示文字，按钮置灰；整篇没有可用音频时提示“老师正在准备课文音频”。
+- 单句播放前按现有语音安全边界申请 TTS 额度租约，下载 `audioRef` 后按 0 秒结算；整篇连播对缺失文件共用一次租约、按 0 秒结算，全部命中本地缓存时不申请额度。
+- 同一 `audioRef` 在本次课堂内缓存到本地，逐句播放和整篇连播共享缓存，重复点读不重复下载。
+- 切换单词语音、跟读录音、离开课堂或切后台会停止课文音频；结课/重新开课时清理课文音频缓存。
+- `passage` 与 `audioRef` 视为可选增量字段，旧客户端忽略即可。
+
+JVM 单测覆盖 `LessonPassageTest`：解析段落/中英文/双速引用、拒绝不安全引用、旧响应缺少 `passage` 时返回空。工作流的 `testDebugUnitTest` 会执行这些用例。
+
+> 当前开发机仅有 JDK 17，没有 Android SDK 与 Gradle，本轮 Android 代码**未在本机编译**；通过 `.github/workflows/android-client.yml` 执行 `testDebugUnitTest`、`lintDebug` 和 `assembleDebug` 后再做真机验证。
+
 ## 云端构建
 
 `.github/workflows/android-client.yml` 在变更或手动触发时编译 APK 并上传 artifact。手动运行时默认版本为 `0.0.3`（version code `3`），可选择 `debug` 或 `release`。
@@ -31,7 +49,7 @@ The Android client talks to the same backend and the same `/lessons/{id}/turn` o
 
 本轮为**视觉层改版**：只重构 Jetpack Compose 的 UI 呈现，网络请求、API 契约、数据模型、教学逻辑与业务状态机保持原样。设计令牌集中定义在 `app/src/main/java/com/alg/languagegrowth/AppDesign.kt`（与 `MainActivity.kt` 同包），`MainActivity.kt` 只保留业务与页面组装；未新增第三方依赖，未改动 `app/build.gradle.kts` 与 `AndroidManifest.xml`。
 
-> **改动需重新构建 APK 才生效。** 源码变更不会自动进入已安装的 APK；请通过 `.github/workflows/android-client.yml` 重新构建，或在具备 JDK 17 / Android SDK / Gradle 8.7 的环境执行 `gradle --no-daemon assembleDebug` 后重新安装。当前开发机没有 JDK、Android SDK 与 Gradle，本轮改动未经本地编译器验证。
+> **改动需重新构建 APK 才生效。** 源码变更不会自动进入已安装的 APK；请通过 `.github/workflows/android-client.yml` 重新构建，或在具备 JDK 17 / Android SDK / Gradle 8.7 的环境执行 `gradle --no-daemon assembleDebug` 后重新安装。当前开发机仅有 JDK 17，没有 Android SDK 与 Gradle，本轮改动未经本机编译器验证。
 
 一份不依赖 APK 的静态视觉预览稿位于仓库外的交付目录 `G:/workbuddy/英语/deliverables/gstack/android-child-ui-preview.html`，纯 HTML + 内联 CSS，可在浏览器直接打开（示意数据，不可交互）。
 

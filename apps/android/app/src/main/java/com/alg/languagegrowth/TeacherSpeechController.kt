@@ -41,6 +41,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
     private var cachedParts: List<Pair<File, Float>> = emptyList()
     private var cachedWordParts: List<Pair<File, Float>> = emptyList()
     private var cachedWordKey = ""
+    private val cachedPassageFiles = mutableMapOf<String, File>()
     private var generation = 0
 
     fun stop(clearAudio: Boolean = true) {
@@ -63,8 +64,15 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         cachedWordKey = ""
     }
 
+    /** 课文音频按 audioRef 缓存；只在换课/退出课堂时清理，不在每个回合丢弃。 */
+    fun clearPassageAudio() {
+        cachedPassageFiles.values.forEach { it.delete() }
+        cachedPassageFiles.clear()
+    }
+
     fun close() {
         stop()
+        clearPassageAudio()
         scope.cancel()
     }
 
@@ -347,6 +355,221 @@ internal class TeacherSpeechController(private val cacheDir: File) {
             } finally {
                 if (!settled) pendingFiles.forEach { it.delete() }
                 if (!settled && reservationId != null) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        try {
+                            http(
+                                base, "/speech/quota/release", "POST",
+                                JSONObject().put("reservationId", reservationId), token,
+                            )
+                        } catch (_: Exception) {
+                            withContext(Dispatchers.Main) {
+                                emit(false, "语音请求已停止，额度释放暂未确认；租约将自动到期。")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 播放开课下发的预生成课文音频（逐句 normal / slow）。
+     *
+     * 音频已由课程预热生成，不需要再合成；下载接口仍要求 TTS 额度租约，
+     * 因此先建租约、下载后按 0 秒结算。同一 audioRef 第二次点击直接播放本地文件。
+     */
+    fun playPassage(
+        base: String,
+        token: String,
+        learnerId: String,
+        audioRef: String,
+        onState: (Boolean, String) -> Unit,
+    ) {
+        if (!safeRef(audioRef)) {
+            onState(false, "这一句的音频还在准备中。")
+            return
+        }
+        val previous = task
+        previous?.cancel()
+        val currentGeneration = ++generation
+        fun emit(active: Boolean, message: String) {
+            if (generation == currentGeneration) onState(active, message)
+        }
+        task = scope.launch {
+            previous?.join()
+            var reservationId: String? = null
+            var pendingFile: File? = null
+            var settled = false
+            emit(true, "正在准备课文音频…")
+            try {
+                val local = cachedPassageFiles[audioRef]
+                if (local != null && local.isFile) {
+                    emit(true, "老师正在读这一句…")
+                    playParts(listOf(local to 1f))
+                    emit(false, "这一句读完了，可以再听")
+                    return@launch
+                }
+
+                require(token.isNotBlank() && learnerId.isNotBlank()) { "登录或学习者信息已失效，请重新登录" }
+                val learnerHeaders = mapOf("X-Learner-Id" to learnerId)
+                val reservation = withContext(Dispatchers.IO) {
+                    http(
+                        base, "/speech/quota/reserve", "POST",
+                        JSONObject()
+                            .put("learnerId", learnerId)
+                            .put("serviceKind", "tts")
+                            .put("seconds", 1.0)
+                            .put("ttlSeconds", 600)
+                            .put("idempotencyKey", "android-passage-${UUID.randomUUID()}"),
+                        token,
+                    )
+                }
+                val rid = reservation.optString("reservationId")
+                require(rid.isNotBlank() && reservation.optString("status", "reserved") == "reserved") {
+                    "语音额度租约不可用"
+                }
+                reservationId = rid
+                val headers = learnerHeaders + ("X-Speech-Quota-Reservation" to rid)
+                val file = withContext(Dispatchers.IO) {
+                    download(base, audioRef, token, headers).also { pendingFile = it }
+                }
+                emit(true, "老师正在读这一句…")
+                playParts(listOf(file to 1f))
+                withContext(Dispatchers.IO) {
+                    http(
+                        base, "/speech/quota/settle", "POST",
+                        JSONObject().put("reservationId", rid).put("seconds", 0.0),
+                        token,
+                    )
+                }
+                settled = true
+                pendingFile = null
+                cachedPassageFiles[audioRef] = file
+                emit(false, "这一句读完了，可以再听")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val detail = e.message.orEmpty()
+                val childMessage = when {
+                    detail.contains("登录") || detail.contains("学习者") -> "登录状态已失效，请重新登录。"
+                    detail.contains("额度") -> "语音额度暂时不可用，先看着文字读一读。"
+                    else -> "这一句暂时不能播放，先看着文字读一读。"
+                }
+                emit(false, childMessage)
+            } finally {
+                if (!settled) pendingFile?.delete()
+                if (!settled && reservationId != null) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        try {
+                            http(
+                                base, "/speech/quota/release", "POST",
+                                JSONObject().put("reservationId", reservationId), token,
+                            )
+                        } catch (_: Exception) {
+                            withContext(Dispatchers.Main) {
+                                emit(false, "语音请求已停止，额度释放暂未确认；租约将自动到期。")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 连续播放整篇课文：逐句取缓存或下载，播放时回调当前句，便于客户端高亮。
+     * 预生成音频仍按一次租约、0 秒结算；整篇都能命中本地缓存时不申请额度。
+     */
+    fun playPassageSequence(
+        base: String,
+        token: String,
+        learnerId: String,
+        items: List<PassageAudioItem>,
+        onSentence: (String) -> Unit,
+        onState: (Boolean, String) -> Unit,
+    ) {
+        if (items.isEmpty()) {
+            onState(false, "这一档还没有可连续播放的课文音频。")
+            return
+        }
+        val previous = task
+        previous?.cancel()
+        val currentGeneration = ++generation
+        fun emit(active: Boolean, message: String) {
+            if (generation == currentGeneration) onState(active, message)
+        }
+        task = scope.launch {
+            previous?.join()
+            var reservationId: String? = null
+            var completed = false
+            emit(true, "正在准备整篇课文…")
+            try {
+                val resolved = mutableMapOf<String, File>()
+                items.forEach { item ->
+                    cachedPassageFiles[item.audioRef]?.takeIf { it.isFile }?.let { resolved[item.audioRef] = it }
+                }
+                val missing = items.filter { resolved[it.audioRef] == null }
+                var headers = emptyMap<String, String>()
+                if (missing.isNotEmpty()) {
+                    require(token.isNotBlank() && learnerId.isNotBlank()) { "登录或学习者信息已失效，请重新登录" }
+                    val reservation = withContext(Dispatchers.IO) {
+                        http(
+                            base, "/speech/quota/reserve", "POST",
+                            JSONObject()
+                                .put("learnerId", learnerId)
+                                .put("serviceKind", "tts")
+                                .put("seconds", 1.0)
+                                .put("ttlSeconds", 600)
+                                .put("idempotencyKey", "android-passage-all-${UUID.randomUUID()}"),
+                            token,
+                        )
+                    }
+                    val rid = reservation.optString("reservationId")
+                    require(rid.isNotBlank() && reservation.optString("status", "reserved") == "reserved") {
+                        "语音额度租约不可用"
+                    }
+                    reservationId = rid
+                    headers = mapOf(
+                        "X-Learner-Id" to learnerId,
+                        "X-Speech-Quota-Reservation" to rid,
+                    )
+                }
+
+                items.forEachIndexed { index, item ->
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val local = resolved[item.audioRef] ?: withContext(Dispatchers.IO) {
+                        download(base, item.audioRef, token, headers)
+                    }
+                    // 开课时预生成的音频只要下载成功就保留，取消后重播也不用再下载。
+                    resolved[item.audioRef] = local
+                    cachedPassageFiles[item.audioRef] = local
+                    emit(true, "正在读第 ${index + 1}/${items.size} 句…")
+                    onSentence(item.sentenceId)
+                    playFile(local, 1f)
+                }
+                if (reservationId != null) {
+                    withContext(Dispatchers.IO) {
+                        http(
+                            base, "/speech/quota/settle", "POST",
+                            JSONObject().put("reservationId", reservationId).put("seconds", 0.0),
+                            token,
+                        )
+                    }
+                }
+                completed = true
+                emit(false, "整篇读完了，可以再听")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val detail = e.message.orEmpty()
+                val childMessage = when {
+                    detail.contains("登录") || detail.contains("学习者") -> "登录状态已失效，请重新登录。"
+                    detail.contains("额度") -> "语音额度暂时不可用，先看着文字读一读。"
+                    else -> "整篇课文暂时不能继续播放，先看着文字读一读。"
+                }
+                emit(false, childMessage)
+            } finally {
+                if (!completed && reservationId != null) {
                     withContext(NonCancellable + Dispatchers.IO) {
                         try {
                             http(
