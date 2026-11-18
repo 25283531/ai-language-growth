@@ -49,11 +49,27 @@ jobs:
           gradle-version: '8.7'
       # 最低质量门禁（打包前）：JVM 单测无需设备，lint 为静态检查。
       # 任一失败即中止 job，后续 Assemble APK / Upload APK 都不会执行（失败时不上传 APK）。
-      # 占位说明：仓库当前尚无 Android 测试源码，testDebugUnitTest 会空跑通过，
-      # 保留该任务作为占位门禁，待补 instrumented / Robolectric 用例后自动生效；
-      # lint 若命中存量代码问题而失败，属门禁暴露的既有问题，本次不改 Android 源码。
       - name: Quality gate - JVM unit tests
-        run: gradle --no-daemon -p apps/android testDebugUnitTest
+        run: |
+          set -o pipefail
+          gradle --no-daemon -p apps/android testDebugUnitTest --stacktrace 2>&1 | tee /tmp/android-test.log
+      - name: Summarize Android test failure
+        if: failure()
+        run: |
+          {
+            echo '### Android unit test failure'
+            echo '```text'
+            tail -n 160 /tmp/android-test.log 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Annotate Android test failure
+        if: failure()
+        run: |
+          grep -E '(^e: |FAILED|Execution failed|Caused by:|What went wrong|error:)' /tmp/android-test.log 2>/dev/null \
+            | head -n 10 \
+            | while IFS= read -r line; do
+                echo "::error::${line:0:900}"
+              done
       - name: Quality gate - lint
         run: gradle --no-daemon -p apps/android lintDebug
       # 端侧 TTS 评测用（Kokoro）：官方 int8 多语种模型，构建时下载并校验，不进仓库。
