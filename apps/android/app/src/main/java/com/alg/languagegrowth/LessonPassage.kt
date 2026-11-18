@@ -91,11 +91,10 @@ private fun parsePassageSentence(raw: JSONObject?): PassageSentence? {
     )
 }
 
+private val PassageAudioRefPattern = Regex("^/api/v1/media/audio/[a-fA-F0-9]{24}\\.(mp3|wav|m4a)$")
+
 private fun JSONObject?.curriculumAudioRef(key: String): String? =
-    this?.cleanString(key)?.takeIf { ref ->
-        ref.startsWith("/api/v1/media/audio/") &&
-            ref.substringAfterLast('.', "").lowercase() in setOf("mp3", "wav", "m4a")
-    }
+    this?.cleanString(key)?.takeIf { ref -> PassageAudioRefPattern.matches(ref) }
 
 private fun JSONObject?.positiveSpeed(key: String, fallback: Double): Double {
     val value = this?.optDouble(key, fallback) ?: fallback
