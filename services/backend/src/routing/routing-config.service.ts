@@ -61,7 +61,14 @@ export class RoutingConfigService implements OnModuleInit {
     return config;
   }
 
-  async save(input: unknown): Promise<RouterConfig> {
+  /**
+   * 保存路由配置。
+   *
+   * enforceReadiness=false 只用于启动时补齐默认路由：那是系统自检而不是运维操作，
+   * 历史部署里可能并存未跑过 Benchmark 的旧模型；此时若按门禁抛错会让整个后端
+   * 在启动阶段反复重启（旧库升级即炸）。运维手动保存仍然强制门禁。
+   */
+  async save(input: unknown, options: { enforceReadiness?: boolean } = {}): Promise<RouterConfig> {
     const parsed = configSchema.safeParse(input);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const value = parsed.data;
@@ -76,7 +83,7 @@ export class RoutingConfigService implements OnModuleInit {
 
     // production 门禁只作用于显式配置的供应商模型；mock/L0 和默认别名不阻断。
     // 最近一次 Benchmark 未通过时，禁止把该模型写入已启用路由。
-    if ((process.env.AI_GATEWAY_MODE ?? 'mock') === 'live') {
+    if (options.enforceReadiness !== false && (process.env.AI_GATEWAY_MODE ?? 'mock') === 'live') {
       for (const route of value.rules.filter((item) => item.enabled)) {
         const serviceKind = serviceByRoute.get(route.taskRoute)!;
         const prefix = `configured_${serviceKind}_`;
@@ -138,13 +145,15 @@ export class RoutingConfigService implements OnModuleInit {
   private async ensureDefaults(): Promise<void> {
     const count = await this.prisma.ai_task_routes.count();
     if (count === 0) {
-      await this.save(DEFAULT_ROUTER_CONFIG);
+      await this.save(DEFAULT_ROUTER_CONFIG, { enforceReadiness: false });
       return;
     }
     const current = await this.loadConfig();
     const existing = new Set(current.rules.map((rule) => rule.taskRoute));
     const missing = DEFAULT_ROUTER_CONFIG.rules.filter((rule) => !existing.has(rule.taskRoute));
-    if (missing.length) await this.save({ ...current, rules: [...current.rules, ...missing] });
+    if (missing.length) {
+      await this.save({ ...current, rules: [...current.rules, ...missing] }, { enforceReadiness: false });
+    }
   }
 
   private async ensureModel(
