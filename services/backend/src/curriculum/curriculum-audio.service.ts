@@ -347,10 +347,9 @@ export class CurriculumAudioService {
       if (partOfSpeech) pos.set(word, partOfSpeech);
       for (const variant of row.variants ?? []) {
         const form = variant.trim().toLowerCase();
-        // 只接受规则屈折（helped→help、dishes→dish）；was→be、did→do 这类不规则形式
-        // 读音与词干不同，猜了就教错，留给 AI 判定后再补。
+        // 词性可以继承词干；但读音不能。helped 读 /helpt/、dishes 读 /ˈdɪʃɪz/，
+        // 都跟原形不同，统一留给小模型判定后再缓存。
         if (!isRegularVariant(form, word)) continue;
-        if (phonetic) table.set(form, phonetic);
         if (partOfSpeech) pos.set(form, partOfSpeech);
       }
     }
