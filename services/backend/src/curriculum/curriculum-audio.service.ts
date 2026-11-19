@@ -326,12 +326,12 @@ export class CurriculumAudioService {
       const phonetic = (item.phonetic ?? '').trim();
       if (word && phonetic) table.set(word, phonetic);
     }
-    const words = [...new Set(
-      content.passage.paragraphs
+    const words = [...new Set([
+      ...content.vocabulary.map((item) => item.word.trim().toLowerCase()),
+      ...content.passage.paragraphs
         .flatMap((paragraph) => paragraph.sentences)
-        .flatMap((sentence) => sentence.en.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [])
-        .filter((word) => !table.has(word)),
-    )];
+        .flatMap((sentence) => sentence.en.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? []),
+    ])].filter((word) => word.length > 1);
     if (!words.length) return { phonetic: table, pos: new Map() };
     const rows = await this.prisma.lexicon_entries.findMany({
       where: { OR: [{ word: { in: words } }, { variants: { hasSome: words } }] },
@@ -339,15 +339,18 @@ export class CurriculumAudioService {
     });
     const pos = new Map<string, string>();
     for (const row of rows) {
-      const phonetic = row.phonetic?.trim();
+      const phonetic = firstPronunciation(row.phonetic);
       const partOfSpeech = row.pos?.trim();
-      if (phonetic) {
-        table.set(row.word.toLowerCase(), phonetic);
-        for (const variant of row.variants ?? []) table.set(variant.toLowerCase(), phonetic);
-      }
-      if (partOfSpeech) {
-        pos.set(row.word.toLowerCase(), partOfSpeech);
-        for (const variant of row.variants ?? []) pos.set(variant.toLowerCase(), partOfSpeech);
+      const word = row.word.toLowerCase();
+      if (phonetic) table.set(word, phonetic);
+      if (partOfSpeech) pos.set(word, partOfSpeech);
+      for (const variant of row.variants ?? []) {
+        const form = variant.trim().toLowerCase();
+        // 只接受规则屈折（helped→help、dishes→dish）；was→be、did→do 这类不规则形式
+        // 读音与词干不同，猜了就教错，留给 AI 判定后再补。
+        if (!isRegularVariant(form, word)) continue;
+        if (phonetic) table.set(form, phonetic);
+        if (partOfSpeech) pos.set(form, partOfSpeech);
       }
     }
     return { phonetic: table, pos };
@@ -428,4 +431,17 @@ function clipRow(
     status: error ? 'failed' : 'ready',
     error,
   };
+}
+
+/** 词库一条记录可能带多个读音（用 . 或 ; 分隔），教学上只取第一个。 */
+function firstPronunciation(raw: string | null | undefined): string {
+  const value = (raw ?? '').trim();
+  if (!value) return '';
+  return (value.split(/[.;]/)[0] ?? '').trim();
+}
+
+/** 规则屈折：变体以词干开头（help→helped、dish→dishes、open→opened）。 */
+function isRegularVariant(form: string, lemma: string): boolean {
+  if (!lemma || form === lemma) return false;
+  return form.startsWith(lemma) && form.length <= lemma.length + 5;
 }
