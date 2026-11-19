@@ -14,6 +14,7 @@ import AdmZip from 'adm-zip';
 import { CurriculumGeneratorService } from './curriculum-generator.service';
 import { CurriculumWarmupService } from './curriculum-warmup.service';
 import { LexiconService } from './lexicon.service';
+import { LexiconProofreadService } from './lexicon-proofread.service';
 import { TextbookUnitService } from './textbook-unit.service';
 import { TextbookUnitPublisherService } from './textbook-unit-publisher.service';
 import {
@@ -272,6 +273,7 @@ export class CurriculumAdminController {
     private readonly generator: CurriculumGeneratorService,
     private readonly warmup: CurriculumWarmupService,
     @Optional() private readonly lexicon?: LexiconService,
+    @Optional() private readonly proofread?: LexiconProofreadService,
     @Optional() private readonly textbookUnits?: TextbookUnitService,
     @Optional() private readonly textbookUnitPublisher?: TextbookUnitPublisherService,
   ) {}
@@ -940,6 +942,24 @@ export class CurriculumAdminController {
     const coverage = await this.lexicon.textbookUnitCoverage(unitId);
     if (!coverage) throw new NotFoundException('教材单元不存在');
     return coverage;
+  }
+
+  /**
+   * 批量校对 ECDICT 存量音标：按单元收集单词，小模型重注 IPA 后写回。
+   * 仅处理未打过 ipa-proofread 标记的词条。
+   */
+  @Post('lexicon/proofread')
+  async proofreadLexicon(
+    @Headers('cookie') cookie: string | undefined,
+    @Body() body: { unitId?: string; limit?: number },
+  ) {
+    this.authorize(cookie);
+    if (!this.proofread) throw new BadRequestException('音标校对服务未启用');
+    if (body?.unitId && !z.string().uuid().safeParse(body.unitId).success) {
+      throw new BadRequestException('unitId 格式不正确');
+    }
+    const limit = Number.isFinite(body?.limit) ? Number(body?.limit) : 120;
+    return this.proofread.proofread({ unitId: body?.unitId, limit });
   }
 
   /**

@@ -48,6 +48,7 @@ import { CurriculumGeneratorService } from './curriculum/curriculum-generator.se
 import { CurriculumWarmupService } from './curriculum/curriculum-warmup.service';
 import { CurriculumAudioService } from './curriculum/curriculum-audio.service';
 import { LexiconService } from './curriculum/lexicon.service';
+import { LexiconProofreadService } from './curriculum/lexicon-proofread.service';
 import { TextbookUnitService } from './curriculum/textbook-unit.service';
 import { TextbookUnitPublisherService } from './curriculum/textbook-unit-publisher.service';
 import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
@@ -102,6 +103,7 @@ import { ReplayModule } from './replay/replay.module';
     CurriculumWarmupService,
     CurriculumAudioService,
     LexiconService,
+    LexiconProofreadService,
     TextbookUnitService,
     TextbookUnitPublisherService,
     AiGatewayService,
