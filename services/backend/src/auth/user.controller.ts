@@ -104,9 +104,11 @@ export class UserController {
     // 解析失败不影响仪表盘（textbook 字段保持原样）。
     const textbookTopicId = mapping
       ? await resolveTextbookTopic(this.prisma, {
+        textbookId: mapping.textbookId,
         unitId: mapping.currentUnit || null,
         publisher: mapping.publisher,
         grade: mapping.grade,
+        edition: mapping.version,
       }).catch(() => null)
       : null;
 
@@ -238,6 +240,7 @@ export class UserController {
     // 单元 → 能力节点映射由服务端确定性推导（关键词规则，不改 schema）。
     // 之前这里恒为空数组，等于把「教材同步」变成了空承诺；Planner 现在会真的读它。
     const mappingData = {
+      textbookId: textbook.id,
       publisher: textbook.publisher,
       grade: textbook.grade,
       version: textbook.edition ?? textbook.title ?? '',

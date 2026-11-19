@@ -702,6 +702,7 @@ model review_schedules {
 model textbook_mappings {
   id           String   @id @default(uuid())
   learnerId    String
+  textbookId   String?
   grade        String
   publisher    String
   version      String
