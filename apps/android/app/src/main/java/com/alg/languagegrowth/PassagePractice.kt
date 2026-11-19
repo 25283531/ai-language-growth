@@ -26,10 +26,19 @@ internal data class FocusWordClip(
     val status: String,
 )
 
+internal data class FocusWordExample(
+    val en: String,
+    val zh: String,
+)
+
 internal data class FocusWord(
     val word: String,
     val phonetic: String,
+    /** P2 词性；词库无记录时为空。 */
+    val pos: String = "",
     val meaningZh: String,
+    /** P2 例句（单元词条自带的英中对照），最多 3 条。 */
+    val examples: List<FocusWordExample> = emptyList(),
     val syllables: List<String>,
     val difficultPhonemes: List<String>,
     val reason: String,
@@ -61,12 +70,23 @@ internal fun parseFocusWord(raw: JSONObject?): FocusWord? {
     return FocusWord(
         word = word,
         phonetic = raw.optString("phonetic", "").trim(),
+        pos = raw.optString("pos", "").trim(),
         meaningZh = raw.optString("meaningZh", "").trim(),
+        examples = parseFocusWordExamples(raw.optJSONArray("examples")),
         syllables = raw.stringList("syllables"),
         difficultPhonemes = raw.stringList("difficultPhonemes"),
         reason = raw.optString("reason", "").trim(),
         clips = parseFocusWordClips(raw.optJSONArray("clips")),
     )
+}
+
+private fun parseFocusWordExamples(array: org.json.JSONArray?): List<FocusWordExample> {
+    if (array == null) return emptyList()
+    return (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val en = item.optString("en", "").trim()
+        if (en.isEmpty()) null else FocusWordExample(en = en, zh = item.optString("zh", "").trim())
+    }
 }
 
 private fun parseFocusWordClips(array: org.json.JSONArray?): List<FocusWordClip> {

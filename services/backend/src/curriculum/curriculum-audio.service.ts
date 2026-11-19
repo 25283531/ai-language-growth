@@ -300,6 +300,7 @@ export class CurriculumAudioService {
         status: true,
       },
     });
+    const lexicon = await this.loadSentencePhonetics(parsed.data);
     return assembleCurriculumPassage({
       unitId: unit.id,
       topicId: unit.topicId,
@@ -307,7 +308,8 @@ export class CurriculumAudioService {
       content: parsed.data,
       clips: rows,
       knownPhonemes: await this.loadKnownPhonemes(),
-      wordPhonetic: await this.loadSentencePhonetics(parsed.data),
+      wordPhonetic: lexicon.phonetic,
+      wordPos: lexicon.pos,
     });
   }
 
@@ -317,7 +319,7 @@ export class CurriculumAudioService {
    */
   private async loadSentencePhonetics(
     content: TextbookUnitContent,
-  ): Promise<Map<string, string>> {
+  ): Promise<{ phonetic: Map<string, string>; pos: Map<string, string> }> {
     const table = new Map<string, string>();
     for (const item of content.vocabulary) {
       const word = item.word.trim().toLowerCase();
@@ -330,18 +332,25 @@ export class CurriculumAudioService {
         .flatMap((sentence) => sentence.en.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [])
         .filter((word) => !table.has(word)),
     )];
-    if (!words.length) return table;
+    if (!words.length) return { phonetic: table, pos: new Map() };
     const rows = await this.prisma.lexicon_entries.findMany({
       where: { OR: [{ word: { in: words } }, { variants: { hasSome: words } }] },
-      select: { word: true, variants: true, phonetic: true },
+      select: { word: true, variants: true, phonetic: true, pos: true },
     });
+    const pos = new Map<string, string>();
     for (const row of rows) {
       const phonetic = row.phonetic?.trim();
-      if (!phonetic) continue;
-      table.set(row.word.toLowerCase(), phonetic);
-      for (const variant of row.variants ?? []) table.set(variant.toLowerCase(), phonetic);
+      const partOfSpeech = row.pos?.trim();
+      if (phonetic) {
+        table.set(row.word.toLowerCase(), phonetic);
+        for (const variant of row.variants ?? []) table.set(variant.toLowerCase(), phonetic);
+      }
+      if (partOfSpeech) {
+        pos.set(row.word.toLowerCase(), partOfSpeech);
+        for (const variant of row.variants ?? []) pos.set(variant.toLowerCase(), partOfSpeech);
+      }
     }
-    return table;
+    return { phonetic: table, pos };
   }
 
   /** 供管理端预览规划结果，不触发 TTS。 */

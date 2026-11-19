@@ -257,6 +257,8 @@ private fun GrowthApp(
     var passageLastSlow by remember { mutableStateOf<Boolean?>(null) }
     // P1：逐句跟读页的当前句下标；null 表示不在跟读流程里。
     var passageFollowIndex by remember { mutableStateOf<Int?>(null) }
+    // P2：重点词汇页的当前词下标；null 表示不在词汇流程里。
+    var passageWordIndex by remember { mutableStateOf<Int?>(null) }
     // P2-06 重点词拆读：当前词、当前高亮片段、陪练轮次与错误定位
     var focusIndex by remember { mutableStateOf(0) }
     var focusClipKey by remember { mutableStateOf("") }
@@ -915,6 +917,13 @@ private fun GrowthApp(
                             passageLastSlow = passageLastSlow,
                             passageFollowIndex = passageFollowIndex,
                             onPassageFollowIndex = { passageFollowIndex = it },
+                            passageWordIndex = passageWordIndex,
+                            onPassageWordIndex = { passageWordIndex = it },
+                            onPassagePlanDone = {
+                                passageFollowIndex = null
+                                passageWordIndex = null
+                                passageStatus = "重点词汇学完啦，接下来是语法讲解。"
+                            },
                             onStartPassageFollow = {
                                 if (lessonPassage != null) {
                                     clearPassageState()
@@ -1481,6 +1490,9 @@ private fun LearnScreen(
     passageLastSlow: Boolean?,
     passageFollowIndex: Int?,
     onPassageFollowIndex: (Int?) -> Unit,
+    passageWordIndex: Int?,
+    onPassageWordIndex: (Int?) -> Unit,
+    onPassagePlanDone: () -> Unit,
     onStartPassageFollow: () -> Unit,
     onSelectPassageSentence: (String) -> Unit,
     onPlayPassageSentence: (PassageSentence, Boolean) -> Unit,
@@ -1555,6 +1567,32 @@ private fun LearnScreen(
             onRecord = onFollowRecord,
             onIndex = onPassageFollowIndex,
             onExit = { onPassageFollowIndex(null) },
+            onFinish = {
+                onPassageFollowIndex(null)
+                if (lessonPassage?.focusWords.isNullOrEmpty()) onPassagePlanDone()
+                else onPassageWordIndex(0)
+            },
+        )
+        return
+    }
+
+    // P2：重点词汇页。一屏一词，整词双速 + 按住跟读。
+    val wordsPassage = lessonPassage
+    val wordIndex = passageWordIndex
+    if (wordsPassage != null && wordIndex != null) {
+        PassageWordsScreen(
+            passage = wordsPassage,
+            index = wordIndex,
+            busy = busy,
+            recording = followRecording,
+            recordingId = followSentenceId,
+            score = followScore,
+            status = followStatus,
+            onPlayClip = onPlayFocusClip,
+            onRecord = onFollowRecord,
+            onIndex = onPassageWordIndex,
+            onExit = { onPassageWordIndex(null) },
+            onFinish = onPassagePlanDone,
         )
         return
     }
@@ -2931,6 +2969,7 @@ private fun PassageFollowScreen(
     onRecord: (PassageSentence, Boolean) -> Unit,
     onIndex: (Int?) -> Unit,
     onExit: () -> Unit,
+    onFinish: () -> Unit,
 ) {
     val sentences = passage.sentences
     if (sentences.isEmpty()) {
@@ -3014,10 +3053,159 @@ private fun PassageFollowScreen(
             )
             GrowthSecondaryButton(
                 if (isLast) "完成跟读" else "下一句",
-                { if (isLast) onExit() else onIndex(safeIndex + 1) },
+                { if (isLast) onFinish() else onIndex(safeIndex + 1) },
                 modifier = Modifier.weight(1f),
             )
         }
         GrowthSecondaryButton("退出跟读", onExit)
+    }
+}
+/**
+ * P2：重点词汇页。
+ *
+ * 一屏一词：单词、音标、词性、中文、音节与难音、单元例句。
+ * 只播整词（正常 / 慢速），不拆音节播放；跟读沿用句子评测，目标文本就是单词本身。
+ */
+@Composable
+private fun PassageWordsScreen(
+    passage: LessonPassage,
+    index: Int,
+    busy: Boolean,
+    recording: Boolean,
+    recordingId: String,
+    score: Double?,
+    status: String,
+    onPlayClip: (Int, FocusWordClip) -> Unit,
+    onRecord: (PassageSentence, Boolean) -> Unit,
+    onIndex: (Int?) -> Unit,
+    onExit: () -> Unit,
+    onFinish: () -> Unit,
+) {
+    val words = passage.focusWords
+    if (words.isEmpty()) {
+        onFinish()
+        return
+    }
+    val safeIndex = index.coerceIn(0, words.size - 1)
+    val word = words[safeIndex]
+    val isLast = safeIndex == words.size - 1
+    val normalClip = word.playableClips.lastOrNull { it.kind == "natural" }
+        ?: word.playableClips.lastOrNull { it.kind == "blend" }
+    val slowClip = word.playableClips.firstOrNull { it.kind == "word" && it.speedTier == "slow" }
+        ?: word.playableClips.firstOrNull { it.kind == "word" }
+    val wordId = "word:${word.word}"
+    val target = PassageSentence(
+        id = wordId,
+        english = word.word,
+        chinese = word.meaningZh,
+        audio = PassageSentenceAudio(normalRef = null, slowRef = null, normalSpeed = 1.0, slowSpeed = 0.65),
+    )
+
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.BlueWash,
+        outline = GrowthColors.Blue.copy(alpha = 0.22f),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                GrowthSectionTitle("重点词汇", "📚")
+                Text(
+                    "第 ${safeIndex + 1} / ${words.size} 个词",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+            GrowthPill("${safeIndex + 1}/${words.size}", GrowthColors.PrimaryDeep, GrowthColors.PrimaryWash)
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(word.word, style = MaterialTheme.typography.displaySmall, color = GrowthColors.Ink)
+            if (word.pos.isNotBlank()) {
+                GrowthPill(word.pos, GrowthColors.InkSoft, GrowthColors.CreamDeep)
+            }
+        }
+        if (word.phonetic.isNotBlank()) {
+            Text(word.phonetic, style = MaterialTheme.typography.titleMedium, color = GrowthColors.InkSoft)
+        }
+        if (word.meaningZh.isNotBlank()) {
+            Text(word.meaningZh, style = MaterialTheme.typography.bodyLarge, color = GrowthColors.Ink)
+        }
+        if (word.syllables.isNotEmpty()) {
+            Text(
+                "音节 " + word.syllables.joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = GrowthColors.InkSoft,
+            )
+        }
+        if (word.difficultPhonemes.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("难音", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                word.difficultPhonemes.take(3).forEach { phoneme ->
+                    GrowthPill(phoneme, GrowthColors.BlueDeep, GrowthColors.BlueWash)
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrowthSecondaryButton(
+                "正常语速",
+                { normalClip?.let { onPlayClip(safeIndex, it) } },
+                modifier = Modifier.weight(1f),
+                enabled = !busy && normalClip != null,
+            )
+            GrowthSecondaryButton(
+                "慢速",
+                { slowClip?.let { onPlayClip(safeIndex, it) } },
+                modifier = Modifier.weight(1f),
+                enabled = !busy && slowClip != null,
+            )
+        }
+
+        HoldToSpeakButton(
+            recording = recording && recordingId == wordId,
+            enabled = !busy,
+            onPress = { onRecord(target, true) },
+            onRelease = { onRecord(target, false) },
+        )
+        Text(
+            "按住把整个词读一遍，不拆音节。",
+            style = MaterialTheme.typography.bodySmall,
+            color = GrowthColors.InkSoft,
+        )
+        if (score != null && recordingId == wordId) {
+            Text(
+                "这个词得分 ${score.roundToInt()} 分",
+                style = MaterialTheme.typography.titleSmall,
+                color = GrowthColors.PrimaryDeep,
+            )
+        }
+        if (status.isNotBlank() && recordingId == wordId) {
+            Text(status, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+        }
+
+        word.examples.firstOrNull()?.let { example ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("例句", style = MaterialTheme.typography.labelLarge, color = GrowthColors.InkSoft)
+                Text(example.en, style = MaterialTheme.typography.bodyLarge, color = GrowthColors.Ink)
+                if (example.zh.isNotBlank()) {
+                    Text(example.zh, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrowthSecondaryButton(
+                "上一个词",
+                { onIndex((safeIndex - 1).coerceAtLeast(0)) },
+                modifier = Modifier.weight(1f),
+                enabled = safeIndex > 0,
+            )
+            GrowthSecondaryButton(
+                if (isLast) "完成词汇" else "下一个词",
+                { if (isLast) onFinish() else onIndex(safeIndex + 1) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        GrowthSecondaryButton("退出词汇", onExit)
     }
 }

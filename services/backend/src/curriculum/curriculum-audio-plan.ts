@@ -73,7 +73,7 @@ export function buildCurriculumAudioPlan(
   for (const focus of selected) {
     const specs = wordClipSpecs(focus, options.knownPhonemes, skipped);
     if (!specs.length) continue;
-    focusWords.push({ ...focus, clips: specs });
+    focusWords.push({ ...focus, pos: '', examples: [], clips: specs });
     wordClips.push(...specs);
   }
 
@@ -326,6 +326,8 @@ export function assembleCurriculumPassage(input: {
   knownPhonemes?: ReadonlySet<string>;
   /** P1：词形（小写）→ 音标，用于拼整句音标；查不全就留空。 */
   wordPhonetic?: ReadonlyMap<string, string>;
+  /** P2：词形（小写）→ 词性；词库无词性时留空。 */
+  wordPos?: ReadonlyMap<string, string>;
 }): CurriculumPassage {
   const plan = buildCurriculumAudioPlan(input.content, { knownPhonemes: input.knownPhonemes });
   const byIdentity = new Map(
@@ -355,9 +357,19 @@ export function assembleCurriculumPassage(input: {
     }),
   }));
 
-  const focusWords = plan.focusWords.map((focus) => ({
-    ...focus,
-    clips: focus.clips.map((spec) => {
+  const focusWords = plan.focusWords.map((focus) => {
+    const vocabulary = input.content.vocabulary.find(
+      (item) => item.word.trim().toLowerCase() === focus.word.trim().toLowerCase(),
+    );
+    const examples = (vocabulary?.exampleSentences ?? [])
+      .map((example) => ({ en: example.en.trim(), zh: (example.zh ?? '').trim() }))
+      .filter((example) => example.en.length > 0)
+      .slice(0, 3);
+    return {
+      ...focus,
+      pos: input.wordPos?.get(focus.word.trim().toLowerCase()) ?? '',
+      examples,
+      clips: focus.clips.map((spec) => {
       const stored = byIdentity.get(identity(spec.clipKey, spec.kind, spec.partIndex, spec.speedTier));
       return {
         key: clipKey(spec),
@@ -371,8 +383,9 @@ export function assembleCurriculumPassage(input: {
         durationMs: stored?.durationMs ?? null,
         status: normalizeClipStatus(stored?.status),
       };
-    }),
-  }));
+      }),
+    };
+  });
 
   return {
     unitId: input.unitId,

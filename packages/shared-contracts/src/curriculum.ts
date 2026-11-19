@@ -193,7 +193,11 @@ export type FocusWordClip = z.infer<typeof focusWordClipSchema>;
 export const focusWordAudioSchema = z.object({
   word: z.string().trim().min(1).max(100),
   phonetic: z.string().max(100).default(''),
+  /** P2 词性（来自词库）；单元词条无词性时为空。 */
+  pos: z.string().max(40).default(''),
   meaningZh: z.string().max(200).default(''),
+  /** P2 例句：优先取单元词条自带的中英对照，最多 3 条。 */
+  examples: z.array(z.object({ en: z.string().max(300), zh: z.string().max(300).default('') })).max(3).default([]),
   syllables: z.array(z.string().max(100)).max(30).default([]),
   difficultPhonemes: z.array(z.string().max(100)).max(30).default([]),
   /** 为什么选这个词（课文复现/多音节/困难音素），供管理端解释。 */
