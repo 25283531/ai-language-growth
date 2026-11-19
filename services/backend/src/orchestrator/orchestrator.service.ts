@@ -55,6 +55,8 @@ import { MemoryManagerService } from '../agents/memory-manager.service';
 import { PersonalityEngineService } from '../agents/personality-engine.service';
 import { PronunciationCoachService } from '../agents/pronunciation-coach.service';
 import { CurriculumAudioService } from '../curriculum/curriculum-audio.service';
+import { resolveTextbookTopic } from '../curriculum/textbook-topic';
+import { selectLessonTopic } from './lesson-topic';
 
 /**
  * 离线兜底的固定课程内容（D-015 降级链最后一步）。
@@ -215,7 +217,30 @@ export class OrchestratorService {
       where: { id: input.learnerId },
       select: { currentTopic: true },
     }))?.currentTopic;
-    const topicId = input.topicId ?? (profileTopicId || null) ?? previousTopicId ?? 'topic-greetings';
+    // 教材同步兜底：旧客户端不带 topicId，若只靠 previousTopicId 就会永久停在
+    // 第一次开课的话题上，选了教材也进不去单元。这里按学习者的教材映射解折主题，
+    // 优先级低于“档案一次性指定”，高于“上一节课主题”。
+    const textbookMapping = await this.prisma.textbook_mappings.findFirst({
+      where: { learnerId: input.learnerId },
+      orderBy: { updatedAt: 'desc' },
+      select: { textbookId: true, currentUnit: true, publisher: true, grade: true, version: true },
+    });
+    const textbookTopicId = textbookMapping
+      ? await resolveTextbookTopic(this.prisma, {
+        textbookId: textbookMapping.textbookId,
+        unitId: textbookMapping.currentUnit || null,
+        publisher: textbookMapping.publisher,
+        grade: textbookMapping.grade,
+        edition: textbookMapping.version,
+      }).catch(() => null)
+      : null;
+    const topicId = selectLessonTopic({
+      requested: input.topicId,
+      profile: profileTopicId,
+      textbook: textbookTopicId,
+      previous: previousTopicId,
+      fallback: 'topic-greetings',
+    });
     const followUpSkillNodeIds = Array.from(new Set([
       ...selectFollowUpSkillNodeIds(previousSnapshot?.evidenceBySkill ?? []),
       ...(previousSnapshot?.nextFocusSkillNodeIds ?? []),
