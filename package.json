@@ -22,7 +22,11 @@
     "dev:web": "npm run dev --workspace @alg/web",
     "prisma:generate": "npm run prisma:generate --workspace @alg/backend",
     "prisma:migrate": "npm run prisma:migrate --workspace @alg/backend",
-    "prisma:seed": "npm run prisma:seed --workspace @alg/backend"
+    "prisma:seed": "npm run prisma:seed --workspace @alg/backend",
+    "lexicon:build": "npm run build:lexicon --workspace @alg/vocabulary",
+    "lexicon:import": "npm run lexicon:import --workspace @alg/backend",
+    "lexicon:import:dry": "npm run lexicon:import:dry --workspace @alg/backend",
+    "lexicon:import:global": "npm run lexicon:import:global --workspace @alg/backend"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

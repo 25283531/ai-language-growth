@@ -95,6 +95,38 @@ export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
       enabled: true,
     },
     {
+      taskRoute: 'llm.curriculum_unit_plan',
+      primary: { providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' },
+      fallback: [{ providerAlias: 'premium_llm', modelAlias: 'premium_llm_01', level: 'L3' }],
+      maxConcurrency: 2,
+      dailyBudgetCny: 150,
+      enabled: true,
+    },
+    {
+      taskRoute: 'llm.curriculum_unit_enrich',
+      primary: { providerAlias: 'lowcost_llm', modelAlias: 'lowcost_llm_01', level: 'L1' },
+      fallback: [{ providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' }],
+      maxConcurrency: 4,
+      dailyBudgetCny: 120,
+      enabled: true,
+    },
+    {
+      taskRoute: 'llm.curriculum_unit_grammar',
+      primary: { providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' },
+      fallback: [{ providerAlias: 'premium_llm', modelAlias: 'premium_llm_01', level: 'L3' }],
+      maxConcurrency: 2,
+      dailyBudgetCny: 100,
+      enabled: true,
+    },
+    {
+      taskRoute: 'llm.curriculum_unit_activities',
+      primary: { providerAlias: 'mid_llm', modelAlias: 'mid_llm_01', level: 'L2' },
+      fallback: [{ providerAlias: 'premium_llm', modelAlias: 'premium_llm_01', level: 'L3' }],
+      maxConcurrency: 3,
+      dailyBudgetCny: 150,
+      enabled: true,
+    },
+    {
       // Planner 的候选活动排序默认由规则完成；只有同层、不同任务类型
       // 无法用规则稳定裁决时，才用 L1 轻量模型做一次边界选择。
       taskRoute: 'llm.learning_plan_tiebreak',

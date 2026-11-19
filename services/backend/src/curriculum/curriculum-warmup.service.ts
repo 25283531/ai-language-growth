@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { normalizeCefrLevel } from '@alg/curriculum';
 import type { CefrCurriculumLevel } from '@alg/shared-contracts';
@@ -6,6 +6,7 @@ import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImageCacheService } from '../media/image-cache.service';
+import { CurriculumAudioService } from './curriculum-audio.service';
 import type { Prisma } from '@prisma/client';
 
 type WarmLevelOptions = {
@@ -13,6 +14,8 @@ type WarmLevelOptions = {
   maxImages?: number;
   /** 单次最多合成多少条语音；其余交给后续增量任务。 */
   maxSpeech?: number;
+  /** 单次最多合成多少条逐句/拆读音频；默认 120，上限 240。 */
+  maxAudioClips?: number;
   /** 管理员手动触发时忽略内存去重。 */
   force?: boolean;
 };
@@ -36,6 +39,12 @@ type WarmLevelResult = {
   speechGenerated: number;
   speechSkipped: number;
   speechFailed: number;
+  /** P2-01：逐句双速与重点词拆读音頻统计。 */
+  audioUnitsWarmed: number;
+  sentenceClipsGenerated: number;
+  wordClipsGenerated: number;
+  audioClipsReused: number;
+  audioClipsFailed: number;
   mode: 'live' | 'mock-skip' | 'disabled';
   reason?: string;
 };
@@ -85,6 +94,7 @@ export class CurriculumWarmupService {
     private readonly gateway: AiGatewayService,
     private readonly router: ModelRouterImpl,
     private readonly imageCache: ImageCacheService,
+    @Optional() private readonly audio?: CurriculumAudioService,
   ) {}
 
   /**
@@ -121,11 +131,16 @@ export class CurriculumWarmupService {
       speechGenerated: 0,
       speechSkipped: 0,
       speechFailed: 0,
+      audioUnitsWarmed: 0,
+      sentenceClipsGenerated: 0,
+      wordClipsGenerated: 0,
+      audioClipsReused: 0,
+      audioClipsFailed: 0,
       mode: gatewayMode === 'mock' ? 'mock-skip' : 'live',
     };
     const units = await this.prisma.curriculum_units.findMany({
       where: { level: { in: aliases }, reviewStatus: 'published' },
-      select: { id: true, topicId: true },
+      select: { id: true, topicId: true, content: true, contentVersion: true },
       orderBy: [{ level: 'asc' }, { order: 'asc' }],
       take: 200,
     });
@@ -221,10 +236,38 @@ export class CurriculumWarmupService {
     }
 
     // —— 2. 语音：必须等图片回填后再计算 contentVersion，避免刚生成就失效。 ——
-    if (result.mode === 'mock-skip' || maxSpeech === 0) {
-      result.reason = result.mode === 'mock-skip'
-        ? '当前 AI_GATEWAY_MODE=mock，已跳过语音预生成，避免把占位音频写入正式缓存。'
-        : undefined;
+    if (result.mode === 'mock-skip') {
+      result.reason = '当前 AI_GATEWAY_MODE=mock，已跳过语音预生成，避免把占位音频写入正式缓存。';
+      return result;
+    }
+
+    // —— P2-01 / P2-02：逐句双速 + 重点词拆读。 ——
+    // 与旧的整体语音分开统计：即使 maxSpeech=0 也可以只预热句子音频。
+    if (this.audio && this.audio.enabled && gatewayMode !== 'mock') {
+      let audioBudget = Math.max(0, Math.min(240, options.maxAudioClips ?? 120));
+      for (const unit of units) {
+        if (audioBudget <= 0) break;
+        if (!unit.content) continue;
+        try {
+          const warmed = await this.audio.warmUnit(unit.id, {
+            force: options.force,
+            maxClips: audioBudget,
+          });
+          result.audioUnitsWarmed += 1;
+          result.sentenceClipsGenerated += warmed.sentenceClips;
+          result.wordClipsGenerated += warmed.wordClips;
+          result.audioClipsReused += warmed.reused;
+          result.audioClipsFailed += warmed.failed;
+          audioBudget -= warmed.generated + warmed.reused + warmed.failed;
+          if (warmed.mode === 'mock-skip') result.reason = '音频供应商为 mock，已跳过课程音频写入。';
+        } catch (error) {
+          result.audioClipsFailed += 1;
+          this.logger.warn(`课程音频预热失败 ${unit.id}：${error instanceof Error ? error.message : '未知错误'}`);
+        }
+      }
+    }
+
+    if (maxSpeech === 0) {
       return result;
     }
     let speechBudget = maxSpeech;
@@ -277,6 +320,34 @@ export class CurriculumWarmupService {
       }
     }
     return result;
+  }
+
+  /**
+   * 教材单元发布/编辑后的异步音频重建入口。
+   *
+   * 编辑会提升 contentVersion；新版本没有匹配片段，因此这里只需预热新版本，
+   * 不需要删除旧版本音频（回滚时还能直接命中）。失败只记录，不阻断编辑。
+   */
+  scheduleUnitAudio(unitId: string, options: { maxClips?: number } = {}): void {
+    if (!this.audio?.enabled) return;
+    if (process.env.CURRICULUM_WARMUP_ENABLED === 'false') return;
+    if ((process.env.AI_GATEWAY_MODE ?? '').toLowerCase() === 'mock') return;
+    void this.audio.warmUnit(unitId, { maxClips: options.maxClips ?? 120 })
+      .catch((error) => this.logger.warn(
+        `单元音频异步预热失败 ${unitId}：${error instanceof Error ? error.message : '未知错误'}`,
+      ));
+  }
+
+  /** 管理员手动重建当前版本音频（强制重新请求 TTS，供应商缓存命中则复用）。 */
+  async rebuildUnitAudio(unitId: string, options: { maxClips?: number } = {}) {
+    if (!this.audio) throw new BadRequestException('课程音频服务未启用');
+    return this.audio.rebuildUnit(unitId, options);
+  }
+
+  /** 当前版本音频覆盖情况；管理端据此决定是否重建。 */
+  async unitAudioStatus(unitId: string) {
+    if (!this.audio) throw new BadRequestException('课程音频服务未启用');
+    return this.audio.statusForUnit(unitId);
   }
 
   /**

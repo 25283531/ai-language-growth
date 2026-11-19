@@ -11,6 +11,11 @@ import { QueueModule } from './queue/queue.module';
 import { PrismaService } from './prisma/prisma.service';
 import { AiGatewayService } from './ai-gateway/ai-gateway.service';
 import { LearnerModelService } from './learner-model/learner-model.service';
+import { StageProfileService } from './learner-model/stage-profile.service';
+import {
+  CurriculumStageAdminController,
+  LearnerStageController,
+} from './learner-model/stage-profile.controller';
 import { PlannerService } from './planner/planner.service';
 import { OrchestratorService } from './orchestrator/orchestrator.service';
 import { LessonsController, LearnersController } from './lessons/lessons.controller';
@@ -41,6 +46,10 @@ import { MembershipAdminController } from './membership/membership-admin.control
 import { CurriculumAdminController } from './curriculum/curriculum-admin.controller';
 import { CurriculumGeneratorService } from './curriculum/curriculum-generator.service';
 import { CurriculumWarmupService } from './curriculum/curriculum-warmup.service';
+import { CurriculumAudioService } from './curriculum/curriculum-audio.service';
+import { LexiconService } from './curriculum/lexicon.service';
+import { TextbookUnitService } from './curriculum/textbook-unit.service';
+import { TextbookUnitPublisherService } from './curriculum/textbook-unit-publisher.service';
 import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
 import { UserController } from './auth/user.controller';
 import { AuthService } from './auth/auth.service';
@@ -61,6 +70,8 @@ import { ReplayModule } from './replay/replay.module';
   controllers: [
     LessonsController,
     LearnersController,
+    LearnerStageController,
+    CurriculumStageAdminController,
     SpeechController,
     SpeechQuotaController,
     UsageController,
@@ -89,8 +100,13 @@ import { ReplayModule } from './replay/replay.module';
     ImageCacheService,
     CurriculumGeneratorService,
     CurriculumWarmupService,
+    CurriculumAudioService,
+    LexiconService,
+    TextbookUnitService,
+    TextbookUnitPublisherService,
     AiGatewayService,
     LearnerModelService,
+    StageProfileService,
     ParentReportService,
     PlannerService,
     OrchestratorService,

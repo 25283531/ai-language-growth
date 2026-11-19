@@ -15,7 +15,10 @@
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:push": "prisma db push",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "lexicon:import": "tsx scripts/import-lexicon.ts",
+    "lexicon:import:dry": "tsx scripts/import-lexicon.ts --dry-run",
+    "lexicon:import:global": "tsx scripts/import-lexicon.ts --skip-textbook"
   },
   "dependencies": {
     "@alg/ai-provider-sdk": "*",

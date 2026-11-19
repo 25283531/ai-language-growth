@@ -19,6 +19,7 @@ import {
   type TaskType,
 } from './evidence';
 import { MASTERY_STATES } from './learner';
+import { ACTIVITY_EVIDENCE_KINDS, curriculumPassageSchema } from './curriculum';
 
 /**
  * TTS 语速与音色的平台统一抽象参数。
@@ -57,6 +58,11 @@ export type MethodVariant = (typeof METHOD_LADDER)[number];
 export const teachingDirectiveSchema = z.object({
   /** 当前教学目标（能力节点编码） */
   targetSkillNodeId: z.string(),
+  /**
+   * 本活动声明的掌握证据类型；理解与表达必须分开记。
+   * 缺省为 none（翻译、讲解、被动听读不产生掌握证据）。
+   */
+  evidenceKind: z.enum(ACTIVITY_EVIDENCE_KINDS).default('none'),
   /** 本轮任务类型 */
   taskType: z.enum(TASK_TYPES),
   /** 是否为无提示的间隔复习 */
@@ -354,6 +360,11 @@ export const lessonStartResponseSchema = z.object({
   topicName: z.string(),
   directive: teachingDirectiveSchema,
   speech: turnResponseSchema.shape.speech,
+  /**
+   * 课文教学包（passage + 逐句双速音频 + 重点词拆读）。
+   * 只有当前主题属于教材单元时下发；旧客户端忽略即可。
+   */
+  passage: curriculumPassageSchema.nullable().optional(),
   degradation: degradationSchema,
   learnerState: z.object({
     masteryStates: z.record(z.enum(MASTERY_STATES)),

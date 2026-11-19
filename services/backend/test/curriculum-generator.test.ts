@@ -40,6 +40,34 @@ test('教材词表生成完整 JSON 并按单元写入草稿', async () => {
   assert.equal(result.package.levels[0]?.units[0]?.vocabulary.length, 3);
 });
 
+test('AI 润色不会丢掉 ECDICT 已补齐的音标与释义', async () => {
+  const service = new CurriculumGeneratorService(
+    fakePrisma() as never,
+    {
+      smallLlm: async () => ({
+        content: JSON.stringify({ words: [{ word: 'apple', phonetic: '', meaningZh: '', syllables: [], difficultPhonemes: [], phrases: [], exampleSentences: [] }] }),
+      }),
+    } as never,
+    { route: async () => ({}) } as never,
+    {
+      lookupMany: async () => new Map([['apple', {
+        word: 'apple', phonetic: '/ˈæpəl/', meaningZh: '苹果', examples: [], matchSource: 'ecdict',
+      }]]),
+    } as never,
+  );
+  const result = await service.generateTextbook({
+    title: 'Unit 1',
+    level: 'A1',
+    words: 'apple',
+    unitSize: 1,
+    useAi: true,
+    persist: false,
+  }, 'tester');
+  const apple = result.package.levels[0]?.units[0]?.vocabulary[0];
+  assert.equal(apple?.phonetic, '/ˈæpəl/');
+  assert.equal(apple?.meaningZh, '苹果');
+});
+
 test('预置 CEFR JSON 可整体读取，也可按级别过滤', () => {
   const service = new CurriculumGeneratorService(fakePrisma() as never, {} as never, {} as never);
   const all = service.preset();

@@ -14,7 +14,7 @@
  *  - 教学决策全部在后端完成，客户端只渲染（约束一）。
  *  - 掌握状态由规则引擎根据证据计算，不由模型声称（约束三）。
  */
-import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import {
   advanceMethodLadder,
@@ -25,6 +25,7 @@ import {
   type MethodLadderState,
 } from '@alg/model-router';
 import type {
+  ActivityEvidenceKind,
   AssessmentRecord,
   EscalationSignal,
   IntentType,
@@ -53,6 +54,7 @@ import { shouldAssessWordPronunciationForActivity, wordPronunciationThresholdTas
 import { MemoryManagerService } from '../agents/memory-manager.service';
 import { PersonalityEngineService } from '../agents/personality-engine.service';
 import { PronunciationCoachService } from '../agents/pronunciation-coach.service';
+import { CurriculumAudioService } from '../curriculum/curriculum-audio.service';
 
 /**
  * 离线兜底的固定课程内容（D-015 降级链最后一步）。
@@ -75,6 +77,7 @@ export function snapTeacherSpeedTier(raw: number): 1.0 | 0.8 | 0.65 {
 const OFFLINE_DIRECTIVE: TeachingDirective = {
   targetSkillNodeId: 'LA.LISTEN.greeting_core',
   taskType: 'listening_comprehension',
+  evidenceKind: 'listening_comprehension',
   isReview: false,
   scenario: 'greeting_scene',
   teacherUtterance: '我们先听一听，跟着老师慢慢说：hello。',
@@ -178,6 +181,7 @@ export class OrchestratorService {
     @Inject(MemoryManagerService) private readonly memoryManager: MemoryManagerService,
     @Inject(PersonalityEngineService) private readonly personalityEngine: PersonalityEngineService,
     @Inject(PronunciationCoachService) private readonly pronunciationCoach: PronunciationCoachService,
+    @Optional() private readonly curriculumAudio?: CurriculumAudioService,
   ) {}
 
   /** 开课。 */
@@ -330,6 +334,13 @@ export class OrchestratorService {
     );
     // 开课时把学习者已有能力状态一并交给客户端展示（契约 learnerState 字段）。
     const masteryStates = await this.learnerModel.getMasteryStates(input.learnerId);
+    // P2-04：教材单元主题附带课文与逐句双速/拆读音频；失败不影响开课。
+    const passage = this.curriculumAudio
+      ? await this.curriculumAudio.passageForTopic(topicId).catch((error) => {
+          this.logger.warn(`课文教学包读取失败 ${topicId}：${error instanceof Error ? error.message : '未知错误'}`);
+          return null;
+        })
+      : null;
 
     return {
       lessonSessionId: session.id,
@@ -337,6 +348,7 @@ export class OrchestratorService {
       topicName: topicNameOf(topicId),
       directive,
       speech: speech.speech,
+      passage,
       degradation: {
         degraded: speech.meta.degraded,
         reasons: speech.meta.reasons,
@@ -1972,6 +1984,7 @@ export class OrchestratorService {
     const activity = item?.content as unknown as {
       taskType: string;
       scenario: string;
+      evidenceKind?: string;
       skillNodeIds: string[];
       targetWords: string[];
       demonstrationText: string | null;
@@ -2009,6 +2022,7 @@ export class OrchestratorService {
             where: {
               topicId: item.topicId,
               word: { equals: activity.targetWords[0], mode: 'insensitive' },
+              reviewStatus: 'published',
             },
             select: {
               phonetic: true,
@@ -2076,6 +2090,7 @@ export class OrchestratorService {
     const directive: TeachingDirective = {
       targetSkillNodeId: activity.skillNodeIds[0] ?? 'LA.LISTEN.greeting_core',
       taskType: activity.taskType as TeachingDirective['taskType'],
+      evidenceKind: evidenceKindForActivity(activity),
       isReview: input.isReview,
       scenario: activity.scenario as TeachingDirective['scenario'],
       teacherUtterance: isTapImage && input.isReview
@@ -2602,6 +2617,40 @@ function matchesSpeechAnswer(input: {
     demonstrationText: input.demonstrationText,
     assessment: input.assessment,
   });
+}
+
+/** 任务类型 → 证据类型；显式 evidenceKind 优先，缺失时按任务保守推断。 */
+export function evidenceKindForActivity(activity: {
+  taskType?: string | null;
+  evidenceKind?: string | null;
+}): ActivityEvidenceKind {
+  if (isActivityEvidenceKind(activity.evidenceKind)) return activity.evidenceKind;
+  switch (activity.taskType) {
+    case 'listening_comprehension':
+    case 'image_identification':
+      return 'listening_comprehension';
+    case 'reading_story':
+      return 'reading_comprehension';
+    case 'word_mimicry':
+    case 'pronunciation_drill':
+      return 'pronunciation';
+    case 'sentence_pattern':
+    case 'situational_dialogue':
+    case 'free_response':
+    case 'phrase_assembly':
+      return 'production';
+    default:
+      return 'none';
+  }
+}
+
+function isActivityEvidenceKind(value: string | null | undefined): value is ActivityEvidenceKind {
+  return value === 'listening_comprehension'
+    || value === 'reading_comprehension'
+    || value === 'production'
+    || value === 'pronunciation'
+    || value === 'transfer'
+    || value === 'none';
 }
 
 /** 极简音节切分（后端不依赖 provider-sdk 的 mock 表）。 */

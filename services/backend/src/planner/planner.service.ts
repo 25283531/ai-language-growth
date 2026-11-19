@@ -52,6 +52,32 @@ export function isReviewRenderable(activity: {
   return activity.taskType === 'image_identification' && (activity.imageOptions?.length ?? 0) > 0;
 }
 
+/** 能力领域中文名；用于同「本课重点领域」这类可解释文案，不是掌握判定。 */
+const ABILITY_DOMAIN_ZH: Record<string, string> = {
+  LISTEN: '听力理解',
+  PRON: '发音',
+  VOCAB: '词汇',
+  GRAM: '语法',
+  SPEAK: '表达',
+  COMM: '交流',
+  SCHOOL: '学校英语',
+};
+
+/**
+ * 从能力节点编码取能力领域（`<轨>.<领域>.<条目>`）。
+ *
+ * 领域只用于说明「这节课练什么」，不参与排课门槛：
+ * 某领域阶段低，不得据此过滤其他领域的活动（D-004）。
+ */
+export function abilityDomainsOf(skillNodeIds: string[]): string[] {
+  const domains = new Set<string>();
+  for (const skillNodeId of skillNodeIds) {
+    const label = ABILITY_DOMAIN_ZH[skillNodeId.split('.')[1] ?? ''];
+    if (label) domains.add(label);
+  }
+  return [...domains];
+}
+
 @Injectable()
 export class PlannerService {
   private readonly logger = new Logger(PlannerService.name);
@@ -189,7 +215,8 @@ export class PlannerService {
       .filter((a) => !input.excludeActivityIds.includes(a.id) && typeAllowed(a));
 
     if (activities.length === 0) {
-      return null;
+      // 主题内没有可下发活动：从其他能力领域补齐，而不是直接把课停掉（D-004）。
+      return this.planCrossDomainFallback(input, states, typeAllowed);
     }
 
     const eligible: TeachingActivity[] = [];
@@ -216,7 +243,7 @@ export class PlannerService {
       });
       return {
         activity: selected,
-        rationale: `服务端按当前能力开放难度 ${progressive.difficultyBand}，在 ${candidates.length} 个候选中选择；能力状态与硬前置由服务端校验${progressive.freeConversationLocked ? '，自主日常交流尚未开放' : ''}${progressive.activities.length ? '' : '；当前课程缺少该难度活动，回退至最低难度的非自由交流活动'}`,
+        rationale: `本课重点领域：${abilityDomainsOf(selected.skillNodeIds).join('、') || '综合'}；服务端按当前能力开放难度 ${progressive.difficultyBand}，在 ${candidates.length} 个候选中选择；能力状态与硬前置由服务端校验${progressive.freeConversationLocked ? '，自主日常交流尚未开放' : ''}${progressive.activities.length ? '' : '；当前课程缺少该难度活动，回退至最低难度的非自由交流活动'}`,
         isReview: false,
         reviewScheduleId: null,
       };
@@ -227,7 +254,11 @@ export class PlannerService {
     const fallbackActivities = activities.filter((activity) =>
       !this.isAutonomousConversation(activity) || this.hasIndependentConversationFoundation(states, masteryCode),
     );
-    if (!fallbackActivities.length) return null;
+    if (!fallbackActivities.length) {
+      // 主题内连“门槛较低的活动”都没有（例如只剩自主交流且未满足前提）：
+      // 仍从其他领域补齐，保证孩子有可做的内容，而不是返回 null 卡住课堂。
+      return this.planCrossDomainFallback(input, states, typeAllowed);
+    }
     const fallback = fallbackActivities.reduce((best, a) => {
       if (!best) return a;
       return a.difficulty < best.difficulty ? a : best;
@@ -239,6 +270,83 @@ export class PlannerService {
       isReview: false,
       reviewScheduleId: null,
     };
+  }
+
+  /**
+   * 跨领域补齐（P3-02 / D-004：阶段不是关卡）。
+   *
+   * 只在当前主题给不出任何候选时触发：
+   *  - 主题内没有可下发活动（含 `allowedTaskTypes` 过滤后为空）；
+   *  - 或主题内只剩自主交流类活动且独立交流基础未达成。
+   *
+   * 取舍：主题内有被硬前置挡住的低门槛活动时，优先留在本主题（保持课文/情境连贯），
+   * 只有本主题彻底没有候选才换领域；换领域时只取硬前置已满足、难度在能力带内的活动，
+   * 并把「为什么换领域」写进 rationale，便于解释与复盘。
+   */
+  private async planCrossDomainFallback(
+    input: {
+      topicId: string;
+      learnerId: string;
+      lessonSessionId: string;
+      excludeActivityIds: string[];
+    },
+    states: Record<string, MasteryState>,
+    typeAllowed: (activity: { taskType: string }) => boolean,
+  ): Promise<PlannedStep | null> {
+    // 停用主题不得因为「跨领域补齐」被绕过：停用即不下发该主题内容。
+    if (await this.isTopicDisabled(input.topicId)) return null;
+    const pool = await this.crossDomainActivityPool({
+      topicId: input.topicId,
+      states,
+      excludeActivityIds: input.excludeActivityIds,
+      typeAllowed,
+    });
+    const selected = pool[0];
+    if (!selected) return null;
+    const domains = abilityDomainsOf(selected.skillNodeIds);
+    return {
+      activity: selected,
+      rationale: `本课重点领域：${domains.join('、') || '综合'}；当前主题「${this.topicName(input.topicId)}」没有可排活动，先从其他能力领域安排 ${selected.id}，不因单一能力未达成停止推进（D-004）`,
+      isReview: false,
+      reviewScheduleId: null,
+    };
+  }
+
+  /**
+   * 其他主题/能力领域的可排活动池。
+   *
+   * 只读已发布（`reviewStatus='published'`）的数据库课程：内置课程没有下架/停用状态，
+   * 混进来会绕过运营刚刚下架的内容。限制取 200 条：只有本主题完全无候选时才走这条路。
+   */
+  private async crossDomainActivityPool(input: {
+    topicId: string;
+    states: Record<string, MasteryState>;
+    excludeActivityIds: string[];
+    typeAllowed: (activity: { taskType: string }) => boolean;
+  }): Promise<TeachingActivity[]> {
+    const rows = await this.prisma.learning_items.findMany({
+      where: { reviewStatus: 'published', topicId: { not: input.topicId } },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    });
+    const published = rows
+      .map((row) => teachingActivitySchema.safeParse(row.content))
+      .filter((parsed): parsed is { success: true; data: TeachingActivity } => parsed.success)
+      .map((parsed) => parsed.data)
+      .filter((activity) => activity.topicId !== input.topicId);
+
+    return published
+      .filter((activity) =>
+        !input.excludeActivityIds.includes(activity.id) &&
+        input.typeAllowed(activity) &&
+        this.canSchedule(activity, input.states).met &&
+        this.isWithinProgressiveAccess(activity, input.states),
+      )
+      .sort((left, right) =>
+        left.difficulty - right.difficulty ||
+        left.order - right.order ||
+        left.id.localeCompare(right.id),
+      );
   }
 
   /**
@@ -539,6 +647,9 @@ export class PlannerService {
       where: { topicId, reviewStatus: 'published' },
       orderBy: { createdAt: 'asc' },
     });
+    // 停用课程时 items 也会被置为 disabled；此时不能回落到内置活动，
+    // 否则「停用」在运行时仍会继续下发旧内容。
+    if (!rows.length && await this.isTopicDisabled(topicId)) return [];
     const activities = rows
       .map((row) => teachingActivitySchema.safeParse(row.content))
       .filter((parsed): parsed is { success: true; data: TeachingActivity } => parsed.success)
@@ -546,9 +657,18 @@ export class PlannerService {
     return activities.length ? activities : this.curriculum.activitiesOf(topicId);
   }
 
+  private async isTopicDisabled(topicId: string): Promise<boolean> {
+    const unit = await this.prisma.curriculum_units.findFirst({
+      where: { topicId, availability: 'disabled' },
+      select: { id: true },
+    });
+    return Boolean(unit);
+  }
+
   private async activitiesForSkill(skillNodeId: string, topicId: string): Promise<TeachingActivity[]> {
     const activities = await this.activitiesOf(topicId);
     const scoped = activities.filter((activity) => activity.skillNodeIds.includes(skillNodeId));
+    if (!scoped.length && await this.isTopicDisabled(topicId)) return [];
     return scoped.length ? scoped : this.curriculum.activitiesForSkill(skillNodeId);
   }
 

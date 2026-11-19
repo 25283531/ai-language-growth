@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AdminNav } from '../admin-nav';
+import { TextbookUnitPanel } from './textbook-unit-panel';
 
 type Textbook = {
   id: string;
@@ -17,6 +18,7 @@ type Draft = {
   title: string;
   level: string;
   status: string;
+  version: number;
   wordList: string[];
   generatedContent: { objectives?: string[]; vocabulary?: Array<{ word: string }>; activities?: unknown[] } | null;
   textbook?: Textbook | null;
@@ -162,7 +164,7 @@ export default function CurriculumPage() {
         }),
       });
       setGeneratedPackage(result.packageId);
-      setMessage('课程包已生成。请下载后导入审核队列，人工审核通过后再发布。');
+      setMessage('课程包已生成。请下载后导入；自动校验通过后可直接发布。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '课程包生成失败'); }
     finally { setBusy(false); }
   }
@@ -184,7 +186,7 @@ export default function CurriculumPage() {
       setGeneratedJson(JSON.stringify(result.package, null, 2));
       setGeneratedSummary(`已生成 ${result.levels.map((item: { code: string; units: number; lessons: number }) => `${item.code} ${item.units} 单元/${item.lessons} 活动`).join('；')}；写入草稿 ${result.draftCount} 个${result.aiEnriched ? '，已用 AI 润色词义与例句' : '，AI 润色未启用或失败，已保留确定性结构'}。`);
       await load();
-      setMessage('完整课程 JSON 已生成并写入审核队列。' + (result.aiEnriched ? '' : ' AI 润色未生效，可在审核时人工补齐音标/释义。'));
+      setMessage('完整课程 JSON 已生成并写入课程草稿。' + (result.aiEnriched ? '' : ' AI 润色未生效，可在发布前人工补齐音标/释义。'));
     } catch (error) { setMessage(error instanceof Error ? error.message : '词表生成失败'); }
     finally { setBusy(false); }
   }
@@ -263,21 +265,20 @@ export default function CurriculumPage() {
     link.click();
     URL.revokeObjectURL(url);
   }
-  async function draftAction(id: string, action: 'generate' | 'submit' | 'approve' | 'reject' | 'publish') {
+  async function draftAction(id: string, action: 'generate' | 'publish') {
     setPendingAction(`${id}:${action}`);
     setDraftErrors((old) => ({ ...old, [id]: '' }));
     try {
       if (action === 'generate') await request(`/api/v1/admin/curriculum/drafts/${id}/generate`, { method: 'POST' });
-      else if (action === 'publish') await request(`/api/v1/admin/curriculum/drafts/${id}/publish`, { method: 'POST' });
-      else await request(`/api/v1/admin/curriculum/drafts/${id}/review`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, reviewer: 'admin-web', note: '' }) });
-      await load(); setMessage(action === 'publish' ? '课程已发布，可在课程目录中查看。' : '课程状态已更新。');
+      else await request(`/api/v1/admin/curriculum/drafts/${id}/publish`, { method: 'POST' });
+      await load(); setMessage(action === 'publish' ? '课程已发布，可在课程目录中查看。' : '课程内容已生成，可在草稿中编辑或直接发布。');
     } catch (error) {
       const detail = error instanceof Error ? error.message : '操作失败';
       setDraftErrors((old) => ({ ...old, [id]: detail }));
       setMessage(action === 'publish' ? `发布未完成：${detail}` : detail);
     } finally { setPendingAction(''); }
   }
-  async function batchAction(action: 'approve' | 'reject' | 'publish') {
+  async function batchAction(action: 'publish') {
     if (!selectedDrafts.length) return;
     setBusy(true);
     try {
@@ -288,7 +289,7 @@ export default function CurriculumPage() {
       });
       setSelectedDrafts([]);
       await load();
-      setMessage(`已批量${action === 'approve' ? '通过' : action === 'reject' ? '退回' : '发布'} ${selectedDrafts.length} 节课程。`);
+      setMessage(`已批量发布 ${selectedDrafts.length} 节课程。`);
     } catch (error) { setMessage(error instanceof Error ? error.message : '批量操作失败'); }
     finally { setBusy(false); }
   }
@@ -313,8 +314,8 @@ export default function CurriculumPage() {
     setBusy(true);
     try {
       if (!editingContent) throw new Error('没有可保存的课程内容');
-      await request(`/api/v1/admin/curriculum/drafts/${item.id}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(editingContent) });
-      await load(); setEditingId(''); setMessage('课程内容已保存为待审核草稿。');
+      await request(`/api/v1/admin/curriculum/drafts/${item.id}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...editingContent, expectedVersion: item.version }) });
+      await load(); setEditingId(''); setMessage(item.status === 'published' ? '已上线内容已保存，下一节课生效。' : '课程内容已保存，可直接发布。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存课程内容失败'); } finally { setBusy(false); }
   }
   function updateVocabulary(index: number, patch: Partial<EditableContent['vocabulary'][number]>) {
@@ -322,8 +323,7 @@ export default function CurriculumPage() {
   }
   const selectedBook = textbooks.find((book) => book.id === draft.textbookId);
   const selectedStatus = drafts.filter((item) => selectedDrafts.includes(item.id));
-  const canBatchReview = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'under_review');
-  const canBatchPublish = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'approved');
+  const canBatchPublish = selectedStatus.length > 0 && selectedStatus.every((item) => ['generated', 'rejected', 'under_review', 'approved'].includes(item.status));
   const canBatchDelete = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'published');
   const allSelected = drafts.length > 0 && selectedStatus.length === drafts.length;
   const partiallySelected = selectedStatus.length > 0 && !allSelected;
@@ -332,11 +332,11 @@ export default function CurriculumPage() {
   return <main className="shell">
     <AdminNav />
     <header className="topbar">
-      <div><p className="eyebrow">CURRICULUM STUDIO</p><h1>课程管理</h1><p className="muted">教材目录、AI 草稿、人工审核和发布分开管理。</p></div>
+      <div><p className="eyebrow">CURRICULUM STUDIO</p><h1>课程管理</h1><p className="muted">教材目录、AI 草稿、自动校验和直接发布分开管理。</p></div>
       <button className="secondary" onClick={() => void load().catch((error) => setMessage(error.message))}>刷新课程数据</button>
     </header>
     <section className="panel">
-      <div className="panel-head"><div><p className="eyebrow">WORDLIST → FULL CURRICULUM</p><h2>教材词表一键补全</h2><p className="muted">粘贴课本单词表，服务端生成完整 JSON（词汇、句型、逐词活动、评估规则、媒体需求），默认写入审核队列。图片与语音不在这一步生成。</p></div></div>
+      <div className="panel-head"><div><p className="eyebrow">WORDLIST → FULL CURRICULUM</p><h2>教材词表一键补全</h2><p className="muted">粘贴课本单词表，服务端生成完整 JSON（词汇、句型、逐词活动、评估规则、媒体需求），默认写入课程草稿；自动校验通过后可直接发布。图片与语音不在这一步生成。</p></div></div>
       <div className="fields">
         <label>课程标题<input value={curriculumTitle} onChange={(event) => setCurriculumTitle(event.target.value)} placeholder="例如：三年级上册 Unit 3" /></label>
         <label>目标等级<select value={curriculumLevel} onChange={(event) => setCurriculumLevel(event.target.value)}><option>pre-A1</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select></label>
@@ -345,7 +345,7 @@ export default function CurriculumPage() {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
         <button disabled={busy || !wordListText.trim()} onClick={() => void generateFromWordList()}>生成完整课程 JSON</button>
         <button className="secondary" disabled={busy} onClick={() => void loadPresetJson()}>查看服务端预置 CEFR JSON</button>
-        <button className="secondary" disabled={busy} onClick={() => void importPreset()}>导入预置课程到审核队列</button>
+        <button className="secondary" disabled={busy} onClick={() => void importPreset()}>导入预置课程到草稿</button>
         <button className="secondary" disabled={!generatedJson} onClick={downloadGeneratedJson}>下载当前 JSON</button>
       </div>
       {(generatedSummary || presetSummary) && <p className="helper">{generatedSummary || presetSummary}</p>}
@@ -377,8 +377,9 @@ export default function CurriculumPage() {
       <button disabled={busy || !textbook.publisher || !textbook.grade} onClick={() => void createTextbook()}>保存教材版本</button>
       <div className="benchmark-list">{textbooks.map((book) => <div className="helper" key={book.id}><strong>{book.publisher}</strong> · {book.publicationYear} · {book.grade} · {book.title || '未命名'} {book.edition || ''} · 单元 {book.units.length}</div>)}</div>
     </section>
+    <TextbookUnitPanel textbooks={textbooks} onMessage={setMessage} />
     <section className="panel" style={{ marginTop: 24 }}>
-      <div className="panel-head"><div><p className="eyebrow">CEFR COURSE PACKAGE</p><h2>导入完整 CEFR 课程包</h2><p className="muted">支持 pre-A1、A1、A2、B1、B2、C1、C2。导入后每个单元进入待人工审核队列，不会自动发布。</p></div></div>
+      <div className="panel-head"><div><p className="eyebrow">CEFR COURSE PACKAGE</p><h2>导入完整 CEFR 课程包</h2><p className="muted">支持 pre-A1、A1、A2、B1、B2、C1、C2。导入后每个单元写入课程草稿；自动校验通过后可直接发布。</p></div></div>
       <div className="fields">
         <label>课程包 ZIP 文件<input id="curriculum-package-file" type="file" accept=".zip,application/zip" onChange={(event) => setPackageFile(event.target.files?.[0] || null)} /></label>
         <div className="helper">课程包必须包含根目录文件 <strong>curriculum-package.json</strong>，等级顺序和结构由服务端校验。重复导入同一 packageId 与单元编码会自动跳过。</div>
@@ -386,7 +387,7 @@ export default function CurriculumPage() {
       <button disabled={busy || !packageFile} onClick={() => void importPackage()}>导入课程包</button>
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
-      <div className="panel-head"><div><p className="eyebrow">AI DRAFT</p><h2>按大纲和教学目的补全课程</h2><p className="muted">提交课程大纲与教学目的，词表可选；也支持沿用词表生成。小参数模型整理语言素材，主文本模型补全课程和教学活动，结果须人工审核后发布。</p></div></div>
+      <div className="panel-head"><div><p className="eyebrow">AI DRAFT</p><h2>按大纲和教学目的补全课程</h2><p className="muted">提交课程大纲与教学目的，词表可选；也支持沿用词表生成。小参数模型整理语言素材，主文本模型补全课程和教学活动，结果自动校验后可直接发布。</p></div></div>
       <div className="fields">
         <label>课程标题<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
         <label>学习等级<select value={draft.level} onChange={(e) => setDraft({ ...draft, level: e.target.value })}><option>pre-A</option><option>A</option><option>B</option><option>C</option></select></label>
@@ -397,20 +398,18 @@ export default function CurriculumPage() {
       <label>教学目的<textarea className="routing-editor" style={{ minHeight: 90 }} value={draft.objectives} onChange={(event) => setDraft({ ...draft, objectives: event.target.value })} placeholder="例如：孩子能在真实见面场景中听懂并主动使用 hello，而非只会背诵单词。" /></label>
       <label>参考词表（可选，每行一个）<textarea className="routing-editor" style={{ minHeight: 100 }} value={draft.words} onChange={(e) => setDraft({ ...draft, words: e.target.value })} placeholder={'hello\nhi\ngoodbye'} /></label>
       <button disabled={busy || !draft.title.trim() || !hasGenerationInput} onClick={() => void createDraft()}>创建待补全草稿</button>
-      <p className="muted">创建后点击队列中的“AI 补全课程”；补全不会自动发布或改变孩子掌握状态。</p>
+      <p className="muted">创建后点击草稿中的“AI 补全课程”；补全后可自动校验并直接发布，不会改变孩子掌握状态。</p>
       <label style={{ marginTop: 16 }}>自然语言课程要求<textarea className="routing-editor" style={{ minHeight: 120 }} value={generationDescription} onChange={(event) => setGenerationDescription(event.target.value)} placeholder="例如：面向零基础儿童，围绕校园用品设计由听辨、模仿到日常对话的七阶段课程；每阶段提供可判断掌握情况的活动。" /></label>
       <button className="secondary" disabled={busy || !draft.title.trim() || !hasGenerationInput} onClick={() => void generatePackage()}>生成并下载独立课程包</button>
       {generatedPackage && <a className="doclink" href={`/api/v1/admin/curriculum/generator/packages/${generatedPackage}/download`}>下载刚生成的课程 ZIP</a>}
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
-      <div className="panel-head"><div><p className="eyebrow">REVIEW QUEUE</p><h2>审核队列</h2></div></div>
+      <div className="panel-head"><div><p className="eyebrow">COURSE DRAFTS</p><h2>课程草稿与发布</h2></div></div>
       <div className="row-actions" style={{ marginBottom: 14 }}>
         <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           <input type="checkbox" aria-label="全选当前列表课程" aria-checked={partiallySelected ? 'mixed' : allSelected} checked={allSelected} ref={(element) => { if (element) element.indeterminate = partiallySelected; }} disabled={!drafts.length || busy || Boolean(pendingAction)} onChange={(event) => setSelectedDrafts(event.target.checked ? drafts.map((item) => item.id) : [])} />
           全选当前列表
         </label>
-        <button className="secondary" disabled={!canBatchReview || busy || Boolean(pendingAction)} onClick={() => void batchAction('approve')}>批量审核通过</button>
-        <button className="secondary" disabled={!canBatchReview || busy || Boolean(pendingAction)} onClick={() => void batchAction('reject')}>批量退回</button>
         <button disabled={!canBatchPublish || busy || Boolean(pendingAction)} onClick={() => void batchAction('publish')}>批量发布</button>
         <button className="secondary" disabled={!canBatchDelete || busy || Boolean(pendingAction)} onClick={() => void batchDelete()}>批量删除已发布课程</button>
         <span className="status">已选择 {selectedDrafts.length} 节</span>
@@ -421,10 +420,8 @@ export default function CurriculumPage() {
         {item.generatedContent?.vocabulary && ` · 已生成 ${item.generatedContent.vocabulary.length} 个词条`}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
           {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>AI 补全课程</button>}
-          {item.generatedContent && ['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setEditingContent(toEditableContent(item.generatedContent)); }}>编辑课程</button>}
-          {['generated', 'rejected'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'submit')}>提交审核</button>}
-          {item.status === 'under_review' && <><button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'approve')}>{pendingAction === `${item.id}:approve` ? '处理中…' : '审核通过'}</button><button className="secondary" disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'reject')}>{pendingAction === `${item.id}:reject` ? '处理中…' : '退回修改'}</button></>}
-          {item.status === 'approved' && <button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'publish')}>{pendingAction === `${item.id}:publish` ? '正在发布…' : '发布课程'}</button>}
+          {item.generatedContent && ['generated', 'rejected', 'under_review', 'approved', 'published'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setEditingContent(toEditableContent(item.generatedContent)); }}>编辑课程</button>}
+          {['generated', 'rejected', 'under_review', 'approved'].includes(item.status) && <button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'publish')}>{pendingAction === `${item.id}:publish` ? '正在发布…' : '发布课程'}</button>}
         </div>
         {draftErrors[item.id] && <p className="status" role="alert">操作失败：{draftErrors[item.id]}</p>}
         {editingId === item.id && editingContent && <div style={{ marginTop: 12 }}>

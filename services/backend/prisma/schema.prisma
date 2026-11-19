@@ -32,13 +32,13 @@ model users {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  learners            learner_profiles[]
-  consents            consent_records[]
-  sessions            auth_sessions[]
-  passwordResetTokens password_reset_tokens[]
+  learners                learner_profiles[]
+  consents                consent_records[]
+  sessions                auth_sessions[]
+  passwordResetTokens     password_reset_tokens[]
   emailVerificationTokens email_verification_tokens[]
-  membershipEvents    membership_events[]
-  membershipRequests  membership_requests[]
+  membershipEvents        membership_events[]
+  membershipRequests      membership_requests[]
 
   @@map("users")
 }
@@ -278,13 +278,107 @@ model curriculum_units {
   reviewStatus   String    @default("pending_review")
   textbookUnitId String?
   publishedAt    DateTime?
+  content        Json?
+  contentVersion String?
+  currentVersion Int       @default(1)
+  availability   String    @default("active") // active | disabled
+  stageHint      Int?
 
-  textbookUnit textbook_units? @relation(fields: [textbookUnitId], references: [id], onDelete: SetNull)
+  textbookUnit textbook_units?            @relation(fields: [textbookUnitId], references: [id], onDelete: SetNull)
+  versions     curriculum_unit_versions[]
+  audioClips   curriculum_audio_clips[]
 
   @@index([topicId])
   @@index([level, reviewStatus])
-  @@index([textbookUnitId])
+  @@unique([textbookUnitId])
+  @@index([availability, reviewStatus])
   @@map("curriculum_units")
+}
+
+model curriculum_unit_versions {
+  id          String   @id @default(uuid())
+  unitId      String
+  version     Int
+  content     Json
+  contentHash String
+  createdBy   String?
+  note        String?
+  createdAt   DateTime @default(now())
+
+  unit curriculum_units @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, version])
+  @@index([unitId, createdAt])
+  @@map("curriculum_unit_versions")
+}
+
+/// 课程版本化的双速/拆读音频。
+///
+/// 身份固定为 unitId + contentVersion + clipKey + kind + partIndex + speedTier，
+/// 因此编辑内容产生新 contentVersion 后旧音频自然失效，但保留在库中供回滚使用。
+/// 这里不使用纯文本哈希作主键，避免 D-014 禁止的跨课程音频串用。
+model curriculum_audio_clips {
+  id             String   @id @default(uuid())
+  unitId         String
+  topicId        String
+  contentVersion String
+  /// sentence:<sentenceId> 或 word:<word>
+  clipKey        String
+  /// sentence | word | syllable | phoneme | blend | natural
+  kind           String
+  /// 同一 kind 内的序号；音节/音素按此排序
+  partIndex      Int      @default(0)
+  /// 播放顺序
+  position       Int      @default(0)
+  speedTier      String
+  speed          Float
+  text           String
+  audioRef       String?
+  durationMs     Int?
+  status         String   @default("pending") // pending | ready | failed | stale
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  unit curriculum_units @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, contentVersion, clipKey, kind, partIndex, speedTier], name: "curriculum_audio_clip_identity")
+  @@index([unitId, contentVersion, status])
+  @@index([topicId, contentVersion])
+  @@map("curriculum_audio_clips")
+}
+
+/// ECDICT 3,000–5,000 词族词库；word 为词族代表词，variants 存屈折/派生形式。
+model lexicon_entries {
+  id              String   @id @default(uuid())
+  word            String   @unique
+  lemma           String   @default("")
+  familyKey       String   @default("")
+  familyRank      Int?
+  phonetic        String   @default("")
+  pos             String   @default("")
+  meaningZh       String   @default("")
+  frequencyRank   Int?
+  bncRank         Int?
+  tags            String[] @default([])
+  domains         String[] @default([])
+  variants        String[] @default([])
+  collocations    Json     @default("[]")
+  examples        Json     @default("[]")
+  source          String   @default("ecdict")
+  license         String   @default("MIT")
+  childSafe       Boolean  @default(true)
+  isCore          Boolean  @default(false)
+  isFunctionWord  Boolean  @default(false)
+  textbookUnitIds String[] @default([])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([familyKey])
+  @@index([familyRank])
+  @@index([frequencyRank])
+  @@index([source])
+  @@map("lexicon_entries")
 }
 
 model textbook_catalogs {
@@ -297,23 +391,52 @@ model textbook_catalogs {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  units  textbook_units[]
-  drafts curriculum_drafts[]
+  units        textbook_units[]
+  unitMappings textbook_unit_mappings[]
+  drafts       curriculum_drafts[]
 
   @@unique([publisher, publicationYear, grade, title, edition])
   @@index([publisher, publicationYear, grade])
   @@map("textbook_catalogs")
 }
 
+/**
+ * 教材单元 → 内容生产映射。
+ *
+ * 与面向学习者的 `textbook_mappings`（当前教材/单元 + 能力节点）分开：
+ * 本表按教材单元保存学校模块、主题领域与建议阶段，供课文资源生成和
+ * 管理端维护使用。skillNodeIds 只表示“本单元练哪些能力”，不表示掌握。
+ */
+model textbook_unit_mappings {
+  id            String   @id @default(uuid())
+  textbookId    String
+  unitCode      String
+  skillNodeIds  Json     @default("[]")
+  domains       Json     @default("[]")
+  schoolModules Json     @default("[]")
+  stageHint     Int?
+  source        String   @default("editorial") // editorial | ai | inferred
+  version       Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  textbook textbook_catalogs @relation(fields: [textbookId], references: [id], onDelete: Cascade)
+
+  @@unique([textbookId, unitCode])
+  @@index([textbookId])
+  @@map("textbook_unit_mappings")
+}
+
 model textbook_units {
-  id         String   @id @default(uuid())
-  textbookId String
-  unitCode   String
-  title      String
-  order      Int      @default(0)
-  metadata   Json     @default("{}")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id            String   @id @default(uuid())
+  textbookId    String
+  unitCode      String
+  title         String
+  order         Int      @default(0)
+  metadata      Json     @default("{}")
+  passageSource String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   textbook        textbook_catalogs   @relation(fields: [textbookId], references: [id], onDelete: Cascade)
   curriculumUnits curriculum_units[]
@@ -590,28 +713,28 @@ model textbook_mappings {
 }
 
 model media_assets {
-  id             String   @id @default(uuid())
-  kind           String // image | audio
-  ref            String
-  voiceIdentity  String?
-  teacherSpeed   Float?
-  durationMs     Int?
-  checksum       String?
-  cacheExtension String?
-  sourceUrl      String?
-  attribution    String?
-  license        String?
-  sourceProvider String?
-  cacheStatus    String   @default("pending") // pending | cached | failed
-  cacheError     String?
-    cacheAttemptedAt DateTime?
+  id               String    @id @default(uuid())
+  kind             String // image | audio
+  ref              String
+  voiceIdentity    String?
+  teacherSpeed     Float?
+  durationMs       Int?
+  checksum         String?
+  cacheExtension   String?
+  sourceUrl        String?
+  attribution      String?
+  license          String?
+  sourceProvider   String?
+  cacheStatus      String    @default("pending") // pending | cached | failed
+  cacheError       String?
+  cacheAttemptedAt DateTime?
   // 资产可见性作用域。NULL 表示旧数据，按 PRIVATE 处理（fail-closed）：
   // PUBLIC_CURRICULUM / PRONUNCIATION 为课程公共语音资源（owner 与 TTL 均为 null）；
   // PRIVATE_DYNAMIC / PRIVATE_UPLOAD 必须绑定 ownerLearnerId 与短 TTL。
-  scope          String?
-  ownerLearnerId String?
-  expiresAt      DateTime?
-  createdAt      DateTime @default(now())
+  scope            String?
+  ownerLearnerId   String?
+  expiresAt        DateTime?
+  createdAt        DateTime  @default(now())
 
   @@index([checksum])
   @@index([kind, cacheStatus, createdAt])
@@ -935,12 +1058,12 @@ model consent_records {
 
 /// 可迁移的后台配置。敏感字段只保存 AES-GCM 密文，普通配置保存 JSON。
 model app_settings {
-  id                String   @id @default(uuid())
-  key               String   @unique
-  value             Json     @default("{}")
-  secretCiphertext  String?
-  updatedAt         DateTime @updatedAt
-  createdAt         DateTime @default(now())
+  id               String   @id @default(uuid())
+  key              String   @unique
+  value            Json     @default("{}")
+  secretCiphertext String?
+  updatedAt        DateTime @updatedAt
+  createdAt        DateTime @default(now())
 
   @@map("app_settings")
 }

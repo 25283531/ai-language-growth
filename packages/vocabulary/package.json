@@ -1,0 +1,23 @@
+{
+  "name": "@alg/vocabulary",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ECDICT word-family lexicon build and import data",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "data"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "build:lexicon": "tsx scripts/build-lexicon.ts"
+  },
+  "dependencies": {
+    "@alg/shared-contracts": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.2"
+  }
+}

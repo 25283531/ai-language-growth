@@ -27,6 +27,17 @@ export const cefrImageRequirementSchema = z.object({
 });
 export type CefrImageRequirement = z.infer<typeof cefrImageRequirementSchema>;
 
+/** 活动可产生的证据类型；翻译/被动听读只能是 none。 */
+export const ACTIVITY_EVIDENCE_KINDS = [
+  'listening_comprehension',
+  'reading_comprehension',
+  'production',
+  'pronunciation',
+  'transfer',
+  'none',
+] as const;
+export type ActivityEvidenceKind = (typeof ACTIVITY_EVIDENCE_KINDS)[number];
+
 export const cefrVocabularyEntrySchema = z.object({
   word: z.string().trim().min(1).max(100),
   phonetic: z.string().max(100).default(''),
@@ -38,9 +49,23 @@ export const cefrVocabularyEntrySchema = z.object({
     en: z.string().trim().min(1).max(500),
     zh: z.string().max(500).default(''),
   })).max(20).default([]),
+  /** 需要预热的图片需求（不是实际 URL）。 */
   image: cefrImageRequirementSchema.optional(),
+  /** 已解析的图片资产；存在时必须带 HTTPS URL 与 license。 */
+  imageAsset: z.object({
+    url: z.string().url().max(2048),
+    // 结构层允许空值，由自动校验给出可定位的 license_missing；
+    // 这样不会把“缺授权”笼统报成 schema_invalid。
+    license: z.string().trim().max(300).default(''),
+    attribution: z.string().trim().max(500).optional(),
+  }).optional(),
 });
 export type CefrVocabularyEntry = z.infer<typeof cefrVocabularyEntrySchema>;
+
+/** 学校英语轨模块；A/B 偏字母与识读，C/D 偏阅读与语法，E 偏综合运用。 */
+export const TEXTBOOK_MODULES = ['A', 'B', 'C', 'D', 'E'] as const;
+export const textbookModuleSchema = z.enum(TEXTBOOK_MODULES);
+export type TextbookModule = z.infer<typeof textbookModuleSchema>;
 
 export const cefrLessonSchema = z.object({
   /** 稳定课程活动键：`<unitCode>:<index>`；也是 TTS 公共缓存 contentId。 */
@@ -54,6 +79,12 @@ export const cefrLessonSchema = z.object({
   demonstrationText: z.string().max(500),
   requiresPronunciationAssessment: z.boolean(),
   requiresAsr: z.boolean(),
+  /** 本活动声明的掌握证据类型；无证据的被动听读必须为 none。 */
+  evidenceKind: z.enum(ACTIVITY_EVIDENCE_KINDS).optional(),
+  /** 显式声明纯被动听读：允许没有可判定答案，但不得产生掌握证据。 */
+  passiveReading: z.boolean().optional(),
+  /** 学校轨活动所属模块；语言轨活动不设置。 */
+  schoolModule: textbookModuleSchema.optional(),
   assessment: z.object({
     acceptedImageIds: z.array(z.string().max(200)).max(100).default([]),
     acceptedTexts: z.array(z.string().max(1000)).max(100).default([]),
@@ -72,6 +103,146 @@ export const cefrLessonSchema = z.object({
   }),
 });
 export type CefrLesson = z.infer<typeof cefrLessonSchema>;
+
+/**
+ * 课文逐句契约。
+ *
+ * id 由单元编码与序号生成（如 `u03-s01`）；超长句二次切分时，派生句通过
+ * splitFrom 指向保留原 id 的首句，避免编辑后无法追溯来源。
+ */
+export const passageSentenceSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  en: z.string().trim().min(1).max(500),
+  zh: z.string().trim().min(1).max(500),
+  keyWords: z.array(z.string().trim().min(1).max(100)).max(12).default([]),
+  grammarIds: z.array(z.string().trim().min(1).max(80)).max(6).default([]),
+  schoolModules: z.array(textbookModuleSchema).max(5).default([]),
+  audio: z.object({
+    /** 正常语速（1.0）片段的稳定键，不含课程版本。 */
+    normalKey: z.string().trim().min(1).max(160).optional(),
+    /** 慢速（0.65）片段的稳定键，不含课程版本。 */
+    slowKey: z.string().trim().min(1).max(160).optional(),
+    /** 正常语速音频地址；预热完成前为空，客户端应按需合成兜底。 */
+    normalRef: z.string().max(2048).optional(),
+    /** 慢速音频地址；预热完成前为空。 */
+    slowRef: z.string().max(2048).optional(),
+    normalSpeed: z.number().min(0.25).max(4).optional(),
+    slowSpeed: z.number().min(0.25).max(4).optional(),
+    durationMs: z.number().int().positive().optional(),
+    normalDurationMs: z.number().int().positive().optional(),
+    slowDurationMs: z.number().int().positive().optional(),
+  }).optional(),
+  /** 超长句被切分时，指向原句 id；普通句不设置。 */
+  splitFrom: z.string().trim().min(1).max(80).optional(),
+});
+export type PassageSentence = z.infer<typeof passageSentenceSchema>;
+
+export const grammarPointSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  pattern: z.string().trim().min(1).max(300),
+  titleZh: z.string().trim().min(1).max(200),
+  explanationZh: z.string().trim().min(1).max(1000),
+  examples: z.array(z.object({
+    en: z.string().trim().min(1).max(500),
+    zh: z.string().trim().max(500).default(''),
+  })).min(1).max(10),
+  commonErrorZh: z.string().trim().max(500).default(''),
+  sentenceIds: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  /** 建议阶段，仅用于内容提示，不是解锁条件。 */
+  stage: z.number().int().min(0).max(6).optional(),
+  schoolModule: textbookModuleSchema.optional(),
+});
+export type GrammarPoint = z.infer<typeof grammarPointSchema>;
+
+export const passageSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  paragraphs: z.array(z.object({
+    sentences: z.array(passageSentenceSchema).min(1).max(30),
+  })).min(1).max(20),
+});
+export type Passage = z.infer<typeof passageSchema>;
+
+/** 重点词拆读片段种类，顺序即教学顺序：整词 → 音节 → 音素 → 合成 → 自然语速。 */
+export const FOCUS_WORD_CLIP_KINDS = ['word', 'syllable', 'phoneme', 'blend', 'natural'] as const;
+export type FocusWordClipKind = (typeof FOCUS_WORD_CLIP_KINDS)[number];
+
+/** 双速音频档位；extra_slow 只用于音素级拆读。 */
+export const AUDIO_SPEED_TIERS = ['normal', 'slow', 'extra_slow'] as const;
+export type AudioSpeedTier = (typeof AUDIO_SPEED_TIERS)[number];
+
+/** 一个可直接播放的重点词拆读片段。 */
+export const focusWordClipSchema = z.object({
+  key: z.string().trim().min(1).max(160),
+  kind: z.enum(FOCUS_WORD_CLIP_KINDS),
+  /** 同一 kind 内的序号；音节/音素按此排序。 */
+  partIndex: z.number().int().min(0).default(0),
+  /** 播放顺序；从 0 开始。 */
+  position: z.number().int().min(0).default(0),
+  speedTier: z.enum(AUDIO_SPEED_TIERS),
+  speed: z.number().min(0.25).max(4),
+  text: z.string().min(1).max(500),
+  audioRef: z.string().max(2048).nullable().default(null),
+  durationMs: z.number().int().positive().nullable().default(null),
+  status: z.enum(['ready', 'failed', 'stale']).default('ready'),
+});
+export type FocusWordClip = z.infer<typeof focusWordClipSchema>;
+
+/** 重点词慢速拆读包：客户端按 clips 顺序播放并高亮当前单位。 */
+export const focusWordAudioSchema = z.object({
+  word: z.string().trim().min(1).max(100),
+  phonetic: z.string().max(100).default(''),
+  meaningZh: z.string().max(200).default(''),
+  syllables: z.array(z.string().max(100)).max(30).default([]),
+  difficultPhonemes: z.array(z.string().max(100)).max(30).default([]),
+  /** 为什么选这个词（课文复现/多音节/困难音素），供管理端解释。 */
+  reason: z.string().max(200).default(''),
+  clips: z.array(focusWordClipSchema).max(80).default([]),
+});
+export type FocusWordAudio = z.infer<typeof focusWordAudioSchema>;
+
+/**
+ * 开课下发的课文教学包。
+ *
+ * 在课文契约上追加音频地址与重点词拆读；旧客户端可完全忽略该字段，
+ * 仍按原活动播放示范文本（P2-04 兼容要求）。
+ */
+export const curriculumPassageSchema = passageSchema.extend({
+  unitId: z.string().min(1).max(160),
+  topicId: z.string().min(1).max(160),
+  contentVersion: z.string().min(1).max(128),
+  /** 是否至少有一句已经完成双速预热；未完成不影响文本下发。 */
+  audioReady: z.boolean().default(false),
+  focusWords: z.array(focusWordAudioSchema).max(4).default([]),
+});
+export type CurriculumPassage = z.infer<typeof curriculumPassageSchema>;
+
+/** 教材单元资源包；活动仍复用现有 CefrLesson 契约。 */
+export const textbookUnitContentSchema = z.object({
+  resourceType: z.literal('textbook_unit'),
+  textbook: z.object({
+    publisher: z.string().trim().min(1).max(100),
+    grade: z.string().trim().min(1).max(50),
+    volume: z.string().trim().min(1).max(50),
+    edition: z.string().trim().max(50).optional(),
+  }),
+  unit: z.object({
+    code: z.string().trim().min(1).max(40),
+    title: z.string().trim().min(1).max(200),
+    order: z.number().int().min(0),
+  }),
+  objectives: z.array(z.string().trim().min(1).max(300)).min(1).max(20),
+  passage: passageSchema,
+  grammarPoints: z.array(grammarPointSchema).max(6).default([]),
+  vocabulary: z.array(cefrVocabularyEntrySchema).max(60).default([]),
+  activities: z.array(cefrLessonSchema).min(1).max(60),
+  schoolTrack: z.object({
+    modules: z.array(textbookModuleSchema).default([]),
+    activities: z.array(cefrLessonSchema).max(30).default([]),
+  }).optional(),
+  stageHint: z.number().int().min(0).max(6).optional(),
+  qcReport: z.record(z.unknown()).optional(),
+});
+export type TextbookUnitContent = z.infer<typeof textbookUnitContentSchema>;
 
 export const cefrUnitSchema = z.object({
   code: z.string().trim().min(1).max(80),

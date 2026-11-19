@@ -27,6 +27,19 @@ describe('Model Router', () => {
     assert.equal(pron.providerAlias, 'pronunciation_svc');
   });
 
+  it('教材单元生成任务按任务书分级：翻译 L1，语法/活动/规划 L2', async () => {
+    const enrich = await router.route({ serviceKind: 'llm', taskRoute: 'llm.curriculum_unit_enrich' });
+    const grammar = await router.route({ serviceKind: 'llm', taskRoute: 'llm.curriculum_unit_grammar' });
+    const activities = await router.route({ serviceKind: 'llm', taskRoute: 'llm.curriculum_unit_activities' });
+    const plan = await router.route({ serviceKind: 'llm', taskRoute: 'llm.curriculum_unit_plan' });
+
+    assert.equal(enrich.level, 'L1');
+    assert.equal(grammar.level, 'L2');
+    assert.equal(activities.level, 'L2');
+    assert.equal(plan.level, 'L2');
+    assert.equal(plan.fellBack, false);
+  });
+
   it('升级信号触发升级到 L2', async () => {
     const decision = await router.route({
       serviceKind: 'llm',

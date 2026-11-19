@@ -35,6 +35,10 @@ export const TASK_ROUTES = [
   'llm.growth_report', // 阶段成长汇总与家长解释
   'llm.memory_extraction', // 结课批量交互记忆候选提取
   'llm.personality_adjustment', // 受控人格调整候选建议
+  'llm.curriculum_unit_plan', // 教材单元教学目标与流程
+  'llm.curriculum_unit_enrich', // 课文逐句翻译与关键词
+  'llm.curriculum_unit_grammar', // 课文语法点抽取
+  'llm.curriculum_unit_activities', // 课文教学活动生成
   'tts.fixed_course', // 固定课程音频（走预生成缓存）
   'tts.dynamic_teaching', // 动态教学语句
   'tts.narrative', // 故事与情感表达

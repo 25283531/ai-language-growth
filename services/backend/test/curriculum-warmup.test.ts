@@ -73,6 +73,45 @@ async function withFetch<T>(handler: (url: string) => Response, run: () => Promi
   }
 }
 
+test('P2-01：级别预热会为已发布教材单元调用逐句双速与拆读音频', async () => {
+  const fixture = fakePrisma(activityContent());
+  fixture.prisma.curriculum_units.findMany = async () => [{
+    id: 'unit-1',
+    topicId: 'topic-1',
+    contentVersion: 'v1',
+    content: { passage: { title: 'My Family', paragraphs: [] } },
+  }] as never;
+  const calls: Array<{ unitId: string; options: unknown }> = [];
+  const audio = {
+    enabled: true,
+    warmUnit: async (unitId: string, options: unknown) => {
+      calls.push({ unitId, options });
+      return {
+        generated: 6,
+        reused: 2,
+        failed: 0,
+        sentenceClips: 4,
+        wordClips: 4,
+        mode: 'live',
+      };
+    },
+  };
+  const service = new CurriculumWarmupService(
+    fixture.prisma as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    audio as never,
+  );
+  const result = await service.warmLevel('A1', { maxImages: 0, maxSpeech: 0, maxAudioClips: 20 });
+  assert.deepEqual(calls, [{ unitId: 'unit-1', options: { force: undefined, maxClips: 20 } }]);
+  assert.equal(result.audioUnitsWarmed, 1);
+  assert.equal(result.sentenceClipsGenerated, 4);
+  assert.equal(result.wordClipsGenerated, 4);
+  assert.equal(result.audioClipsReused, 2);
+  assert.equal(result.audioClipsFailed, 0);
+});
+
 test('图片预热：检索多源候选，缓存最合适的一张并回填活动', async () => {
   const fixture = fakePrisma(activityContent());
   const cached: string[] = [];

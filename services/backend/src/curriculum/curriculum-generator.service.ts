@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   buildCefrCurriculum,
   buildCefrPreset,
   normalizeCefrLevel,
+  normalizeWordList,
 } from '@alg/curriculum';
 import {
   cefrCurriculumPackageSchema,
@@ -17,6 +18,7 @@ import {
 import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LexiconService } from './lexicon.service';
 import type { Prisma } from '@prisma/client';
 
 /** 与 curriculum-admin.controller 的 generatedContent 形状保持一致（发布链路消费）。 */
@@ -75,6 +77,7 @@ export class CurriculumGeneratorService {
     private readonly prisma: PrismaService,
     private readonly gateway: AiGatewayService,
     private readonly router: ModelRouterImpl,
+    @Optional() private readonly lexicon?: LexiconService,
   ) {}
 
   /** 服务端预置的完整 CEFR JSON；不触库、不调模型、不生成媒体。 */
@@ -104,9 +107,14 @@ export class CurriculumGeneratorService {
     });
     let curriculum = base;
     let aiEnriched = false;
+    try {
+      curriculum = await this.applyLexicon(curriculum, input.words);
+    } catch (error) {
+      this.logger.warn(`词库查询失败，保留静态词表结果：${error instanceof Error ? error.message : '未知错误'}`);
+    }
     if (input.useAi) {
       try {
-        curriculum = await this.enrichVocabulary(base);
+        curriculum = await this.enrichVocabulary(curriculum);
         aiEnriched = true;
       } catch (error) {
         this.logger.warn(`教材词表 AI 润色失败，保留确定性课程结构：${error instanceof Error ? error.message : '未知错误'}`);
@@ -133,6 +141,41 @@ export class CurriculumGeneratorService {
       drafts: drafts.created,
       aiEnriched,
       package: packageData,
+    };
+  }
+
+  /**
+   * 用已落库的 ECDICT 词族补齐音标/释义。教材词优先：
+   * 输入词表本身视为教材词；已有音标/释义绝不被通用词频数据覆盖。
+   * 词库没有的字段保持为空，不把英文词填进中文栏。
+   */
+  private async applyLexicon(curriculum: CefrCurriculumPackage, inputWords: string | string[]): Promise<CefrCurriculumPackage> {
+    if (!this.lexicon) return curriculum;
+    const words = curriculum.levels.flatMap((level) => level.units.flatMap((unit) => unit.vocabulary.map((item) => item.word)));
+    const entries = await this.lexicon.lookupMany(words, {
+      textbookWords: normalizeWordList(inputWords),
+    });
+    return {
+      ...curriculum,
+      levels: curriculum.levels.map((level) => ({
+        ...level,
+        units: level.units.map((unit) => ({
+          ...unit,
+          vocabulary: unit.vocabulary.map((item) => {
+            const entry = entries.get(item.word.toLowerCase());
+            const itemMeaning = hasChinese(item.meaningZh) ? item.meaningZh : '';
+            const meaningZh = itemMeaning || (entry?.meaningZh && hasChinese(entry.meaningZh) ? entry.meaningZh : '');
+            return {
+              ...item,
+              phonetic: item.phonetic || entry?.phonetic || '',
+              meaningZh,
+              exampleSentences: item.exampleSentences.length
+                ? item.exampleSentences
+                : (entry?.examples.length ? entry.examples : item.exampleSentences),
+            };
+          }),
+        })),
+      })),
     };
   }
 
@@ -185,7 +228,7 @@ export class CurriculumGeneratorService {
             reviewer,
             note: source === 'preset'
               ? '服务端预置 CEFR 课程；仅含 JSON 教学内容，图片与语音在到达该级别后预热。'
-              : '教材词表自动生成的完整课程；AI 润色可选，发布前须人工审核。',
+              : '教材词表自动生成的完整课程；AI 润色可选，自动校验通过后可直接发布。',
             snapshot: content as unknown as Prisma.InputJsonValue,
           },
         });
@@ -304,6 +347,10 @@ function toDraftContent(
     // v2 JSON 不携带图片 URL；这里留空，级别预热时再解析并回填。
     images: [],
   };
+}
+
+function hasChinese(value: string): boolean {
+  return /\p{Script=Han}/u.test(value);
 }
 
 function parseJsonObject(content: string): unknown {

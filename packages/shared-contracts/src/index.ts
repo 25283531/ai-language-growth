@@ -5,6 +5,7 @@
  * 保证「教学逻辑与客户端分离」的契约层只有一处（D-024 约束一）。
  */
 export * from './learner';
+export * from './stage-profile';
 export * from './evidence';
 export * from './teaching';
 export * from './router';
@@ -12,6 +13,7 @@ export * from './skill-node';
 export * from './api';
 export * from './cefr';
 export * from './curriculum';
+export * from './lexicon';
 export * from './replay';
 export * from './learner-params';
 export * from './pronunciation';

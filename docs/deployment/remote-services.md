@@ -55,7 +55,9 @@ docker exec alg-redis redis-cli ping
 
 不要使用 `docker compose down -v`，除非已经明确批准清空 `docker_pgdata` 和 `docker_redisdata`。
 
-## 后端迁移和 seed
+## 联调环境：迁移与 seed
+
+> 本段仅用于远程功能联调，不是 staging 迁移验证环境。`seed.ts` 只用于准备联调基础数据；其数据不得作为 staging 或生产迁移验收证据。
 
 后端镜像把 Prisma schema 放在 `/app/services/backend/prisma/schema.prisma`，因此迁移必须显式指定 schema：
 
@@ -74,6 +76,8 @@ docker compose up -d --build backend
 
 有新迁移时，先构建含新 schema 的镜像并完成 `migrate deploy`，再启动新后端容器。不要先重建后端再迁移，否则应用可能在初始化查询新增字段时反复退出。
 
+联调环境的 seed 只用于准备联调数据；如果把这台服务器复用为 staging，必须另建独立 database 和独立 role，并停止在该 staging 库执行 seed。
+
 确认后端健康（在服务器上从容器内部执行）：
 
 ```bash
@@ -87,6 +91,20 @@ docker compose ps
 
 **端口陷阱**：服务器 `443` 指向无关的 `elder-server`，因此不能省略 `:3000`（不要写成 `https://152.136.230.132`）。旧的 HTTP 联调端口 `3100` 对 Android 正式客户端无效（明文流量已关闭）。儿童 Web 端仍可用 `3002` 端口临时直连联调。
 
+## Staging：生产迁移验证
+
+> 依据 `DECISIONS.md` D-033 和任务书 v1.1 第 18.5 节。完整、可填写的检查表见 [Staging 迁移检查清单](staging-migration-checklist.md)。
+
+staging 与上面的远程联调环境是不同用途，不能把联调 seed 结果当作 staging 证据：
+
+- PostgreSQL 大版本必须与生产一致；扩展、collation、timezone 和连接参数也要核对。
+- 使用独立 database 和独立 role，不复用生产库、生产账号或生产 schema。
+- `migrate deploy` 前先做全量备份并实际恢复验证；迁移前后各执行一次 `prisma migrate status`。
+- 只执行 `npx prisma migrate deploy`（容器内按实际部署路径加 `--schema`），不执行 `migrate dev` 或 `db push`。
+- **禁止执行 `prisma:seed`、`m1-api.integration.test.ts` 及任何会创建用户、学习者、会话、证据或学习记录的写测试。**
+- 只做只读健康检查，不调用 `/lessons/start`、`/lessons/{id}/turn`、`/lessons/{id}/finish` 等写接口。
+- 生产执行仍需变更审批、维护窗口和回滚方案；staging 通过不等于生产已批准。
+
 ## 备份与音频缓存
 
 管理后台“备份与还原”页面创建的是 PostgreSQL `pg_dump` 数据库备份，压缩包内部只有 `database.dump`。它包含账户、会员、供应商配置、课程和学习记录等数据库数据，**不包含 `.cache/audio` 下的音频缓存文件**。音频缓存属于可再生临时文件，不能通过数据库还原恢复。
@@ -94,6 +112,8 @@ docker compose ps
 定时备份可保留在后端的 `backenddata` 卷，也可通过 WebDAV 上传。百度网盘和阿里云盘使用 OpenList 提供的 WebDAV 地址接入；项目不保存网盘登录协议。还原时服务端会先创建当前数据库的保护性备份，再执行 `pg_restore`，音频缓存仍不会被导入。
 
 ## API 冒烟顺序
+
+> 本节用于联调环境，包含写接口；不得作为 staging 迁移验证执行。staging 只做只读健康检查。
 
 使用临时测试用户和学习者（不要使用真实儿童数据），按以下顺序验证：
 

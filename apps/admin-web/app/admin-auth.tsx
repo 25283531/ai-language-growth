@@ -4,7 +4,12 @@ import { FormEvent, useEffect, useState } from 'react';
 
 /** 管理端请求错误：携带 HTTP 状态码，便于页面区分会话过期与普通失败。 */
 export class AdminApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+    /** 原始错误正文；课程质检页需要读取 400 响应中的 issues。 */
+    readonly body?: unknown,
+  ) {
     super(message);
     this.name = 'AdminApiError';
   }
@@ -35,7 +40,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     cache: 'no-store',
   });
   const body: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) throw new AdminApiError(responseMessage(body, response.status, path), response.status);
+  if (!response.ok) throw new AdminApiError(responseMessage(body, response.status, path), response.status, body);
   return body as T;
 }
 

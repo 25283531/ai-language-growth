@@ -6,11 +6,25 @@ The admin curriculum workspace is available at `/curriculum`.
 
 The curriculum admin page accepts a ZIP containing `curriculum-package.json` at its root. Package schema version 1 contains the seven ordered levels `pre-A1`, `A1`, `A2`, `B1`, `B2`, `C1`, and `C2`; each level contains can-do goals and units, and each unit contains objectives, vocabulary, sentence patterns, and lesson activities.
 
-Import uses `POST /api/v1/admin/curriculum/package/import` as multipart form data with the file field named `file`. The ZIP is limited to 15 MB and its curriculum JSON to 10 MB. The server creates generated drafts only; it does not approve or publish imported material. The normal edit, submit, approval, and publication workflow still applies. A stable `packageId` and unit code make repeat imports idempotent.
+Import uses `POST /api/v1/admin/curriculum/package/import` as multipart form data with the file field named `file`. The ZIP is limited to 15 MB and its curriculum JSON to 10 MB. The server creates generated drafts; automated checks run on publish and there is no separate human approval gate. Administrators can edit, disable, or roll back published content at any time. A stable `packageId` and unit code make repeat imports idempotent.
 
 The locally prepared package `G:\workbuddy\课程\儿童英语_CEFR七级成长课程_v1.zip` is intentionally not stored in this repository. It is an original, child-context adaptation guided by the Council of Europe's CEFR Companion Volume (2020) descriptors and the project brief's page 3, not a copy of descriptor text. Level outcomes are references rather than deadlines or a mandatory course order. The refreshed package contains roughly 400 entries per level (8 units, 32+ additions per unit), with IPA and Chinese glosses populated where the source dictionary provides them. The supplemental entries are sourced from ECDICT under its MIT license; the ZIP contains `SOURCES.txt`. The level bands are frequency-based production suggestions and still require human review. Image assets are omitted; any later image additions require a verified source and license.
 
-Importing it creates review drafts only; it does not bypass human approval.
+Importing it creates generated drafts; publishing them is an explicit administrator action after automated checks. No separate review queue is required.
+
+## Lexicon
+
+The ECDICT word-family lexicon is built from `ecdict.csv` (MIT) into `packages/vocabulary/data/lexicon.json` with 5,000 families, including 3,000 core families. Build and import it from the repository root:
+
+```bash
+npm run lexicon:build
+npm run lexicon:import:dry
+npm run lexicon:import
+```
+
+The import is idempotent by headword. Textbook units referenced by drafts are scanned and their words are marked in `lexicon_entries.textbookUnitIds`; textbook metadata and request word lists take priority over the global lexicon, which only fills blank phonetic, meaning, part-of-speech, collocation, and example fields. Administrators can inspect a lookup with `GET /api/v1/admin/curriculum/lexicon/lookup?word=cat&textbookUnitId=...` and coverage with `GET /api/v1/admin/curriculum/lexicon/stats`.
+
+Published units can be rolled back with `POST /api/v1/admin/curriculum/units/{unitId}/rollback` (`{ "version": 1 }`), disabled with `/disable`, and re-enabled with `/enable`. Disable also marks the unit's learning items and vocabulary items disabled, and the planner will not fall back to built-in activities for that topic.
 
 ## Textbook catalog
 
@@ -20,10 +34,10 @@ Create textbook editions with publisher, publication year, grade, title, and edi
 
 1. Enter a title, a learning level (`pre-A`, `A`, `B`, or another configured label), an optional textbook edition/unit, and one vocabulary item per line.
 2. Create the draft and request AI generation. Generation uses the configured `llm.learning_plan` route; if that route is unavailable, a structured placeholder draft remains available for editing.
-3. Review and edit the structured content, then submit it for human review.
-4. An administrator approves or rejects the draft. Only approved drafts can be published.
+3. Check the automated QC report and edit the structured content if needed. No human review gate is required.
+4. Publish directly; the draft becomes `published` and the unit `active` after automated checks. Administrators can edit, disable, or roll back at any time.
 
-Publication requires supported activity types, existing skill-node references, at least one activity, and a task-level assessment rule. Point-selection tasks need `acceptedImageIds`; fixed text or speech tasks need `acceptedTexts` or `requiredPhrases`; genuinely open responses must set `openResponse=true`; pronunciation tasks must declare the pronunciation assessment route. Passive listening/reading may be completed without an answer, but it never creates mastery evidence. Image resources must include a public source URL and a license string; attribution is stored when provided. The admin must verify source availability and permission before approval.
+Publication requires supported activity types, existing skill-node references, at least one activity, and a task-level assessment rule. Point-selection tasks need `acceptedImageIds`; fixed text or speech tasks need `acceptedTexts` or `requiredPhrases`; genuinely open responses must set `openResponse=true`; pronunciation tasks must declare the pronunciation assessment route. Passive listening/reading may be completed without an answer, but it never creates mastery evidence. Image resources must include a public source URL and a license string; attribution is stored when provided. Automated checks flag missing source or license, and administrators can replace or remove an asset at any time.
 
 When a package is imported, licensed image suggestions are recorded as pending media assets and the backend starts downloading them in the background during idle time; publication also registers any images added during review. Downloaded files live under `AI_MEDIA_CACHE_DIR` and are served through the media endpoint after the asset is marked cached; published activity content includes `imageAssets` references so clients can render the cached resource. Failed downloads are retried after a cooldown, and stale downloads are recovered. TTS audio and image binaries are runtime cache files; database backups contain only media metadata, never these binary cache directories. Persist the backend `/app/.cache` volume if the cache should survive container replacement.
 
