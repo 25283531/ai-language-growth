@@ -688,7 +688,7 @@ private fun GrowthApp(
             try {
                 require(learnerId.isNotBlank()) { "账户尚未关联学习档案。" }
                 val response = withContext(Dispatchers.IO) {
-                    http(base(), "/lessons/start", "POST", JSONObject().put("learnerId", learnerId), token())
+                    http(base(), "/lessons/start", "POST", lessonStartBody(learnerId, textbookTopicId(dashboard)), token())
                 }
                 lessonSessionId = response.optString("lessonSessionId")
                 // 新预置单元未必有中文展示名；不要把内部 topicId 直接印给孩子看。

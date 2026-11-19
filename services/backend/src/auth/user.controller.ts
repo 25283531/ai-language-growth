@@ -12,6 +12,7 @@ import { deriveAvatarLevel, isValidAvatarUrl } from '@alg/shared-contracts';
 import { AuthService, assertPassword, extractBearerToken } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { mapTextbookUnitToSkillNodeIds } from '../curriculum/textbook-skill-mapping';
+import { resolveTextbookTopic } from '../curriculum/textbook-topic';
 import { CurriculumWarmupService } from '../curriculum/curriculum-warmup.service';
 
 // avatarUrl 字段名保持不变：允许 http(s):// 外链或 preset:// 本地头像资源标识。
@@ -98,6 +99,17 @@ export class UserController {
       }),
     ]);
 
+    // 教材同步：把当前教材单元解析成课程主题，客户端开课时直接带 topicId，
+    // 否则 Planner 会按能力自选主题，选定单元里的课文与重点词永远开不出来。
+    // 解析失败不影响仪表盘（textbook 字段保持原样）。
+    const textbookTopicId = mapping
+      ? await resolveTextbookTopic(this.prisma, {
+        unitId: mapping.currentUnit || null,
+        publisher: mapping.publisher,
+        grade: mapping.grade,
+      }).catch(() => null)
+      : null;
+
     const succeeded = evidence.filter((row) => row.succeeded);
     const distinct = (rows: typeof evidence) => new Set(rows.map((row) => row.skillNodeId)).size;
     const dates = new Set(succeeded.map((row) => row.occurredAt.toISOString().slice(0, 10)));
@@ -147,7 +159,7 @@ export class UserController {
         currentTopic: learner.currentTopic,
         membershipTier: learner.membershipTier,
       },
-      textbook: mapping,
+      textbook: mapping ? { ...mapping, topicId: textbookTopicId } : mapping,
       // 新增字段（additive）：既有字段一律不变。learner.entryLevel 仍是入学起点 pre_a1，
       // level 是当前参考档位（仅展示）；avatarTier / unlockedCount 是解锁计数，
       // 客户端不存解锁状态，也不得自行推导 CEFR。
@@ -242,6 +254,17 @@ export class UserController {
       await this.prisma.textbook_mappings.update({ where: { id: existing.id }, data: mappingData });
     } else {
       await this.prisma.textbook_mappings.create({ data: { learnerId: learner.id, ...mappingData } });
+    }
+    // A 兜底：带 unitId 切教材时同步写「下一节课主题」，即使客户端未升级也能开到该单元。
+    // currentTopic 由 Orchestrator 开课即消费，不会把学习者长期锁在同一个单元。
+    if (unit) {
+      const topicId = await resolveTextbookTopic(this.prisma, { unitId: unit.id, textbookId: textbook.id })
+        .catch(() => null);
+      if (topicId) {
+        await this.prisma.learner_profiles
+          .update({ where: { id: learner.id }, data: { currentTopic: topicId } })
+          .catch(() => undefined);
+      }
     }
     return { ok: true };
   }
