@@ -396,12 +396,16 @@ export class CurriculumAudioService {
       return null;
     });
     if (!result) return;
-    const parsed = wordFormIpaSchema.safeParse(parseJsonObject(result.content));
+    const payload = parseJsonPayload(result.content);
+    const parsed = wordFormIpaSchema.safeParse(payload);
     if (!parsed.success) {
-      this.logger.warn('词形音标 AI 返回格式不合规，忽略本次结果。');
+      this.logger.warn(
+        `词形音标 AI 返回无法解析（${result.providerAlias}/${result.modelAlias}）：${result.content.slice(0, 300)}`,
+      );
       return;
     }
-    for (const item of parsed.data.words) {
+    const items = Array.isArray(parsed.data) ? parsed.data : parsed.data.words;
+    for (const item of items) {
       const form = item.form.trim().toLowerCase();
       const phonetic = normalizeIpa(item.ipa);
       if (!form || !phonetic) continue;
@@ -520,14 +524,17 @@ function isRegularVariant(form: string, lemma: string): boolean {
   return form.startsWith(lemma) && form.length <= lemma.length + 5;
 }
 /** 小模型词形判定输出；ipa 留空表示模型也不确定。 */
-const wordFormIpaSchema = z.object({
-  words: z.array(z.object({
-    form: z.string().trim().min(1).max(80),
-    ipa: z.string().max(80).default(''),
-    pos: z.string().max(20).default(''),
-    base: z.string().max(80).default(''),
-  })).max(60),
+const wordFormItemSchema = z.object({
+  form: z.string().trim().min(1).max(80),
+  ipa: z.string().max(80).default(''),
+  pos: z.string().max(20).default(''),
+  base: z.string().max(80).default(''),
 });
+
+const wordFormIpaSchema = z.union([
+  z.array(wordFormItemSchema).max(60),
+  z.object({ words: z.array(wordFormItemSchema).max(60) }),
+]);
 
 /** 只接受“斜杠包裹的 IPA 字符”，防止模型输出中文解释或拼音。 */
 function normalizeIpa(raw: string): string {
@@ -537,14 +544,26 @@ function normalizeIpa(raw: string): string {
   return `/${inner}/`;
 }
 
-/** 模型偶尔裹代码块或说明文字，取第一个 JSON 对象。 */
-function parseJsonObject(text: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
+/** 模型偶尔裹代码块或说明文字，兼容对象与数组两种写法。 */
+function parseJsonPayload(text: string): unknown {
+  const candidates: string[] = [];
+  const object = sliceBetween(text, '{', '}');
+  const array = sliceBetween(text, '[', ']');
+  if (object) candidates.push(object);
+  if (array) candidates.push(array);
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // 试下一个候选
+    }
   }
+  return null;
+}
+
+function sliceBetween(text: string, open: string, close: string): string {
+  const start = text.indexOf(open);
+  const end = text.lastIndexOf(close);
+  if (start < 0 || end <= start) return '';
+  return text.slice(start, end + 1);
 }
