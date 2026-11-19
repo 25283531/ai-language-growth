@@ -185,6 +185,16 @@ export const DEFAULT_ROUTER_CONFIG: RouterConfig = {
       enabled: true,
     },
     {
+      // 教材课文音频：逐句双速 + 重点词整词/音节/音素拆读。
+      // 量大于普通教学语句，并发给高一些；预算与叙事同级。
+      taskRoute: 'tts.curriculum_clip',
+      primary: { providerAlias: 'lowcost_tts', modelAlias: 'lowcost_tts_01', level: 'L1' },
+      fallback: [{ providerAlias: 'premium_tts', modelAlias: 'premium_tts_01', level: 'L2' }],
+      maxConcurrency: 12,
+      dailyBudgetCny: 80,
+      enabled: true,
+    },
+    {
       taskRoute: 'asr.free_speech',
       primary: { providerAlias: 'free_asr', modelAlias: 'free_asr_01', level: 'L1' },
       fallback: [{ providerAlias: 'paid_asr', modelAlias: 'paid_asr_01', level: 'L1' }],

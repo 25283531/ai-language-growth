@@ -42,6 +42,7 @@ export const TASK_ROUTES = [
   'tts.fixed_course', // 固定课程音频（走预生成缓存）
   'tts.dynamic_teaching', // 动态教学语句
   'tts.narrative', // 故事与情感表达
+  'tts.curriculum_clip', // 教材课文预生成音频（逐句双速、重点词拆读）
   'asr.free_speech', // 自由对话识别
   'asr.follow_read', // 跟读初筛
   'pronunciation.word', // 单词发音评估
