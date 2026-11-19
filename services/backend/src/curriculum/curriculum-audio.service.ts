@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { textbookUnitContentSchema, type TextbookUnitContent } from '@alg/shared-contracts';
 import { ModelRouterImpl } from '@alg/model-router';
@@ -331,7 +332,7 @@ export class CurriculumAudioService {
       ...content.passage.paragraphs
         .flatMap((paragraph) => paragraph.sentences)
         .flatMap((sentence) => sentence.en.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? []),
-    ])].filter((word) => word.length > 1);
+    ])].filter((word) => word.length > 0);
     if (!words.length) return { phonetic: table, pos: new Map() };
     const rows = await this.prisma.lexicon_entries.findMany({
       where: { OR: [{ word: { in: words } }, { variants: { hasSome: words } }] },
@@ -353,7 +354,81 @@ export class CurriculumAudioService {
         if (partOfSpeech) pos.set(form, partOfSpeech);
       }
     }
+    await this.enrichWordForms(words.filter((word) => !table.has(word)), table, pos).catch(
+      (error: unknown) => {
+        this.logger.warn(`词形音标补充跳过：${error instanceof Error ? error.message : String(error)}`);
+      },
+    );
     return { phonetic: table, pos };
+  }
+
+  /**
+   * P1/P2：词库查不到的屈折形式（helped / dishes / said…）交给小参数文本模型判定，
+   * 结果写回 lexicon_entries（source=ai-form）做缓存，下次开课直接命中。
+   * 失败只记日志，不阻断课文下发。
+   */
+  private async enrichWordForms(
+    missing: string[],
+    table: Map<string, string>,
+    pos: Map<string, string>,
+  ): Promise<void> {
+    const forms = [...new Set(missing)].slice(0, 40);
+    if (!forms.length) return;
+    const decision = await this.router.route({
+      serviceKind: 'llm',
+      taskRoute: 'llm.curriculum_unit_enrich',
+    });
+    const result = await this.gateway.smallLlm({
+      promptKey: 'curriculum.word_form_ipa',
+      promptVersion: 'v1',
+      system: [
+        '你是英语发音词典，服务中国小学生。',
+        '为每个英文单词或屈折形式标注英式 IPA（含重音符号），并给出词性与原形。',
+        '必须按实际拼写形式注音：was 是 /wɒz/，did 是 /dɪd/，said 是 /sed/，不能拿原形读音代替。',
+        '无法确定时 ipa 留空，绝不编造。',
+        '只输出 {"words":[{"form":"helped","ipa":"/helpt/","pos":"v.","base":"help"}]}。',
+      ].join(''),
+      messages: [{ role: 'user', content: JSON.stringify({ words: forms }) }],
+      temperature: 0,
+      maxTokens: 900,
+      timeoutMs: 8000,
+    }, decision).catch((error: unknown) => {
+      this.logger.warn(`词形音标 AI 判定失败：${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
+    if (!result) return;
+    const parsed = wordFormIpaSchema.safeParse(parseJsonObject(result.content));
+    if (!parsed.success) {
+      this.logger.warn('词形音标 AI 返回格式不合规，忽略本次结果。');
+      return;
+    }
+    for (const item of parsed.data.words) {
+      const form = item.form.trim().toLowerCase();
+      const phonetic = normalizeIpa(item.ipa);
+      if (!form || !phonetic) continue;
+      const partOfSpeech = item.pos.trim().slice(0, 20);
+      table.set(form, phonetic);
+      if (partOfSpeech) pos.set(form, partOfSpeech);
+      await this.prisma.lexicon_entries
+        .upsert({
+          where: { word: form },
+          create: {
+            word: form,
+            lemma: item.base.trim().toLowerCase().slice(0, 80),
+            phonetic,
+            pos: partOfSpeech,
+            source: 'ai-form',
+            tags: ['ai-form'],
+            childSafe: true,
+          },
+          update: { phonetic, pos: partOfSpeech },
+        })
+        .catch((error: unknown) => {
+          this.logger.warn(
+            `词形音标缓存写入失败 ${form}：${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }
   }
 
   /** 供管理端预览规划结果，不触发 TTS。 */
@@ -444,4 +519,33 @@ function firstPronunciation(raw: string | null | undefined): string {
 function isRegularVariant(form: string, lemma: string): boolean {
   if (!lemma || form === lemma) return false;
   return form.startsWith(lemma) && form.length <= lemma.length + 5;
+}
+/** 小模型词形判定输出；ipa 留空表示模型也不确定。 */
+const wordFormIpaSchema = z.object({
+  words: z.array(z.object({
+    form: z.string().trim().min(1).max(80),
+    ipa: z.string().max(80).default(''),
+    pos: z.string().max(20).default(''),
+    base: z.string().max(80).default(''),
+  })).max(60),
+});
+
+/** 只接受“斜杠包裹的 IPA 字符”，防止模型输出中文解释或拼音。 */
+function normalizeIpa(raw: string): string {
+  const inner = raw.trim().replace(/^\/|\/$/g, '').trim();
+  if (!inner) return '';
+  if (!/^[a-zA-Zəɪʊʌæɑɒɔɜθðʃʒŋɡɹɾʔːˈˌ' .-]+$/.test(inner)) return '';
+  return `/${inner}/`;
+}
+
+/** 模型偶尔裹代码块或说明文字，取第一个 JSON 对象。 */
+function parseJsonObject(text: string): unknown {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
 }
