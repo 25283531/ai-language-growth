@@ -253,6 +253,8 @@ private fun GrowthApp(
     var passageStatus by remember { mutableStateOf("") }
     var passageSequenceMode by remember { mutableStateOf<String?>(null) }
     var passageShowChinese by rememberSaveable { mutableStateOf(false) }
+    // 最近一次整篇连播用的语速：底部「再听一次」沿用它，而不是重问用户。
+    var passageLastSlow by remember { mutableStateOf<Boolean?>(null) }
     // P2-06 重点词拆读：当前词、当前高亮片段、陪练轮次与错误定位
     var focusIndex by remember { mutableStateOf(0) }
     var focusClipKey by remember { mutableStateOf("") }
@@ -366,6 +368,7 @@ private fun GrowthApp(
     fun playPassageAll(slow: Boolean) {
         val passage = lessonPassage ?: return
         val mode = if (slow) "slow" else "normal"
+        passageLastSlow = slow
         if (passageSequenceMode == mode) {
             stopPassageSequence()
             return
@@ -907,6 +910,15 @@ private fun GrowthApp(
                             passageStatus = passageStatus,
                             passageSequenceMode = passageSequenceMode,
                             passageShowChinese = passageShowChinese,
+                            passageLastSlow = passageLastSlow,
+                            onStartPassageFollow = {
+                                val first = lessonPassage?.paragraphs?.firstOrNull()?.sentences?.firstOrNull()
+                                if (first != null) {
+                                    clearPassageState()
+                                    activePassageSentenceId = first.id
+                                    passageStatus = "跟读练习：点这句的「按住跟读」，读完自动评分。"
+                                }
+                            },
                             onSelectPassageSentence = { id -> activePassageSentenceId = id },
                             onPlayPassageSentence = ::playPassageSentence,
                             onPlayPassageAll = ::playPassageAll,
@@ -1464,6 +1476,8 @@ private fun LearnScreen(
     passageStatus: String,
     passageSequenceMode: String?,
     passageShowChinese: Boolean,
+    passageLastSlow: Boolean?,
+    onStartPassageFollow: () -> Unit,
     onSelectPassageSentence: (String) -> Unit,
     onPlayPassageSentence: (PassageSentence, Boolean) -> Unit,
     onPlayPassageAll: (Boolean) -> Unit,
@@ -1533,6 +1547,8 @@ private fun LearnScreen(
             onSelectSentence = onSelectPassageSentence,
             onPlaySentence = onPlayPassageSentence,
             onPlayAll = onPlayPassageAll,
+            lastSlow = passageLastSlow,
+            onStartPassageFollow = onStartPassageFollow,
             onToggleChinese = onTogglePassageChinese,
             focusIndex = focusIndex,
             focusClipKey = focusClipKey,
@@ -1547,6 +1563,8 @@ private fun LearnScreen(
             onFollowRecord = onFollowRecord,
         )
     }
+    // 课文流程独占课堂页：不再叠加原单词活动卡，避免课文底部残留 please 之类的旧卡片。
+    if (lessonPassage != null) return
 
     // 图片选择题：服务端下发选项，孩子点图作答；不进入跟读流程。
     val imageOptions = directive.optJSONArray("imageOptions")
@@ -1697,6 +1715,8 @@ private fun PassageReaderCard(
     onSelectSentence: (String) -> Unit,
     onPlaySentence: (PassageSentence, Boolean) -> Unit,
     onPlayAll: (Boolean) -> Unit,
+    lastSlow: Boolean?,
+    onStartPassageFollow: () -> Unit,
     onToggleChinese: () -> Unit,
     focusIndex: Int,
     focusClipKey: String,
@@ -1777,22 +1797,6 @@ private fun PassageReaderCard(
                 modifier = Modifier.weight(1f),
                 enabled = !busy && (sequenceMode == "slow" || slowCount > 0),
             )
-        }
-
-        if (passage.focusWords.isNotEmpty()) {
-            Text("重点词慢速拆读", style = MaterialTheme.typography.titleSmall, color = GrowthColors.Ink)
-            passage.focusWords.forEachIndexed { index, word ->
-                FocusWordDrillCard(
-                    word = word,
-                    active = index == focusIndex,
-                    playingKey = if (index == focusIndex) focusClipKey else "",
-                    round = if (index == focusIndex) focusRound else 0,
-                    status = if (index == focusIndex) focusStatus else "",
-                    enabled = !busy && !followRecording,
-                    onPractice = { onStartFocusPractice(index) },
-                    onPlayClip = { clip -> onPlayFocusClip(index, clip) },
-                )
-            }
         }
 
         if (readyCount == 0 && status.isBlank()) {
@@ -1881,6 +1885,39 @@ private fun PassageReaderCard(
                         }
                     }
                 }
+            }
+        }
+
+        // 整篇读完后：沿用上次语速重听，或进入逐句跟读流程。
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrowthSecondaryButton(
+                "🔁 再听一次",
+                { onPlayAll(lastSlow ?: false) },
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+            )
+            GrowthSecondaryButton(
+                "🎤 跟读练习",
+                onStartPassageFollow,
+                modifier = Modifier.weight(1f),
+                enabled = !busy,
+            )
+        }
+
+        // 重点词放在整篇原文与底部按钮之后：先读整篇，再进拆读。
+        if (passage.focusWords.isNotEmpty()) {
+            Text("重点词慢速拆读", style = MaterialTheme.typography.titleSmall, color = GrowthColors.Ink)
+            passage.focusWords.forEachIndexed { index, word ->
+                FocusWordDrillCard(
+                    word = word,
+                    active = index == focusIndex,
+                    playingKey = if (index == focusIndex) focusClipKey else "",
+                    round = if (index == focusIndex) focusRound else 0,
+                    status = if (index == focusIndex) focusStatus else "",
+                    enabled = !busy && !followRecording,
+                    onPractice = { onStartFocusPractice(index) },
+                    onPlayClip = { clip -> onPlayFocusClip(index, clip) },
+                )
             }
         }
     }
@@ -2533,46 +2570,82 @@ private fun ProfileScreen(
         textbooks?.optJSONObject(index)?.let { it.optString("id") to "${it.optString("publisher")} · ${it.optInt("publicationYear")} · ${it.optString("grade")} ${it.optString("title")}" }
     }
 
+    var profilePanelOpen by remember { mutableStateOf(false) }
+    var avatarChooserOpen by remember { mutableStateOf(false) }
+
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("个人资料", "👤")
-        Text(user?.optString("email").orEmpty(), style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
-        GrowthTextField(name, onName, "个人资料名称", leadingEmoji = "✏️")
-        GrowthPrimaryButton("保存资料", onSaveProfile, emoji = "💾")
-    }
-
-    WeeklyReportCard(weekly, weeklyError, weeklyRefreshing, weeklyStatus, onRefreshWeekly)
-
-    GrowthCard(modifier = Modifier.fillMaxWidth()) {
-        GrowthSectionTitle("选择头像", "🎨")
-        AvatarPicker(
-            current = avatar,
-            dashboard = data,
-            onSelect = onAvatar,
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            AvatarArt(avatar, 56.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(name.ifBlank { "未命名" }, style = MaterialTheme.typography.titleMedium, color = GrowthColors.Ink)
+                Text(user?.optString("email").orEmpty(), style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+            }
+        }
+        GrowthSecondaryButton(
+            if (profilePanelOpen) "收起个人资料" else "打开个人资料",
+            { profilePanelOpen = !profilePanelOpen },
+            emoji = "⚙️",
         )
     }
 
-    GrowthCard(modifier = Modifier.fillMaxWidth()) {
-        GrowthSectionTitle("邮箱验证", "✉️")
-        GrowthPill(
-            "邮箱${if (emailVerified) "已验证" else "尚未验证"}",
-            if (emailVerified) GrowthColors.MintDeep else GrowthColors.PrimaryDeep,
-            if (emailVerified) GrowthColors.MintWash else GrowthColors.PrimaryWash,
-            emoji = if (emailVerified) "✅" else "⚠️",
-        )
-        if (!emailVerified) {
-            Text("只有验证邮箱后，才能使用邮箱找回密码。", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
-            GrowthSecondaryButton("发送验证邮件", onSendVerification, emoji = "📤")
-            GrowthTextField(code, onCode, "6 位邮箱验证码", leadingEmoji = "🔢")
-            GrowthPrimaryButton("验证邮箱", onVerify, enabled = code.length == 6, emoji = "✅")
+    // 四项合并为一个二级面板：资料 / 头像 / 邮箱 / 密码都在这里改，不在首页平铺。
+    if (profilePanelOpen) {
+        GrowthCard(modifier = Modifier.fillMaxWidth()) {
+            GrowthSectionTitle("修改资料", "✏️")
+            GrowthTextField(name, onName, "个人资料名称", leadingEmoji = "✏️")
+            GrowthPrimaryButton("保存资料", onSaveProfile, emoji = "💾")
+        }
+
+        GrowthCard(modifier = Modifier.fillMaxWidth()) {
+            GrowthSectionTitle("头像", "🎨")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.clickable { avatarChooserOpen = !avatarChooserOpen }) {
+                    AvatarArt(avatar, 64.dp)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("点一下头像可以换一个", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                    GrowthSecondaryButton(
+                        if (avatarChooserOpen) "收起头像列表" else "选择头像",
+                        { avatarChooserOpen = !avatarChooserOpen },
+                        emoji = "🎨",
+                    )
+                }
+            }
+            if (avatarChooserOpen) {
+                AvatarPicker(
+                    current = avatar,
+                    dashboard = data,
+                    onSelect = { picked -> onAvatar(picked); avatarChooserOpen = false },
+                )
+            }
+        }
+
+        GrowthCard(modifier = Modifier.fillMaxWidth()) {
+            GrowthSectionTitle("邮箱验证", "✉️")
+            GrowthPill(
+                "邮箱${if (emailVerified) "已验证" else "尚未验证"}",
+                if (emailVerified) GrowthColors.MintDeep else GrowthColors.PrimaryDeep,
+                if (emailVerified) GrowthColors.MintWash else GrowthColors.PrimaryWash,
+                emoji = if (emailVerified) "✅" else "⚠️",
+            )
+            if (!emailVerified) {
+                Text("只有验证邮箱后，才能使用邮箱找回密码。", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                GrowthSecondaryButton("发送验证邮件", onSendVerification, emoji = "📤")
+                GrowthTextField(code, onCode, "6 位邮箱验证码", leadingEmoji = "🔢")
+                GrowthPrimaryButton("验证邮箱", onVerify, enabled = code.length == 6, emoji = "✅")
+            }
+        }
+
+        GrowthCard(modifier = Modifier.fillMaxWidth()) {
+            GrowthSectionTitle("修改密码", "🔒")
+            GrowthTextField(currentPassword, onCurrentPassword, "当前密码", password = true, leadingEmoji = "🔑")
+            GrowthTextField(newPassword, onNewPassword, "新密码（至少 6 位）", password = true, leadingEmoji = "🆕")
+            GrowthSecondaryButton("更新密码", onPassword, emoji = "🔄")
         }
     }
 
-    GrowthCard(modifier = Modifier.fillMaxWidth()) {
-        GrowthSectionTitle("修改密码", "🔒")
-        GrowthTextField(currentPassword, onCurrentPassword, "当前密码", password = true, leadingEmoji = "🔑")
-        GrowthTextField(newPassword, onNewPassword, "新密码（至少 6 位）", password = true, leadingEmoji = "🆕")
-        GrowthSecondaryButton("更新密码", onPassword, emoji = "🔄")
-    }
+    WeeklyReportCard(weekly, weeklyError, weeklyRefreshing, weeklyStatus, onRefreshWeekly)
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("选择教材", "📚")

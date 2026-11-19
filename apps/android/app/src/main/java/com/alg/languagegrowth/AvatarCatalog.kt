@@ -414,13 +414,18 @@ private fun RowScope.AvatarTile(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Box {
             AvatarArt(item.id, 52.dp)
             if (locked) {
+                // 锁定不做模糊/蒙层：头像原样显示，只在右下角放一枚小锁。
                 Box(
-                    Modifier.size(52.dp).clip(GrowthShapes.Pill).background(Color(0x99FFFFFF)),
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(18.dp)
+                        .clip(GrowthShapes.Pill)
+                        .background(GrowthColors.Surface),
                     contentAlignment = Alignment.Center,
-                ) { Text("🔒", fontSize = 18.sp) }
+                ) { Text("🔒", fontSize = 10.sp) }
             }
         }
         Text(
