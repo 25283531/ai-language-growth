@@ -342,7 +342,8 @@ export function assembleCurriculumPassage(input: {
       if (normal?.audioRef) audioReady = true;
       return {
         ...sentence,
-        phonetic: sentence.phonetic || sentencePhonetic(sentence.en, input.wordPhonetic),
+        // 词表/AI 优先；存量 sentence.phonetic 只当兜底（生成期可能给出 helped→/help/ 这类错音）。
+        phonetic: sentencePhonetic(sentence.en, input.wordPhonetic) || sentence.phonetic || '',
         audio: {
           normalKey: `sentence:${sentence.id}:normal`,
           slowKey: `sentence:${sentence.id}:slow`,

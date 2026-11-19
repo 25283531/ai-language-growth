@@ -339,11 +339,16 @@ export class CurriculumAudioService {
       select: { word: true, variants: true, phonetic: true, pos: true },
     });
     const pos = new Map<string, string>();
+    /** 已被词库或 AI 确认过的词形；单元自带音标不算，避免错误的存量音标挡住 AI。 */
+    const resolved = new Set<string>();
     for (const row of rows) {
       const phonetic = firstPronunciation(row.phonetic);
       const partOfSpeech = row.pos?.trim();
       const word = row.word.toLowerCase();
-      if (phonetic) table.set(word, phonetic);
+      if (phonetic) {
+        table.set(word, phonetic);
+        resolved.add(word);
+      }
       if (partOfSpeech) pos.set(word, partOfSpeech);
       for (const variant of row.variants ?? []) {
         const form = variant.trim().toLowerCase();
@@ -353,7 +358,7 @@ export class CurriculumAudioService {
         if (partOfSpeech) pos.set(form, partOfSpeech);
       }
     }
-    await this.enrichWordForms(words.filter((word) => !table.has(word)), table, pos).catch(
+    await this.enrichWordForms(words.filter((word) => !resolved.has(word)), table, pos).catch(
       (error: unknown) => {
         this.logger.warn(`词形音标补充跳过：${error instanceof Error ? error.message : String(error)}`);
       },
