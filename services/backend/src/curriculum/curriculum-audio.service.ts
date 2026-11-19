@@ -394,8 +394,8 @@ export class CurriculumAudioService {
       ].join(''),
       messages: [{ role: 'user', content: JSON.stringify({ words: forms }) }],
       temperature: 0,
-      maxTokens: 900,
-      timeoutMs: 8000,
+      maxTokens: 1200,
+      timeoutMs: 20000,
     }, decision).catch((error: unknown) => {
       this.logger.warn(`词形音标 AI 判定失败：${error instanceof Error ? error.message : String(error)}`);
       return null;
