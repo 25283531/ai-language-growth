@@ -368,6 +368,8 @@ export function assembleCurriculumPassage(input: {
       .slice(0, 3);
     return {
       ...focus,
+      // 词表/AI 有权威读音时覆盖单元词条（dishes 应为 /ˈdɪʃɪz/，不是 /diʃ/）。
+      phonetic: input.wordPhonetic?.get(focus.word.trim().toLowerCase()) || focus.phonetic,
       pos: input.wordPos?.get(focus.word.trim().toLowerCase()) ?? '',
       examples,
       clips: focus.clips.map((spec) => {
