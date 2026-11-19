@@ -292,7 +292,9 @@ describe('教材单元自动启用事务', () => {
     assert.equal(fake.state.units[0]?.reviewStatus, 'published');
     assert.equal(fake.state.units[0]?.currentVersion, 1);
     assert.equal(fake.state.versions.length, 1);
-    assert.equal(fake.state.items.length, 1);
+    // P0-2：课文型单元发布时会额外派生“逐句跟读”条目（本例 2 句），
+    // 保证主题内始终有可下发的活动，不会回退到预置词。
+    assert.equal(fake.state.items.length, 3);
     assert.equal(fake.state.vocabulary.length, 2);
     assert.equal(fake.state.reviews.length, 1);
     assert.equal(fake.state.draft?.status, 'published');

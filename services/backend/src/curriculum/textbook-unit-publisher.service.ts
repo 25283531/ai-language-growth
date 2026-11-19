@@ -80,10 +80,14 @@ export class TextbookUnitPublisherService {
     if (!unit) throw new NotFoundException('教材单元不存在');
 
     const metadata = asRecord(unit.metadata);
-    const allActivities = [
-      ...content.activities,
-      ...(content.schoolTrack?.activities ?? []),
+    const allActivities: PublishableActivity[] = [
+      ...(content.activities as PublishableActivity[]),
+      ...((content.schoolTrack?.activities ?? []) as PublishableActivity[]),
     ];
+    // P0-2：课文型单元必须自带“逐句可跟读”的条目。
+    // 否则重发布后主题内只剩阅读/句型/拆读等类型，可下发类型一过滤就没候选，
+    // planner 会跳回预置词（please）—— 2026-11-19 已复现过的旧 bug。
+    allActivities.push(...buildPassageSentenceActivities(content, allActivities));
     const skillIds = [...new Set(allActivities.flatMap((activity) => activity.skillNodeIds))];
 
     const [skills, phonemes, existingUnit, existingDraft] = await Promise.all([
@@ -851,12 +855,12 @@ function withQcReport(
 function metadataForUnit(unit: UnitRecord): Record<string, unknown> {
   return asRecord(unit.metadata);
 }
-
 function publishableForContent(content: TextbookUnitContent, grade?: string | null): PublishableLesson {
-  const allActivities = [
-    ...content.activities,
-    ...(content.schoolTrack?.activities ?? []),
+  const allActivities: PublishableActivity[] = [
+    ...(content.activities as PublishableActivity[]),
+    ...((content.schoolTrack?.activities ?? []) as PublishableActivity[]),
   ];
+  allActivities.push(...buildPassageSentenceActivities(content, allActivities));
   return {
     title: content.unit.title,
     level: levelForContent(content, grade),
@@ -944,3 +948,42 @@ function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
     : []);
 }
 
+
+/**
+
+/**
+ * P0-2：从课文段落派生“逐句跟读”活动。
+ *
+ * 只复用单元自身已有的能力节点，避免引入发布时不存在的能力码；
+ * 生成的条目与人工活动一起进入 learning_items，重发布时按位置更新，
+ * 不会因为可下发类型过滤而让教材主题变成空主题。
+ */
+function buildPassageSentenceActivities(
+  content: TextbookUnitContent,
+  existing: ReadonlyArray<{ skillNodeIds?: string[] }>,
+): PublishableActivity[] {
+  const sentences = (content.passage?.paragraphs ?? []).flatMap((paragraph) => paragraph.sentences);
+  if (!sentences.length) return [];
+  const skill = existing
+    .flatMap((activity) => activity.skillNodeIds ?? [])
+    .find((id): id is string => Boolean(id)) ?? 'LA.SPEAK.simple_sentences';
+  return sentences.map((sentence, index) => ({
+    id: content.unit.code + '-s' + String(index + 1).padStart(2, '0'),
+    title: '跟读：' + sentence.en.slice(0, 40),
+    taskType: 'word_mimicry',
+    scenario: 'story_scene',
+    difficulty: 1,
+    skillNodeIds: [skill],
+    targetWords: [sentence.en],
+    teacherUtteranceZh: index === 0 ? '先听这一句，再跟着读一遍。' : '跟着读这一句。',
+    demonstrationText: sentence.en,
+    requiresPronunciationAssessment: true,
+    requiresAsr: true,
+    assessment: {
+      openResponse: false,
+      acceptedTexts: [sentence.en],
+      requiredPhrases: [],
+      acceptedImageIds: [],
+    },
+  }));
+}

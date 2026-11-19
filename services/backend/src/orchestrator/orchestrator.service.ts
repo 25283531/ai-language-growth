@@ -48,6 +48,30 @@ import { selectFollowUpSkillNodeIds } from '../planner/growth-followup';
  * 开课时限制在这个范围内，孩子不会被推进到客户端根本呈现不了的活动上。
  */
 const CLIENT_TEACHABLE_TASK_TYPES = ['word_mimicry', 'image_identification'];
+
+/**
+ * 教材课文课型可下发的活动类型。
+ *
+ * 课文课是完整闭环（听句子 → 跟读句子 → 重点词 → 语法点），客户端用课文卡呈现，
+ * 不再依赖单个活动卡片。若仍沿用预置课的两种类型，教材条目会被全部过滤，
+ * 主题内候选为空 → 跨领域兜底 → directive 跑回预置词（please）的旧 bug。
+ */
+const TEXTBOOK_TEACHABLE_TASK_TYPES = [
+  'word_mimicry',
+  'image_identification',
+  'listening_comprehension',
+  'reading_story',
+  'pronunciation_drill',
+  'sentence_pattern',
+  'phrase_assembly',
+  'situational_dialogue',
+];
+
+function teachableTaskTypesFor(topicId: string): string[] {
+  return topicId.startsWith('topic-textbook-')
+    ? TEXTBOOK_TEACHABLE_TASK_TYPES
+    : CLIENT_TEACHABLE_TASK_TYPES;
+}
 import { PrismaService } from '../prisma/prisma.service';
 import { GrowthMentorService } from '../agents/growth-mentor.service';
 import { shouldAssessWordPronunciationForActivity, wordPronunciationThresholdTaskType } from './word-pronunciation';
@@ -281,7 +305,7 @@ export class OrchestratorService {
       lessonSessionId: session.id,
       excludeActivityIds: recentCompletedActivityIds,
       followUpSkillNodeIds,
-      allowedTaskTypes: CLIENT_TEACHABLE_TASK_TYPES,
+      allowedTaskTypes: teachableTaskTypesFor(topicId),
     }) ?? await this.planner.planNext({
       // 主题内所有活动都刚做过（例如只有一个活动的主题）时才允许重复，
       // 保证孩子不会因为“课程推进”而拿到空白页。
@@ -290,7 +314,7 @@ export class OrchestratorService {
       lessonSessionId: session.id,
       excludeActivityIds: [],
       followUpSkillNodeIds,
-      allowedTaskTypes: CLIENT_TEACHABLE_TASK_TYPES,
+      allowedTaskTypes: teachableTaskTypesFor(topicId),
     });
 
     if (!step) {

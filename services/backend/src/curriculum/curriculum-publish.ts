@@ -32,6 +32,8 @@ export type PublishableActivity = {
   title?: string;
   taskType: string;
   scenario?: string;
+  difficulty?: number;
+  order?: number;
   skillNodeIds: string[];
   targetWords: string[];
   teacherUtteranceZh?: string;
