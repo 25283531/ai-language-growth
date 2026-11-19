@@ -687,8 +687,21 @@ private fun GrowthApp(
             pageStatus = ""
             try {
                 require(learnerId.isNotBlank()) { "账户尚未关联学习档案。" }
+                // 教材切换后内存里的 dashboard 可能仍是登录时的旧快照（未重新拉取），
+                // 此时开课会按 Planner 默认主题走，课文与重点词全部出不来。
+                // 兜底：开课前发现没有 topicId 就补拉一次 dashboard。
+                var topicId = textbookTopicId(dashboard)
+                if (topicId == null) {
+                    val fresh = withContext(Dispatchers.IO) {
+                        runCatching { http(base(), "/user/dashboard", "GET", token = token()) }.getOrNull()
+                    }
+                    if (fresh != null) {
+                        dashboard = fresh
+                        topicId = textbookTopicId(fresh)
+                    }
+                }
                 val response = withContext(Dispatchers.IO) {
-                    http(base(), "/lessons/start", "POST", lessonStartBody(learnerId, textbookTopicId(dashboard)), token())
+                    http(base(), "/lessons/start", "POST", lessonStartBody(learnerId, topicId), token())
                 }
                 lessonSessionId = response.optString("lessonSessionId")
                 // 新预置单元未必有中文展示名；不要把内部 topicId 直接印给孩子看。
