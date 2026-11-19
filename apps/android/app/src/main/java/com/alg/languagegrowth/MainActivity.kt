@@ -255,6 +255,8 @@ private fun GrowthApp(
     var passageShowChinese by rememberSaveable { mutableStateOf(false) }
     // 最近一次整篇连播用的语速：底部「再听一次」沿用它，而不是重问用户。
     var passageLastSlow by remember { mutableStateOf<Boolean?>(null) }
+    // P1：逐句跟读页的当前句下标；null 表示不在跟读流程里。
+    var passageFollowIndex by remember { mutableStateOf<Int?>(null) }
     // P2-06 重点词拆读：当前词、当前高亮片段、陪练轮次与错误定位
     var focusIndex by remember { mutableStateOf(0) }
     var focusClipKey by remember { mutableStateOf("") }
@@ -911,12 +913,12 @@ private fun GrowthApp(
                             passageSequenceMode = passageSequenceMode,
                             passageShowChinese = passageShowChinese,
                             passageLastSlow = passageLastSlow,
+                            passageFollowIndex = passageFollowIndex,
+                            onPassageFollowIndex = { passageFollowIndex = it },
                             onStartPassageFollow = {
-                                val first = lessonPassage?.paragraphs?.firstOrNull()?.sentences?.firstOrNull()
-                                if (first != null) {
+                                if (lessonPassage != null) {
                                     clearPassageState()
-                                    activePassageSentenceId = first.id
-                                    passageStatus = "跟读练习：点这句的「按住跟读」，读完自动评分。"
+                                    passageFollowIndex = 0
                                 }
                             },
                             onSelectPassageSentence = { id -> activePassageSentenceId = id },
@@ -1477,6 +1479,8 @@ private fun LearnScreen(
     passageSequenceMode: String?,
     passageShowChinese: Boolean,
     passageLastSlow: Boolean?,
+    passageFollowIndex: Int?,
+    onPassageFollowIndex: (Int?) -> Unit,
     onStartPassageFollow: () -> Unit,
     onSelectPassageSentence: (String) -> Unit,
     onPlayPassageSentence: (PassageSentence, Boolean) -> Unit,
@@ -1531,6 +1535,27 @@ private fun LearnScreen(
             }
         }
         if (status.isNotBlank()) GrowthStatusPill(status)
+        return
+    }
+
+    // P1：逐句跟读独立页。进入后整屏只看当前一句，退出回到课文页。
+    val followPassage = lessonPassage
+    val followIndex = passageFollowIndex
+    if (followPassage != null && followIndex != null) {
+        PassageFollowScreen(
+            passage = followPassage,
+            index = followIndex,
+            playingKey = passagePlayingKey,
+            busy = busy,
+            recording = followRecording,
+            recordingId = followSentenceId,
+            score = followScore,
+            status = followStatus,
+            onPlay = onPlayPassageSentence,
+            onRecord = onFollowRecord,
+            onIndex = onPassageFollowIndex,
+            onExit = { onPassageFollowIndex(null) },
+        )
         return
     }
 
@@ -2883,5 +2908,116 @@ private fun ImageChoiceStep(
                 }
             }
         }
+    }
+}
+
+/**
+ * P1：逐句跟读页。
+ *
+ * 一屏一句：英文、中文、整句音标（服务端查不全时不显示），正常/慢速试听，
+ * 按住跟读复用同一套发音评测。最后一句点“完成跟读”退回课文页。
+ */
+@Composable
+private fun PassageFollowScreen(
+    passage: LessonPassage,
+    index: Int,
+    playingKey: String,
+    busy: Boolean,
+    recording: Boolean,
+    recordingId: String,
+    score: Double?,
+    status: String,
+    onPlay: (PassageSentence, Boolean) -> Unit,
+    onRecord: (PassageSentence, Boolean) -> Unit,
+    onIndex: (Int?) -> Unit,
+    onExit: () -> Unit,
+) {
+    val sentences = passage.sentences
+    if (sentences.isEmpty()) {
+        onExit()
+        return
+    }
+    val safeIndex = index.coerceIn(0, sentences.size - 1)
+    val sentence = sentences[safeIndex]
+    val isLast = safeIndex == sentences.size - 1
+    val normalPlaying = playingKey == "${sentence.id}:normal"
+    val slowPlaying = playingKey == "${sentence.id}:slow"
+
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.BlueWash,
+        outline = GrowthColors.Blue.copy(alpha = 0.22f),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                GrowthSectionTitle("逐句跟读", "🎤")
+                Text(
+                    "第 ${safeIndex + 1} / ${sentences.size} 句",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.InkSoft,
+                )
+            }
+            GrowthPill("${safeIndex + 1}/${sentences.size}", GrowthColors.PrimaryDeep, GrowthColors.PrimaryWash)
+        }
+
+        Text(sentence.english, style = MaterialTheme.typography.titleLarge, lineHeight = 34.sp, color = GrowthColors.Ink)
+        if (sentence.phonetic.isNotBlank()) {
+            Text(sentence.phonetic, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+        }
+        if (sentence.chinese.isNotBlank()) {
+            Text(sentence.chinese, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrowthSecondaryButton(
+                if (normalPlaying) "▶ 正常" else "正常语速",
+                { onPlay(sentence, false) },
+                modifier = Modifier.weight(1f),
+                enabled = !busy && sentence.audio.normalRef != null,
+            )
+            GrowthSecondaryButton(
+                if (slowPlaying) "▶ 慢速" else "慢速",
+                { onPlay(sentence, true) },
+                modifier = Modifier.weight(1f),
+                enabled = !busy && sentence.audio.slowRef != null,
+            )
+        }
+
+        HoldToSpeakButton(
+            recording = recording && recordingId == sentence.id,
+            enabled = !busy,
+            onPress = { onRecord(sentence, true) },
+            onRelease = { onRecord(sentence, false) },
+        )
+        Text(
+            "按住说一遍，老师听听这句读得怎么样。",
+            style = MaterialTheme.typography.bodySmall,
+            color = GrowthColors.InkSoft,
+        )
+        if (score != null && recordingId == sentence.id) {
+            Text(
+                "这句得分 ${score.roundToInt()} 分",
+                style = MaterialTheme.typography.titleSmall,
+                color = GrowthColors.PrimaryDeep,
+            )
+        }
+        if (status.isNotBlank() && recordingId == sentence.id) {
+            Text(status, style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrowthSecondaryButton(
+                "上一句",
+                { onIndex((safeIndex - 1).coerceAtLeast(0)) },
+                modifier = Modifier.weight(1f),
+                enabled = safeIndex > 0,
+            )
+            GrowthSecondaryButton(
+                if (isLast) "完成跟读" else "下一句",
+                { if (isLast) onExit() else onIndex(safeIndex + 1) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        GrowthSecondaryButton("退出跟读", onExit)
     }
 }

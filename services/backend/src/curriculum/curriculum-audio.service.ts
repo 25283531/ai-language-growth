@@ -307,7 +307,41 @@ export class CurriculumAudioService {
       content: parsed.data,
       clips: rows,
       knownPhonemes: await this.loadKnownPhonemes(),
+      wordPhonetic: await this.loadSentencePhonetics(parsed.data),
     });
+  }
+
+  /**
+   * P1：为整句音标准备词表。单元自带词条优先，其余词用 lexicon_entries 补齐
+   * （含屈折形式 variants）。查不到的词由 sentencePhonetic() 直接放弃。
+   */
+  private async loadSentencePhonetics(
+    content: TextbookUnitContent,
+  ): Promise<Map<string, string>> {
+    const table = new Map<string, string>();
+    for (const item of content.vocabulary) {
+      const word = item.word.trim().toLowerCase();
+      const phonetic = (item.phonetic ?? '').trim();
+      if (word && phonetic) table.set(word, phonetic);
+    }
+    const words = [...new Set(
+      content.passage.paragraphs
+        .flatMap((paragraph) => paragraph.sentences)
+        .flatMap((sentence) => sentence.en.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [])
+        .filter((word) => !table.has(word)),
+    )];
+    if (!words.length) return table;
+    const rows = await this.prisma.lexicon_entries.findMany({
+      where: { OR: [{ word: { in: words } }, { variants: { hasSome: words } }] },
+      select: { word: true, variants: true, phonetic: true },
+    });
+    for (const row of rows) {
+      const phonetic = row.phonetic?.trim();
+      if (!phonetic) continue;
+      table.set(row.word.toLowerCase(), phonetic);
+      for (const variant of row.variants ?? []) table.set(variant.toLowerCase(), phonetic);
+    }
+    return table;
   }
 
   /** 供管理端预览规划结果，不触发 TTS。 */

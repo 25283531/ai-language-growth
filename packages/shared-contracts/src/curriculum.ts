@@ -114,6 +114,8 @@ export const passageSentenceSchema = z.object({
   id: z.string().trim().min(1).max(80),
   en: z.string().trim().min(1).max(500),
   zh: z.string().trim().min(1).max(500),
+  /** 整句音标（P1）；能逐词查到音标时才拼，查不全时为空，客户端不展示。 */
+  phonetic: z.string().max(400).optional(),
   keyWords: z.array(z.string().trim().min(1).max(100)).max(12).default([]),
   grammarIds: z.array(z.string().trim().min(1).max(80)).max(6).default([]),
   schoolModules: z.array(textbookModuleSchema).max(5).default([]),

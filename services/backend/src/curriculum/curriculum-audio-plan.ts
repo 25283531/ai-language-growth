@@ -283,6 +283,26 @@ function lower(value: string): string {
 }
 
 /**
+ * P1：整句音标。逐词查表拼接，任一词缺音标就返回空——
+ * 宁可客户端不显示，也不展示半截音标误导孩子。
+ */
+function sentencePhonetic(
+  sentence: string,
+  table?: ReadonlyMap<string, string>,
+): string {
+  if (!table || table.size === 0) return '';
+  const words = sentence.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [];
+  if (!words.length) return '';
+  const parts: string[] = [];
+  for (const word of words) {
+    const phonetic = table.get(word)?.trim();
+    if (!phonetic) return '';
+    parts.push(phonetic.replace(/^\/|\/$/g, '').trim());
+  }
+  return `/${parts.join(' ')}/`;
+}
+
+/**
  * 把数据库中的片段套回课文与重点词。
  * 未准备好的片段保留 key、audioRef=null，客户端据此显示“正在准备”。
  */
@@ -304,6 +324,8 @@ export function assembleCurriculumPassage(input: {
     status: string;
   }>;
   knownPhonemes?: ReadonlySet<string>;
+  /** P1：词形（小写）→ 音标，用于拼整句音标；查不全就留空。 */
+  wordPhonetic?: ReadonlyMap<string, string>;
 }): CurriculumPassage {
   const plan = buildCurriculumAudioPlan(input.content, { knownPhonemes: input.knownPhonemes });
   const byIdentity = new Map(
@@ -318,6 +340,7 @@ export function assembleCurriculumPassage(input: {
       if (normal?.audioRef) audioReady = true;
       return {
         ...sentence,
+        phonetic: sentence.phonetic || sentencePhonetic(sentence.en, input.wordPhonetic),
         audio: {
           normalKey: `sentence:${sentence.id}:normal`,
           slowKey: `sentence:${sentence.id}:slow`,
