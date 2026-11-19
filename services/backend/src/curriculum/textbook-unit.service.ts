@@ -202,6 +202,16 @@ const FUNCTION_WORDS = new Set([
   'very', 'too', 'also', 'just', 'please', 'hello', 'hi', 'ok', 'okay',
 ]);
 
+/**
+ * 教材单元生成要一次输出逐句译文 + 词条 + 语法 + 活动，属于长 JSON。
+ * 早期写死 20s，真实供应商在长输出时必然超时，富化结果为空后就只剩占位文本，
+ * 自动校验一定不通过。这里改为可配置，默认 90s。
+ */
+function curriculumLlmTimeoutMs(): number {
+  const configured = Number(process.env.CURRICULUM_LLM_TIMEOUT_MS ?? '');
+  return Number.isFinite(configured) && configured >= 10000 ? configured : 90000;
+}
+
 @Injectable()
 export class TextbookUnitService {
   private readonly logger = new Logger(TextbookUnitService.name);
@@ -1095,7 +1105,7 @@ export class TextbookUnitService {
         ...(input.responseSchema ? { responseSchema: input.responseSchema } : {}),
         temperature: 0.1,
         maxTokens: input.maxTokens,
-        timeoutMs: 20000,
+        timeoutMs: curriculumLlmTimeoutMs(),
       };
       const response = input.useSmall
         ? await this.gateway.smallLlm(request, decision)
@@ -1129,7 +1139,7 @@ export class TextbookUnitService {
             messages: [{ role: 'user', content: JSON.stringify(input.payload) }],
             temperature: 0.1,
             maxTokens: Math.min(input.maxTokens, 900),
-            timeoutMs: 12000,
+            timeoutMs: Math.round(curriculumLlmTimeoutMs() / 2),
           }, decision);
           return { json: parseJsonObject(simplified.content), tier: `${tier}→L1` };
         } catch (fallbackError) {
