@@ -226,6 +226,23 @@ export class PlannerService {
         eligible.push(activity);
       }
     }
+    // 教材课按课文顺序推进：取本单元 order 最小的未完成条目。
+    // 已完成的条目已经在 excludeActivityIds 里被剔除，所以这里只会往前推，
+    // 不会因为自适应选择把课文第 1 句跳过去。
+    if (this.isTextbookTopic(input.topicId) && eligible.length) {
+      const next = [...eligible]
+        .filter((activity) => !this.isAutonomousConversation(activity))
+        .sort((left, right) => left.order - right.order || left.difficulty - right.difficulty)[0];
+      if (next) {
+        return {
+          activity: next,
+          rationale: `教材课按课文顺序推进：取本单元 order=${next.order} 的未完成条目，先保证课文完整走一遍`,
+          isReview: false,
+          reviewScheduleId: null,
+        };
+      }
+    }
+
     if (eligible.length) {
       const progressive = this.applyProgressiveAccess(eligible, states);
       const candidates = progressive.activities.length
@@ -663,6 +680,11 @@ export class PlannerService {
       select: { id: true },
     });
     return Boolean(unit);
+  }
+
+  /** 教材主题（topic-textbook-*）走“按课文顺序推进”，预置主题保持自适应。 */
+  private isTextbookTopic(topicId: string): boolean {
+    return topicId.startsWith('topic-textbook-');
   }
 
   private async activitiesForSkill(skillNodeId: string, topicId: string): Promise<TeachingActivity[]> {
