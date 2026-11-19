@@ -6,7 +6,7 @@
  *   POST /api/v1/lessons/{id}/turn    ← 全局核心接口
  *   POST /api/v1/lessons/{id}/finish
  */
-import { Body, Controller, Get, Headers, HttpException, Inject, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, Inject, Optional, Param, Post, Query } from '@nestjs/common';
 import {
   lessonFinishRequestSchema,
   lessonStartRequestSchema,
@@ -18,6 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
 import { AuthService, extractBearerToken } from '../auth/auth.service';
 import { ParentReportService } from '../reports/parent-report.service';
+import { ClozeService } from '../curriculum/cloze.service';
 
 @Controller('api/v1/lessons')
 export class LessonsController {
@@ -27,6 +28,7 @@ export class LessonsController {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
     @Inject(AuthService) private readonly auth: AuthService,
+    @Optional() @Inject(ClozeService) private readonly cloze?: ClozeService,
   ) {}
 
   @Post('start')
@@ -127,6 +129,33 @@ export class LessonsController {
     const session = await this.prisma.lesson_sessions.findUnique({ where: { id }, select: { learnerId: true } });
     if (!session || session.learnerId !== parsed.data.learnerId) throw new HttpException('无权访问该课堂', 403);
     return this.orchestrator.finishLesson(id, parsed.data.learnerId);
+  }
+
+  /** P3：语法点 + 当前批完形（每批 5 题）。 */
+  @Get('topics/:topicId/cloze')
+  async clozeBatch(
+    @Param('topicId') topicId: string,
+    @Query('batch') batch?: string,
+  ) {
+    if (!this.cloze) throw new HttpException('完形服务未启用', 503);
+    const index = Math.max(0, Number.parseInt(batch ?? '0', 10) || 0);
+    return this.cloze.payload(topicId, index);
+  }
+
+  /** P3：批改一批完形；正确率 <80% 时返回下一批索引。 */
+  @Post('topics/:topicId/cloze/grade')
+  async clozeGrade(@Param('topicId') topicId: string, @Body() body: unknown) {
+    if (!this.cloze) throw new HttpException('完形服务未启用', 503);
+    const input = (body ?? {}) as { batchIndex?: unknown; answers?: unknown };
+    const batchIndex = Math.max(0, Number.parseInt(String(input.batchIndex ?? 0), 10) || 0);
+    const answers = Array.isArray(input.answers)
+      ? input.answers
+          .map((entry) => entry as { itemId?: unknown; answer?: unknown })
+          .filter((entry) => typeof entry.itemId === 'string' && typeof entry.answer === 'string')
+          .map((entry) => ({ itemId: String(entry.itemId), answer: String(entry.answer) }))
+      : [];
+    if (!answers.length) throw new HttpException('answers 不能为空', 400);
+    return this.cloze.grade(topicId, batchIndex, answers);
   }
 
   @Get(':id')

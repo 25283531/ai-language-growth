@@ -1068,3 +1068,21 @@ model app_settings {
 
   @@map("app_settings")
 }
+
+/// P3：教材单元的完形题。每批 5 题，按 itemIndex 递增；正确率 <80% 时继续追加。
+model unit_cloze_items {
+  id             String   @id @default(uuid())
+  unitId         String
+  topicId        String
+  itemIndex      Int
+  grammarPointId String   @default("")
+  sentence       String
+  answer         String
+  options        String[] @default([])
+  explanationZh  String   @default("")
+  createdAt      DateTime @default(now())
+
+  @@unique([unitId, itemIndex])
+  @@index([topicId])
+  @@map("unit_cloze_items")
+}
