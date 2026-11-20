@@ -70,6 +70,15 @@ type StoredClip = {
 /** 词库里算得上「同族变形」的词尾；其他一律当噪声，不上词卡。 */
 const FORM_SUFFIXES = ['s', 'es', 'ed', 'd', 'ing', 'er', 'est', 'ier', 'iest', 'ies', 'ied', 'en', 'n'];
 
+/** 按词性限定屈折词尾：名词只看复数，动词只看时态，形容词只看比较级。 */
+function allowedFormSuffixes(pos: string): string[] {
+  const value = pos.toLowerCase().replace(/\./g, '').trim();
+  if (value === 'n') return ['s', 'es', 'ies', 'ves'];
+  if (value === 'v' || value === 'vt' || value === 'vi') return ['s', 'es', 'ed', 'd', 'ing', 'ies', 'ied'];
+  if (value === 'adj') return ['er', 'est', 'ier', 'iest'];
+  return FORM_SUFFIXES;
+}
+
 @Injectable()
 export class CurriculumAudioService {
   private readonly logger = new Logger(CurriculumAudioService.name);
@@ -376,14 +385,14 @@ export class CurriculumAudioService {
         candidate.word.toLowerCase() === key ||
         (candidate.variants ?? []).some((variant) => variant.toLowerCase() === key));
       if (!row) continue;
+      const suffixes = allowedFormSuffixes(row.pos ?? '');
       const variants = (row.variants ?? [])
         .map((variant) => variant.trim())
         .filter((variant) => {
           const lower = variant.toLowerCase();
           if (!lower || lower === key || variant.length > 60) return false;
           if (!lower.startsWith(key)) return false;
-          // 只保留常见屈折词尾，丢掉 housings/cleanings 这类词库噪声。
-          return FORM_SUFFIXES.includes(lower.slice(key.length));
+          return suffixes.includes(lower.slice(key.length));
         })
         .slice(0, 6);
       if (variants.length) forms.set(key, variants);
