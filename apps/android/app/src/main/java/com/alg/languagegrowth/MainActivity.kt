@@ -982,7 +982,64 @@ private fun GrowthApp(
                         "home" -> HomeScreen(dashboard, childTheme, pageStatus, onStart = ::startSession, onRefresh = {
                             scope.launch { runCatching { fetchDashboard() }.onFailure { pageStatus = it.message ?: "刷新失败" } }
                         })
-                        "learn" -> LearnScreen(
+                        "learn" -> {
+                            val flowPassage = lessonPassage
+                            if (flowPassage != null) {
+                                // 教材单元走新流程：整篇 → 分句 → 重点词 → 语法 → 完成。
+                                LessonFlowHost(
+                                    passage = flowPassage,
+                                    playingKey = passagePlayingKey,
+                                    busy = busy,
+                                    playSentence = ::playPassageSentence,
+                                    playAll = ::playPassageAll,
+                                    playRef = { ref ->
+                                        teacherSpeech.playPassage(base(), token().orEmpty(), learnerId, ref) { _, message ->
+                                            pageStatus = message
+                                        }
+                                    },
+                                    stopAudio = {
+                                        teacherSpeech.stop(clearAudio = false)
+                                        speechBusy = false
+                                    },
+                                    speakText = { text ->
+                                        if (text.isNotBlank()) {
+                                            teacherSpeech.stop(clearAudio = false)
+                                            teacherSpeech.play(
+                                                base(), token().orEmpty(), learnerId, directive ?: JSONObject(), lessonSpeech, false,
+                                                onState = { active, message ->
+                                                    speechBusy = active
+                                                    speechStatus = message
+                                                },
+                                                texts = listOf(text),
+                                            )
+                                        }
+                                    },
+                                    startRecording = {
+                                        if (!activity.hasAudioPermission()) {
+                                            activity.requestAudioPermission()
+                                            pageStatus = "请允许麦克风权限后再跟读"
+                                            false
+                                        } else {
+                                            runCatching {
+                                                teacherSpeech.stop(clearAudio = false)
+                                                activity.startRecording()
+                                            }.isSuccess
+                                        }
+                                    },
+                                    stopRecording = {
+                                        runCatching { activity.stopRecording().first }.getOrNull()
+                                    },
+                                    evaluate = { encoded, targetText, durationMs, previousScore, attemptIndex ->
+                                        evaluateSentence(encoded, targetText, durationMs, previousScore, attemptIndex)
+                                    },
+                                    onExit = {
+                                        teacherSpeech.stop()
+                                        tab = "home"
+                                        pageStatus = "已退出本节课程"
+                                    },
+                                )
+                            } else {
+                                LearnScreen(
                             directive, finishResult, recording, busy, pageStatus,
                             wordProgress = wordProgress,
                             onStart = ::startSession,
@@ -1247,6 +1304,8 @@ private fun GrowthApp(
                                 }
                             },
                         )
+                            }
+                        }
                         "achievements" -> AchievementScreen(dashboard)
                         else -> ProfileScreen(
                             dashboard, editName, { editName = it }, avatarUrl, { avatarUrl = it },

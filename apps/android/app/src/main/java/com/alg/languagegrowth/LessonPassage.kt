@@ -17,9 +17,21 @@ internal data class LessonPassage(
     val paragraphs: List<PassageParagraph>,
     /** 重点词拆读包；旧服务端不下发时为空，课文正文不受影响。 */
     val focusWords: List<FocusWord> = emptyList(),
+    /** 语法讲解；旧服务端不下发时为空，可跳过语法环节。 */
+    val grammar: List<GrammarPoint> = emptyList(),
 ) {
     val sentences: List<PassageSentence> = paragraphs.flatMap { it.sentences }
 }
+
+/** 本单元语法点：用课文例句讲清形式与用法。 */
+internal data class GrammarPoint(
+    val id: String,
+    val title: String,
+    val pattern: String,
+    val explanation: String,
+    val commonError: String = "",
+    val examples: List<FocusWordExample> = emptyList(),
+)
 
 internal data class PassageParagraph(
     val sentences: List<PassageSentence>,
@@ -74,6 +86,7 @@ internal fun parseLessonPassage(raw: JSONObject?): LessonPassage? {
         title = raw.cleanString("title").ifBlank { "课文" },
         paragraphs = paragraphs,
         focusWords = parseFocusWords(raw),
+        grammar = parseGrammarPoints(raw),
     )
 }
 
@@ -95,6 +108,31 @@ private fun parsePassageSentence(raw: JSONObject?): PassageSentence? {
             slowSpeed = audioJson.positiveSpeed("slowSpeed", 0.65),
         ),
     )
+}
+
+/** 解析语法讲解块；缺字段时返回空列表，课程直接跳过语法页。 */
+internal fun parseGrammarPoints(raw: JSONObject?): List<GrammarPoint> {
+    val array = raw?.optJSONArray("grammar") ?: return emptyList()
+    return (0 until array.length()).mapNotNull { index ->
+        val item = array.optJSONObject(index) ?: return@mapNotNull null
+        val title = item.cleanString("title")
+        val explanation = item.cleanString("explanation")
+        if (title.isBlank() && explanation.isBlank()) return@mapNotNull null
+        val exampleArray = item.optJSONArray("examples")
+        val examples = (0 until (exampleArray?.length() ?: 0)).mapNotNull { exampleIndex ->
+            val example = exampleArray?.optJSONObject(exampleIndex) ?: return@mapNotNull null
+            val en = example.cleanString("en")
+            if (en.isBlank()) null else FocusWordExample(en = en, zh = example.cleanString("zh"))
+        }
+        GrammarPoint(
+            id = item.cleanString("id"),
+            title = title,
+            pattern = item.cleanString("pattern"),
+            explanation = explanation,
+            commonError = item.cleanString("commonError"),
+            examples = examples,
+        )
+    }
 }
 
 private val PassageAudioRefPattern = Regex("^/api/v1/media/audio/[a-fA-F0-9]{24}\\.(mp3|wav|m4a)$")

@@ -56,3 +56,5 @@ Thumbs.db
 # 真实 TTS 合成产物（内容指纹命名，落盘仅供本地播放，不入库）
 .cache/audio/*.mp3
 .cache/audio/*.wav
+
+.tmp/

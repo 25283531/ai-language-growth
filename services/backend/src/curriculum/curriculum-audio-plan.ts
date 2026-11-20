@@ -73,7 +73,7 @@ export function buildCurriculumAudioPlan(
   for (const focus of selected) {
     const specs = wordClipSpecs(focus, options.knownPhonemes, skipped);
     if (!specs.length) continue;
-    focusWords.push({ ...focus, pos: '', examples: [], clips: specs });
+    focusWords.push({ ...focus, pos: '', examples: [], forms: [], explanation: '', clips: specs });
     wordClips.push(...specs);
   }
 
@@ -290,7 +290,7 @@ export function assembleCurriculumPassage(input: {
   unitId: string;
   topicId: string;
   contentVersion: string;
-  content: Pick<TextbookUnitContent, 'passage' | 'vocabulary' | 'activities'>;
+  content: Pick<TextbookUnitContent, 'passage' | 'vocabulary' | 'activities' | 'grammarPoints'>;
   clips: Array<{
     clipKey: string;
     kind: string;
@@ -308,6 +308,8 @@ export function assembleCurriculumPassage(input: {
   wordPhonetic?: ReadonlyMap<string, string>;
   /** P2：词形（小写）→ 词性；词库无词性时留空。 */
   wordPos?: ReadonlyMap<string, string>;
+  /** 重点词（小写）→ 变形列表（复数/过去式等）；词库无记录时留空。 */
+  wordForms?: ReadonlyMap<string, string[]>;
 }): CurriculumPassage {
   const plan = buildCurriculumAudioPlan(input.content, { knownPhonemes: input.knownPhonemes });
   const byIdentity = new Map(
@@ -352,6 +354,14 @@ export function assembleCurriculumPassage(input: {
       phonetic: input.wordPhonetic?.get(focus.word.trim().toLowerCase()) || focus.phonetic,
       pos: input.wordPos?.get(focus.word.trim().toLowerCase()) ?? '',
       examples,
+      forms: (input.wordForms?.get(focus.word.trim().toLowerCase()) ?? []).slice(0, 6),
+      explanation: composeWordExplanation({
+        word: focus.word,
+        pos: input.wordPos?.get(focus.word.trim().toLowerCase()) ?? '',
+        meaningZh: vocabulary?.meaningZh ?? '',
+        forms: input.wordForms?.get(focus.word.trim().toLowerCase()) ?? [],
+        examples,
+      }),
       clips: focus.clips.map((spec) => {
       const stored = byIdentity.get(identity(spec.clipKey, spec.kind, spec.partIndex, spec.speedTier));
       return {
@@ -378,7 +388,81 @@ export function assembleCurriculumPassage(input: {
     title: input.content.passage.title,
     paragraphs,
     focusWords,
+    grammar: composeGrammarBlock(input.content.grammarPoints ?? []),
   };
+}
+
+/** 词性缩写 → 中文；讲解稿读给孩子听，不能出现 n./adj. 这种写法。 */
+const POS_ZH: Record<string, string> = {
+  n: '名词',
+  v: '动词',
+  vt: '及物动词',
+  vi: '不及物动词',
+  adj: '形容词',
+  adv: '副词',
+  prep: '介词',
+  pron: '代词',
+  conj: '连词',
+  det: '限定词',
+  num: '数词',
+  modal: '情态动词',
+};
+
+function posLabel(pos: string): string {
+  return POS_ZH[pos.replace(/\./g, '').trim().toLowerCase()] ?? '';
+}
+
+/** 变形是否规则：词头两字母一致视为规则变化（helped/helps），否则提示特殊变形（went/mice）。 */
+function describeForms(word: string, forms: string[]): string {
+  const head = word.toLowerCase().slice(0, 2);
+  const irregular = forms.filter((form) => !form.toLowerCase().startsWith(head));
+  if (!irregular.length) return `变形有 ${forms.join('、')}，都是规则变化，按拼写加减词尾就行。`;
+  return `变形有 ${forms.join('、')}；其中 ${irregular.join('、')} 是特殊变形，要单独记。`;
+}
+
+/** 重点词中文讲解稿：词性 + 含义 + 变形规则 + 例句，供客户端合成语音讲解。 */
+export function composeWordExplanation(input: {
+  word: string;
+  pos: string;
+  meaningZh: string;
+  forms: string[];
+  examples: Array<{ en: string; zh: string }>;
+}): string {
+  const word = input.word.trim();
+  const pos = posLabel(input.pos);
+  const meaning = input.meaningZh.trim();
+  const parts: string[] = [];
+  parts.push(`${word}${pos ? ` 是${pos}` : ''}${meaning ? `，意思是${meaning}` : ''}。`);
+  parts.push(input.forms.length
+    ? describeForms(word, input.forms)
+    : '这个词没有需要特别记的变形。');
+  const example = input.examples[0];
+  if (example) {
+    parts.push(`例句：${example.en}${example.zh ? `。意思是：${example.zh}` : ''}。`);
+  }
+  parts.push(`试着用 ${word} 说一句自己的话。`);
+  return parts.join('').slice(0, 600);
+}
+
+/** 语法讲解块：直接取单元语法点的中文讲解与例句，最多 3 个点。 */
+export function composeGrammarBlock(
+  points: TextbookUnitContent['grammarPoints'],
+): Array<{
+  id: string;
+  title: string;
+  pattern: string;
+  explanation: string;
+  commonError: string;
+  examples: Array<{ en: string; zh: string }>;
+}> {
+  return (points ?? []).slice(0, 3).map((point) => ({
+    id: point.id,
+    title: point.titleZh,
+    pattern: point.pattern,
+    explanation: point.explanationZh,
+    commonError: point.commonErrorZh ?? '',
+    examples: point.examples.slice(0, 3).map((example) => ({ en: example.en, zh: example.zh ?? '' })),
+  }));
 }
 
 function clipKey(spec: AudioClipSpec): string {

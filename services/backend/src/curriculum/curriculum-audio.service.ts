@@ -311,6 +311,7 @@ export class CurriculumAudioService {
       knownPhonemes: await this.loadKnownPhonemes(),
       wordPhonetic: lexicon.phonetic,
       wordPos: lexicon.pos,
+      wordForms: lexicon.forms,
     });
   }
 
@@ -320,7 +321,7 @@ export class CurriculumAudioService {
    */
   private async loadSentencePhonetics(
     content: TextbookUnitContent,
-  ): Promise<{ phonetic: Map<string, string>; pos: Map<string, string> }> {
+  ): Promise<{ phonetic: Map<string, string>; pos: Map<string, string>; forms: Map<string, string[]> }> {
     const table = new Map<string, string>();
     for (const item of content.vocabulary) {
       const word = item.word.trim().toLowerCase();
@@ -333,7 +334,7 @@ export class CurriculumAudioService {
         .flatMap((paragraph) => paragraph.sentences)
         .flatMap((sentence) => sentence.en.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? []),
     ])].filter((word) => word.length > 0);
-    if (!words.length) return { phonetic: table, pos: new Map() };
+    if (!words.length) return { phonetic: table, pos: new Map(), forms: new Map() };
     const rows = await this.prisma.lexicon_entries.findMany({
       where: { OR: [{ word: { in: words } }, { variants: { hasSome: words } }] },
       select: { word: true, variants: true, phonetic: true, pos: true },
@@ -363,7 +364,22 @@ export class CurriculumAudioService {
         this.logger.warn(`词形音标补充跳过：${error instanceof Error ? error.message : String(error)}`);
       },
     );
-    return { phonetic: table, pos };
+    // 重点词变形：取词库同族 variants（复数/过去式/比较级等），供词卡「变形」一栏使用。
+    const forms = new Map<string, string[]>();
+    for (const item of content.vocabulary) {
+      const key = item.word.trim().toLowerCase();
+      if (!key) continue;
+      const row = rows.find((candidate) =>
+        candidate.word.toLowerCase() === key ||
+        (candidate.variants ?? []).some((variant) => variant.toLowerCase() === key));
+      if (!row) continue;
+      const variants = (row.variants ?? [])
+        .map((variant) => variant.trim())
+        .filter((variant) => variant.length > 0 && variant.toLowerCase() !== key && variant.length <= 60)
+        .slice(0, 6);
+      if (variants.length) forms.set(key, variants);
+    }
+    return { phonetic: table, pos, forms };
   }
 
   /**

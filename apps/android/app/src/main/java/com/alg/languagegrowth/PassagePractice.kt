@@ -39,6 +39,10 @@ internal data class FocusWord(
     val meaningZh: String,
     /** P2 例句（单元词条自带的英中对照），最多 3 条。 */
     val examples: List<FocusWordExample> = emptyList(),
+    /** 变形（复数/过去式/比较级等）；词库无记录时为空。 */
+    val forms: List<String> = emptyList(),
+    /** 中文语音讲解稿：词性、含义、变形规则、例句。 */
+    val explanation: String = "",
     val syllables: List<String>,
     val difficultPhonemes: List<String>,
     val reason: String,
@@ -73,6 +77,8 @@ internal fun parseFocusWord(raw: JSONObject?): FocusWord? {
         pos = raw.optString("pos", "").trim(),
         meaningZh = raw.optString("meaningZh", "").trim(),
         examples = parseFocusWordExamples(raw.optJSONArray("examples")),
+        forms = raw.stringList("forms"),
+        explanation = raw.optString("explanation", "").trim(),
         syllables = raw.stringList("syllables"),
         difficultPhonemes = raw.stringList("difficultPhonemes"),
         reason = raw.optString("reason", "").trim(),

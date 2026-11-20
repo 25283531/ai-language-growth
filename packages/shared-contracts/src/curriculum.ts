@@ -198,6 +198,10 @@ export const focusWordAudioSchema = z.object({
   meaningZh: z.string().max(200).default(''),
   /** P2 例句：优先取单元词条自带的中英对照，最多 3 条。 */
   examples: z.array(z.object({ en: z.string().max(300), zh: z.string().max(300).default('') })).max(3).default([]),
+  /** 变形（复数/过去式等）；词库无记录时为空。 */
+  forms: z.array(z.string().max(60)).max(6).default([]),
+  /** 中文语音讲解稿（词性 + 含义 + 变形规则 + 例句），客户端合成后播放。 */
+  explanation: z.string().max(600).default(''),
   syllables: z.array(z.string().max(100)).max(30).default([]),
   difficultPhonemes: z.array(z.string().max(100)).max(30).default([]),
   /** 为什么选这个词（课文复现/多音节/困难音素），供管理端解释。 */
@@ -219,6 +223,15 @@ export const curriculumPassageSchema = passageSchema.extend({
   /** 是否至少有一句已经完成双速预热；未完成不影响文本下发。 */
   audioReady: z.boolean().default(false),
   focusWords: z.array(focusWordAudioSchema).max(4).default([]),
+  /** 语法讲解：用课文例句讲本单元的语法点。 */
+  grammar: z.array(z.object({
+    id: z.string().max(80).default(''),
+    title: z.string().max(200).default(''),
+    pattern: z.string().max(300).default(''),
+    explanation: z.string().max(1000).default(''),
+    commonError: z.string().max(500).default(''),
+    examples: z.array(z.object({ en: z.string().max(300), zh: z.string().max(300).default('') })).max(3).default([]),
+  })).max(3).default([]),
 });
 export type CurriculumPassage = z.infer<typeof curriculumPassageSchema>;
 
