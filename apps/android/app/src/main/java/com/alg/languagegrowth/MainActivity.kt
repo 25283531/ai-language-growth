@@ -259,6 +259,17 @@ private fun GrowthApp(
     var passageFollowIndex by remember { mutableStateOf<Int?>(null) }
     // P2：重点词汇页的当前词下标；null 表示不在词汇流程里。
     var passageWordIndex by remember { mutableStateOf<Int?>(null) }
+    // P3：语法讲解 + 完形
+    var clozeOpen by remember { mutableStateOf(false) }
+    var clozeLoading by remember { mutableStateOf(false) }
+    var clozeGrammar by remember { mutableStateOf<List<ClozeGrammarPoint>>(emptyList()) }
+    var clozeItems by remember { mutableStateOf<List<ClozeItem>>(emptyList()) }
+    var clozeBatchIndex by remember { mutableStateOf(0) }
+    var clozeSelections by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var clozeGrade by remember { mutableStateOf<ClozeGrade?>(null) }
+    var clozeError by remember { mutableStateOf("") }
+    // 当前正在上的教材主题；开课后由服务端返回，完形接口用它定位单元。
+    var activeTopicId by remember { mutableStateOf("") }
     // P2-06 重点词拆读：当前词、当前高亮片段、陪练轮次与错误定位
     var focusIndex by remember { mutableStateOf(0) }
     var focusClipKey by remember { mutableStateOf("") }
@@ -523,6 +534,72 @@ private fun GrowthApp(
         }
     }
 
+    /** P3：打开语法+完形，拉当前批。 */
+    fun loadCloze(batch: Int) {
+        val topic = activeTopicId.ifBlank { textbookTopicId(dashboard).orEmpty() }
+        if (topic.isBlank()) {
+            clozeError = "还没有开始教材课程，先学完本课再练语法。"
+            return
+        }
+        scope.launch {
+            clozeLoading = true
+            clozeError = ""
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    http(
+                        base(),
+                        "/lessons/topics/$topic/cloze?batch=$batch",
+                        "GET",
+                        null,
+                        token(),
+                        mapOf("X-Learner-Id" to learnerId),
+                    )
+                }
+                val parsed = parseClozeBatch(response)
+                clozeGrammar = parsed.grammarPoints
+                clozeItems = parsed.items
+                clozeBatchIndex = parsed.batchIndex
+                clozeSelections = emptyMap()
+                clozeGrade = null
+            } catch (e: Exception) {
+                clozeError = e.message ?: "语法练习加载失败，稍后再试。"
+            } finally {
+                clozeLoading = false
+            }
+        }
+    }
+
+    /** P3：提交一批；<80% 时服务端返回 nextBatchIndex。 */
+    fun submitCloze() {
+        if (clozeItems.isEmpty()) return
+        val topic = activeTopicId.ifBlank { textbookTopicId(dashboard).orEmpty() }
+        if (topic.isBlank()) {
+            clozeError = "还没有开始教材课程，先学完本课再练语法。"
+            return
+        }
+        scope.launch {
+            clozeLoading = true
+            clozeError = ""
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    http(
+                        base(),
+                        "/lessons/topics/$topic/cloze/grade",
+                        "POST",
+                        clozeGradeBody(clozeBatchIndex, clozeSelections),
+                        token(),
+                        mapOf("X-Learner-Id" to learnerId),
+                    )
+                }
+                clozeGrade = parseClozeGrade(response)
+            } catch (e: Exception) {
+                clozeError = e.message ?: "批改失败，再试一次。"
+            } finally {
+                clozeLoading = false
+            }
+        }
+    }
+
     LaunchedEffect(loggedIn, learnerId, tab, screen, directive, finishResult) {
         teacherSpeech.stop()
         speechBusy = false
@@ -711,6 +788,7 @@ private fun GrowthApp(
                     http(base(), "/lessons/start", "POST", lessonStartBody(learnerId, topicId), token())
                 }
                 lessonSessionId = response.optString("lessonSessionId")
+                activeTopicId = response.optString("topicId").takeIf { it.isNotBlank() } ?: topicId.orEmpty()
                 // 新预置单元未必有中文展示名；不要把内部 topicId 直接印给孩子看。
                 lessonTopic = response.optString("topicName").takeIf {
                     it.isNotBlank() && it != "null" && it != response.optString("topicId")
@@ -922,7 +1000,24 @@ private fun GrowthApp(
                             onPassagePlanDone = {
                                 passageFollowIndex = null
                                 passageWordIndex = null
-                                passageStatus = "重点词汇学完啦，接下来是语法讲解。"
+                                passageStatus = "重点词汇学完啦，接下来是语法与完形。"
+                                clozeOpen = true
+                                loadCloze(0)
+                            },
+                            clozeOpen = clozeOpen,
+                            clozeLoading = clozeLoading,
+                            clozeGrammar = clozeGrammar,
+                            clozeItems = clozeItems,
+                            clozeBatchIndex = clozeBatchIndex,
+                            clozeSelections = clozeSelections,
+                            clozeGrade = clozeGrade,
+                            clozeError = clozeError,
+                            onClozeSelect = { itemId, answer -> clozeSelections = clozeSelections + (itemId to answer) },
+                            onClozeSubmit = { submitCloze() },
+                            onClozeNext = { batch -> loadCloze(batch) },
+                            onClozeExit = {
+                                clozeOpen = false
+                                passageStatus = "语法练习完成，今天的内容就学到这里。"
                             },
                             onStartPassageFollow = {
                                 if (lessonPassage != null) {
@@ -1493,6 +1588,18 @@ private fun LearnScreen(
     passageWordIndex: Int?,
     onPassageWordIndex: (Int?) -> Unit,
     onPassagePlanDone: () -> Unit,
+    clozeOpen: Boolean,
+    clozeLoading: Boolean,
+    clozeGrammar: List<ClozeGrammarPoint>,
+    clozeItems: List<ClozeItem>,
+    clozeBatchIndex: Int,
+    clozeSelections: Map<String, String>,
+    clozeGrade: ClozeGrade?,
+    clozeError: String,
+    onClozeSelect: (String, String) -> Unit,
+    onClozeSubmit: () -> Unit,
+    onClozeNext: (Int) -> Unit,
+    onClozeExit: () -> Unit,
     onStartPassageFollow: () -> Unit,
     onSelectPassageSentence: (String) -> Unit,
     onPlayPassageSentence: (PassageSentence, Boolean) -> Unit,
@@ -1547,6 +1654,24 @@ private fun LearnScreen(
             }
         }
         if (status.isNotBlank()) GrowthStatusPill(status)
+        return
+    }
+
+    // P3：语法讲解 + 完形答题。
+    if (clozeOpen) {
+        ClozeScreen(
+            grammar = clozeGrammar,
+            items = clozeItems,
+            loading = clozeLoading,
+            batchIndex = clozeBatchIndex,
+            selections = clozeSelections,
+            grade = clozeGrade,
+            error = clozeError,
+            onSelect = onClozeSelect,
+            onSubmit = onClozeSubmit,
+            onNext = onClozeNext,
+            onExit = onClozeExit,
+        )
         return
     }
 
@@ -3207,5 +3332,138 @@ private fun PassageWordsScreen(
             )
         }
         GrowthSecondaryButton("退出词汇", onExit)
+    }
+}
+/**
+ * P3：语法讲解 + 完形答题页。
+ *
+ * 语法点来自单元内容；完形每批 5 题，提交后由服务端批改。
+ * 正确率 <80% 时按钮变“再练一批”，批次索引以服务端返回为准。
+ */
+@Composable
+private fun ClozeScreen(
+    grammar: List<ClozeGrammarPoint>,
+    items: List<ClozeItem>,
+    loading: Boolean,
+    batchIndex: Int,
+    selections: Map<String, String>,
+    grade: ClozeGrade?,
+    error: String,
+    onSelect: (String, String) -> Unit,
+    onSubmit: () -> Unit,
+    onNext: (Int) -> Unit,
+    onExit: () -> Unit,
+) {
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.SunWash,
+        outline = GrowthColors.Sun.copy(alpha = 0.30f),
+    ) {
+        GrowthSectionTitle("语法讲解", "🧩")
+        if (grammar.isEmpty()) {
+            Text("这课还没有语法点。", style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+        }
+        grammar.forEach { point ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(point.titleZh, style = MaterialTheme.typography.titleMedium, color = GrowthColors.Ink)
+                if (point.explanationZh.isNotBlank()) {
+                    Text(point.explanationZh, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+                }
+                point.examples.take(2).forEach { example ->
+                    Text("· ${example.en}", style = MaterialTheme.typography.bodyMedium, color = GrowthColors.Ink)
+                    if (example.zh.isNotBlank()) {
+                        Text("  ${example.zh}", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+                    }
+                }
+                if (point.commonErrorZh.isNotBlank()) {
+                    Text("易错：${point.commonErrorZh}", style = MaterialTheme.typography.bodySmall, color = GrowthColors.PrimaryDeep)
+                }
+            }
+        }
+    }
+
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.BlueWash,
+        outline = GrowthColors.Blue.copy(alpha = 0.22f),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrowthSectionTitle("完形练习", "✏️")
+            GrowthPill("第 ${batchIndex + 1} 批", GrowthColors.BlueDeep, GrowthColors.CreamDeep)
+        }
+        Text(
+            "每批 5 题，正确率到 80% 就过关。",
+            style = MaterialTheme.typography.bodySmall,
+            color = GrowthColors.InkSoft,
+        )
+
+        items.forEachIndexed { index, item ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "${index + 1}. ${item.sentence}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = GrowthColors.Ink,
+                )
+                item.options.forEach { option ->
+                    val selected = selections[item.id] == option
+                    GrowthSecondaryButton(
+                        if (selected) "✓ $option" else option,
+                        { onSelect(item.id, option) },
+                        enabled = !loading && grade == null,
+                    )
+                }
+            }
+        }
+
+        if (loading) {
+            Text("正在准备题目…", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+        }
+        if (error.isNotBlank()) {
+            Text(error, style = MaterialTheme.typography.bodySmall, color = GrowthColors.PrimaryDeep)
+        }
+
+        val result = grade
+        if (result == null) {
+            GrowthPrimaryButton(
+                "提交这一批",
+                onSubmit,
+                emoji = "✅",
+                enabled = !loading && items.isNotEmpty() && selections.size == items.size,
+                busy = loading,
+            )
+        } else {
+            Text(
+                "答对 ${result.correct}/${result.total}，正确率 ${(result.accuracy * 100).roundToInt()}%",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (result.passed) GrowthColors.MintDeep else GrowthColors.PrimaryDeep,
+            )
+            result.details.forEach { detail ->
+                Text(
+                    "${if (detail.correct) "✅" else "❌"} 正确答案：${detail.correctAnswer}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GrowthColors.Ink,
+                )
+                if (detail.explanationZh.isNotBlank()) {
+                    Text(
+                        "   ${detail.explanationZh}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GrowthColors.InkSoft,
+                    )
+                }
+            }
+            if (result.passed) {
+                GrowthPrimaryButton("完成语法练习", onExit, emoji = "🎉")
+            } else {
+                GrowthSecondaryButton(
+                    "再来一批（正确率还没到 80%）",
+                    {
+                        val next = result.nextBatchIndex ?: (batchIndex + 1)
+                        onNext(next)
+                    },
+                    enabled = !loading,
+                )
+            }
+        }
+        GrowthSecondaryButton("退出语法练习", onExit)
     }
 }
