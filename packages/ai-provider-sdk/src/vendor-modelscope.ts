@@ -62,7 +62,11 @@ function failureBody(response: Response): Promise<string> {
 }
 
 function looksLikeMp3(bytes: Buffer): boolean {
-  return bytes.length > 2 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33;
+  // 魔搭返回的是无 ID3 头的裸 MPEG 帧（首字节 0xFF，次字节高三位全 1）；
+  // 只认 ID3 会把正常音频误判成非 MP3，导致整条链路降级。
+  if (bytes.length < 3) return false;
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true;
+  return bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0;
 }
 
 function clampScore(value: number): number {
