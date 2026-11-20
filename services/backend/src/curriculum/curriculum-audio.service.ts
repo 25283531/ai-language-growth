@@ -67,6 +67,9 @@ type StoredClip = {
  *  - 旧音频不删除，回滚到旧版本时可直接复用；
  *  - 从不按纯文本哈希跨课程复用。
  */
+/** 词库里算得上「同族变形」的词尾；其他一律当噪声，不上词卡。 */
+const FORM_SUFFIXES = ['s', 'es', 'ed', 'd', 'ing', 'er', 'est', 'ier', 'iest', 'ies', 'ied', 'en', 'n'];
+
 @Injectable()
 export class CurriculumAudioService {
   private readonly logger = new Logger(CurriculumAudioService.name);
@@ -375,7 +378,13 @@ export class CurriculumAudioService {
       if (!row) continue;
       const variants = (row.variants ?? [])
         .map((variant) => variant.trim())
-        .filter((variant) => variant.length > 0 && variant.toLowerCase() !== key && variant.length <= 60)
+        .filter((variant) => {
+          const lower = variant.toLowerCase();
+          if (!lower || lower === key || variant.length > 60) return false;
+          if (!lower.startsWith(key)) return false;
+          // 只保留常见屈折词尾，丢掉 housings/cleanings 这类词库噪声。
+          return FORM_SUFFIXES.includes(lower.slice(key.length));
+        })
         .slice(0, 6);
       if (variants.length) forms.set(key, variants);
     }
