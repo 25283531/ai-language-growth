@@ -2967,7 +2967,7 @@ internal fun http(base: String, path: String, method: String, body: JSONObject? 
     val connection = URL("${base.trimEnd('/')}$path").openConnection() as HttpURLConnection
     connection.requestMethod = method
     connection.connectTimeout = 10_000
-    connection.readTimeout = 20_000
+    connection.readTimeout = 45_000
     connection.setRequestProperty("Accept", "application/json")
     if (!token.isNullOrBlank()) connection.setRequestProperty("Authorization", "Bearer $token")
     headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }

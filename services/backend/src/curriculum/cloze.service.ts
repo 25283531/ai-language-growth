@@ -35,6 +35,8 @@ export interface ClozeItemPayload {
 @Injectable()
 export class ClozeService {
   private readonly logger = new Logger(ClozeService.name);
+  /** 同一单元的补题任务只跑一份，避免并发重复生成。 */
+  private readonly pending = new Map<string, Promise<void>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -50,6 +52,9 @@ export class ClozeService {
   }> {
     const unit = await this.loadUnit(topicId);
     await this.ensureItems(unit.id, topicId, unit.content, (batchIndex + 1) * CLOZE_BATCH_SIZE);
+    // 后台预热下一批：真机提交后立刻能拿到题，不用等 20s+ 的模型生成。
+    void this.ensureItems(unit.id, topicId, unit.content, (batchIndex + 2) * CLOZE_BATCH_SIZE)
+      .catch((error: unknown) => this.logger.warn(`完形预热失败：${error instanceof Error ? error.message : String(error)}`));
     const rows = await this.prisma.unit_cloze_items.findMany({
       where: { unitId: unit.id, itemIndex: { gte: batchIndex * CLOZE_BATCH_SIZE, lt: (batchIndex + 1) * CLOZE_BATCH_SIZE } },
       orderBy: { itemIndex: 'asc' },
@@ -103,7 +108,9 @@ export class ClozeService {
     const accuracy = total ? correct / total : 0;
     const passed = accuracy >= CLOZE_PASS_RATE;
     if (!passed) {
-      await this.ensureItems(unit.id, topicId, unit.content, (batchIndex + 2) * CLOZE_BATCH_SIZE);
+      // 批改必须快速返回；下一批生成交给后台预热，客户端随后取题时会等同一个任务。
+      void this.ensureItems(unit.id, topicId, unit.content, (batchIndex + 2) * CLOZE_BATCH_SIZE)
+        .catch((error: unknown) => this.logger.warn(`完形续批失败：${error instanceof Error ? error.message : String(error)}`));
     }
     return {
       correct,
@@ -127,6 +134,26 @@ export class ClozeService {
 
   /** 按需补齐到 target 题；先查库，不够再生成，生成失败用课文句兜底。 */
   private async ensureItems(
+    unitId: string,
+    topicId: string,
+    content: ReturnType<typeof textbookUnitContentSchema.parse>,
+    target: number,
+  ): Promise<void> {
+    const existing = await this.prisma.unit_cloze_items.count({ where: { unitId } });
+    if (existing >= target) return;
+    const running = this.pending.get(unitId);
+    if (running) {
+      await running;
+      const after = await this.prisma.unit_cloze_items.count({ where: { unitId } });
+      if (after >= target) return;
+    }
+    const task = this.fillItems(unitId, topicId, content, target)
+      .finally(() => this.pending.delete(unitId));
+    this.pending.set(unitId, task);
+    await task;
+  }
+
+  private async fillItems(
     unitId: string,
     topicId: string,
     content: ReturnType<typeof textbookUnitContentSchema.parse>,
