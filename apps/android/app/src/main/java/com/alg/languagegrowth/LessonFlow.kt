@@ -35,23 +35,38 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * 课堂主流程：整篇 → 分句 → 重点词 → 语法 → 完成。
+ * 课堂主流程：整篇 → 分句 → 重点词 → 语法 → 完形 → 完成。
  *
  * 门禁规则（纯函数，便于单测）：
  *  - 分句：单句评测 > 50 才进入下一句，最后一句读完进入重点词；
  *  - 重点词：同一个词累计 3 次 > 50 才换下一个词，最后一个词结束进入语法；
- *  - 语法：可重复收听，底部是「完成这堂课」。
+ *  - 语法：可重复收听，听完进入完形；完形退出后出现「完成这堂课」。
  */
 internal const val LESSON_PASS_SCORE = 50.0
 internal const val WORD_PASS_REQUIRED = 3
 
-internal enum class LessonStage { PASSAGE, SENTENCE, WORDS, GRAMMAR }
+internal enum class LessonStage { PASSAGE, SENTENCE, WORDS, GRAMMAR, CLOZE, FINISH }
 
 internal data class LessonFlowState(
     val stage: LessonStage = LessonStage.PASSAGE,
     val sentenceIndex: Int = 0,
     val wordIndex: Int = 0,
     val wordPasses: Int = 0,
+)
+
+/** 完形练习的界面状态与回调；由课堂宿主（MainActivity）持有，流里只负责展示。 */
+internal data class LessonClozeBinding(
+    val loading: Boolean,
+    val grammar: List<ClozeGrammarPoint>,
+    val items: List<ClozeItem>,
+    val batchIndex: Int,
+    val selections: Map<String, String>,
+    val grade: ClozeGrade?,
+    val error: String,
+    val onSelect: (String, String) -> Unit,
+    val onSubmit: () -> Unit,
+    val onNext: (Int) -> Unit,
+    val onExit: () -> Unit,
 )
 
 internal fun LessonFlowState.afterSentenceScore(
@@ -129,6 +144,9 @@ internal fun LessonFlowHost(
     startRecording: () -> Boolean,
     stopRecording: () -> String?,
     evaluate: suspend (String, String, Long, Double?, Int) -> JSONObject,
+    cloze: LessonClozeBinding,
+    onEnterCloze: () -> Unit,
+    onComplete: () -> Unit,
     onExit: () -> Unit,
 ) {
     val sentences = passage.sentences
@@ -228,6 +246,8 @@ internal fun LessonFlowHost(
             LessonStage.SENTENCE -> "第二步 · 分句跟读"
             LessonStage.WORDS -> "第三步 · 重点词汇"
             LessonStage.GRAMMAR -> "第四步 · 语法讲解"
+            LessonStage.CLOZE -> "第五步 · 完形练习"
+            LessonStage.FINISH -> "完成这堂课"
         },
         hint = when (state.stage) {
             LessonStage.SENTENCE -> "${state.sentenceIndex + 1}/${sentences.size.coerceAtLeast(1)} 句"
@@ -310,9 +330,33 @@ internal fun LessonFlowHost(
             busy = busy,
             onSpeak = speakText,
             onPlaySentence = playSentence,
+            onStartCloze = {
+                state = state.copy(stage = LessonStage.CLOZE)
+                onEnterCloze()
+            },
+        )
+
+        LessonStage.CLOZE -> ClozeScreen(
+            grammar = cloze.grammar,
+            items = cloze.items,
+            loading = cloze.loading,
+            batchIndex = cloze.batchIndex,
+            selections = cloze.selections,
+            grade = cloze.grade,
+            error = cloze.error,
+            onSelect = cloze.onSelect,
+            onSubmit = cloze.onSubmit,
+            onNext = cloze.onNext,
+            onExit = {
+                cloze.onExit()
+                state = state.copy(stage = LessonStage.FINISH)
+            },
+        )
+
+        LessonStage.FINISH -> FinishPage(
             onFinish = {
                 stopAudio()
-                onExit()
+                onComplete()
             },
         )
     }
@@ -570,7 +614,7 @@ private fun GrammarPage(
     busy: Boolean,
     onSpeak: (String) -> Unit,
     onPlaySentence: (PassageSentence, Boolean) -> Unit,
-    onFinish: () -> Unit,
+    onStartCloze: () -> Unit,
 ) {
     if (points.isEmpty()) {
         GrowthCard(modifier = Modifier.fillMaxWidth()) {
@@ -619,6 +663,28 @@ private fun GrammarPage(
                 enabled = !busy,
             )
         }
+    }
+    GrowthPrimaryButton("进入完形练习", onStartCloze, emoji = "✏️")
+}
+
+@Composable
+private fun FinishPage(onFinish: () -> Unit) {
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.SunWash,
+        outline = GrowthColors.Sun.copy(alpha = 0.28f),
+    ) {
+        GrowthSectionTitle("这一课学完了", "🎉")
+        Text(
+            "读课文、分句跟读、重点词汇、语法讲解和完形练习都走完了。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = GrowthColors.InkSoft,
+        )
+        Text(
+            "点下面的按钮结束本节课。",
+            style = MaterialTheme.typography.bodySmall,
+            color = GrowthColors.InkSoft,
+        )
     }
     GrowthPrimaryButton("完成这堂课", onFinish, emoji = "🎉")
 }

@@ -978,6 +978,55 @@ private fun GrowthApp(
                         "achievements" -> GrowthPageHeader("成长成就", "每一步都算数", "🏆")
                         else -> GrowthPageHeader("我的账户", "由监护人协助设置", "👤")
                     }
+                    /** 结课：调用后端结课接口，清空本节上下文并报喜。新老流程共用。 */
+                    fun finishCurrentLesson() {
+                        scope.launch {
+                            busy = true
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token())
+                                }
+                                // 结课成功就回到学习入口（directive 置空），孩子可以直接开始下一课。
+                                val finishedDirective = directive
+                                teacherSpeech.stop()
+                                teacherSpeech.clearPassageAudio()
+                                directive = null
+                                lessonSpeech = null
+                                lessonPassage = null
+                                activePassageSentenceId = ""
+                                clearPassageState()
+                                lessonSessionId = ""
+                                practiceCount = 0
+                                finishResult = null
+                                sentenceAttempts = 0
+                                sentencePasses = 0
+                                sentenceScore = null
+                                sentenceStatus = ""
+                                praisedWord = ""
+                                pageStatus = "这节课完成啦，休息一下再来 🌿"
+                                // 结课要有声音：告诉孩子今天的课程完成了，并表扬他坚持了一天。
+                                if (finishedDirective != null) {
+                                    teacherSpeech.play(
+                                        base(), token().orEmpty(), learnerId, finishedDirective, null, false,
+                                        onState = { active, message ->
+                                            speechBusy = active
+                                            speechStatus = message
+                                        },
+                                        texts = listOf(
+                                            "今天的课程完成啦！",
+                                            "你又坚持了一天，真棒！明天我们接着学。",
+                                        ),
+                                    )
+                                }
+                                runCatching { fetchDashboard() }
+                            } catch (e: Exception) {
+                                pageStatus = e.message ?: "结课失败"
+                            } finally {
+                                busy = false
+                            }
+                        }
+                    }
+
                     when (tab) {
                         "home" -> HomeScreen(dashboard, childTheme, pageStatus, onStart = ::startSession, onRefresh = {
                             scope.launch { runCatching { fetchDashboard() }.onFailure { pageStatus = it.message ?: "刷新失败" } }
@@ -1031,6 +1080,29 @@ private fun GrowthApp(
                                     },
                                     evaluate = { encoded, targetText, durationMs, previousScore, attemptIndex ->
                                         evaluateSentence(encoded, targetText, durationMs, previousScore, attemptIndex)
+                                    },
+                                    cloze = LessonClozeBinding(
+                                        loading = clozeLoading,
+                                        grammar = clozeGrammar,
+                                        items = clozeItems,
+                                        batchIndex = clozeBatchIndex,
+                                        selections = clozeSelections,
+                                        grade = clozeGrade,
+                                        error = clozeError,
+                                        onSelect = { itemId, answer -> clozeSelections = clozeSelections + (itemId to answer) },
+                                        onSubmit = { submitCloze() },
+                                        onNext = { batch -> loadCloze(batch) },
+                                        onExit = {
+                                            clozeOpen = false
+                                            passageStatus = "语法练习完成，今天的内容就学到这里。"
+                                        },
+                                    ),
+                                    onEnterCloze = {
+                                        clozeOpen = true
+                                        loadCloze(0)
+                                    },
+                                    onComplete = {
+                                        finishCurrentLesson()
                                     },
                                     onExit = {
                                         teacherSpeech.stop()
@@ -1256,53 +1328,7 @@ private fun GrowthApp(
                                     }
                                 }
                             },
-                            onFinish = {
-                                scope.launch {
-                                    busy = true
-                                    try {
-                                        withContext(Dispatchers.IO) {
-                                            http(base(), "/lessons/${lessonSessionId}/finish", "POST", JSONObject().put("learnerId", learnerId), token())
-                                        }
-                                        // 结课成功就回到学习入口（directive 置空），孩子可以直接开始下一课。
-                                        val finishedDirective = directive
-                                        teacherSpeech.stop()
-                                        teacherSpeech.clearPassageAudio()
-                                        directive = null
-                                        lessonSpeech = null
-                                        lessonPassage = null
-                                        activePassageSentenceId = ""
-                                        clearPassageState()
-                                        lessonSessionId = ""
-                                        practiceCount = 0
-                                        finishResult = null
-                                        sentenceAttempts = 0
-                                        sentencePasses = 0
-                                        sentenceScore = null
-                                        sentenceStatus = ""
-                                        praisedWord = ""
-                                        pageStatus = "这节课完成啦，休息一下再来 🌿"
-                                        // 结课要有声音：告诉孩子今天的课程完成了，并表扬他坚持了一天。
-                                        if (finishedDirective != null) {
-                                            teacherSpeech.play(
-                                                base(), token().orEmpty(), learnerId, finishedDirective, null, false,
-                                                onState = { active, message ->
-                                                    speechBusy = active
-                                                    speechStatus = message
-                                                },
-                                                texts = listOf(
-                                                    "今天的课程完成啦！",
-                                                    "你又坚持了一天，真棒！明天我们接着学。",
-                                                ),
-                                            )
-                                        }
-                                        runCatching { fetchDashboard() }
-                                    } catch (e: Exception) {
-                                        pageStatus = e.message ?: "结课失败"
-                                    } finally {
-                                        busy = false
-                                    }
-                                }
-                            },
+                            onFinish = { finishCurrentLesson() },
                         )
                             }
                         }
@@ -3400,7 +3426,7 @@ private fun PassageWordsScreen(
  * 正确率 <80% 时按钮变“再练一批”，批次索引以服务端返回为准。
  */
 @Composable
-private fun ClozeScreen(
+internal fun ClozeScreen(
     grammar: List<ClozeGrammarPoint>,
     items: List<ClozeItem>,
     loading: Boolean,
