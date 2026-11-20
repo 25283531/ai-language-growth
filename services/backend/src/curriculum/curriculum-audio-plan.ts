@@ -431,7 +431,7 @@ export function composeWordExplanation(input: {
   const word = input.word.trim();
   const pos = posLabel(input.pos);
   // 词库释义常带多义项（母亲；修女院长），讲解只读最常用的那一个。
-  const meaning = input.meaningZh.split(/[；;]/)[0].trim();
+  const meaning = (input.meaningZh.split(/[；;]/)[0] ?? '').trim();
   const parts: string[] = [];
   parts.push(`${word}${pos ? ` 是${pos}` : ''}${meaning ? `，意思是${meaning}` : ''}。`);
   parts.push(input.forms.length
