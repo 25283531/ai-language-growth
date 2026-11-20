@@ -154,6 +154,26 @@
     "documentationUrls": { "pronunciation": "https://api-account.cloud.chivox.com/zh/docs" }
   },
   {
+    "id": "modelscope-voice-studio",
+    "name": "魔搭 Voice Studio（TTS + 发音评测）",
+    "protocol": "matcha_http",
+    "defaultBaseUrls": {
+      "tts": "https://studio-pdszxh-voice-studio.api-inference.modelscope.net",
+      "pronunciation": "https://studio-pdszxh-voice-studio.api-inference.modelscope.net"
+    },
+    "services": ["tts", "pronunciation"],
+    "credentialRequired": true,
+    "documentationUrl": "https://modelscope.cn/studios/pdszxh/voice-studio",
+    "documentationUrls": {
+      "tts": "https://modelscope.cn/studios/pdszxh/voice-studio",
+      "pronunciation": "https://modelscope.cn/studios/pdszxh/voice-studio"
+    },
+    "credentialFields": [
+      { "key": "token", "label": "平台访问令牌（Authorization: Bearer）", "required": true },
+      { "key": "apiKey", "label": "服务口令（X-API-Key）", "required": true }
+    ]
+  },
+  {
     "id": "matcha-tts",
     "name": "Matcha 中英双语 TTS（自建）",
     "protocol": "matcha_http",

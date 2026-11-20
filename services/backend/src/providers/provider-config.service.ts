@@ -200,6 +200,7 @@ export class ProviderConfigService {
       'tencent-hunyuan': ['apiKey'],
       'bailian': ['apiKey'],
       'tencent-soe': ['appId', 'secretId', 'secretKey'],
+      'modelscope-voice-studio': ['token', 'apiKey'],
       'azure-speech': ['subscriptionKey'],
       speechace: ['apiKey'],
       chivox: ['apiKey'],

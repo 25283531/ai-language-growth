@@ -34,6 +34,8 @@ import {
   ChivoxPronunciationAdapter,
   IflytekTtsAdapter,
   MatchaTtsAdapter,
+  ModelScopeTtsAdapter,
+  ModelScopeAssessAdapter,
   IflytekAsrAdapter,
   TencentCloudAsrAdapter,
   TencentCloudTtsAdapter,
@@ -347,6 +349,12 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
           })
           : config.providerPresetId === 'iflytek-spark'
           ? new IflytekTtsAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })
+          : config.providerPresetId === 'modelscope-voice-studio'
+            ? new ModelScopeTtsAdapter({
+              ...options,
+              baseUrl: config.baseUrl,
+              credentials: config.credentials,
+            })
           : config.providerPresetId === 'tencent-cloud'
             ? new TencentCloudTtsAdapter({ ...options, baseUrl: config.baseUrl, credentials: config.credentials })
             : new HttpTtsAdapter(options));
@@ -367,6 +375,8 @@ export class AiGatewayService implements AiGateway, OnModuleInit {
           this.registry.register('pronunciation', new AzurePronunciationAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
         } else if (config.providerPresetId === 'speechace') {
           this.registry.register('pronunciation', new SpeechacePronunciationAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
+        } else if (config.providerPresetId === 'modelscope-voice-studio') {
+          this.registry.register('pronunciation', new ModelScopeAssessAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
         } else if (config.providerPresetId === 'chivox') {
           this.registry.register('pronunciation', new ChivoxPronunciationAdapter({ alias, providerPresetId: config.providerPresetId, baseUrl: config.baseUrl, modelAlias: config.modelAlias, credentials: config.credentials, options: config.options }));
         } else {
