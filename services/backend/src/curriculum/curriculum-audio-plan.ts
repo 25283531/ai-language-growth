@@ -186,8 +186,8 @@ export function selectFocusWords(
 
 export function wordClipSpecs(
   focus: FocusWordSelection,
-  knownPhonemes: ReadonlySet<string> | undefined,
-  skipped: CurriculumAudioPlan['skipped'],
+  _knownPhonemes: ReadonlySet<string> | undefined,
+  _skipped: CurriculumAudioPlan['skipped'],
 ): AudioClipSpec[] {
   const word = focus.word.trim();
   if (!WORD_RE.test(word)) return [];
@@ -217,31 +217,11 @@ export function wordClipSpecs(
   // 1. 整词慢速
   push('word', word, 'slow', 0.65, 'slow_clear');
 
-  // 2. 音节逐个；单音节词不重复造一份和整词相同的音频。
-  if (focus.syllables.length > 1) {
-    focus.syllables.forEach((syllable, index) => {
-      push('syllable', syllable, 'slow', 0.65, 'syllable_by_syllable', index);
-    });
-  }
-
-  // 3. 困难音素单独；只使用已声明且（如有音素表）已收录的符号。
-  let phonemeIndex = 0;
-  for (const phoneme of focus.difficultPhonemes) {
-    const normalized = normalizePhoneme(phoneme);
-    if (!normalized) continue;
-    if (knownPhonemes && knownPhonemes.size > 0 && !knownPhonemes.has(normalized)) {
-      skipped.push({ clipKey: `word:${word.toLowerCase()}`, text: normalized, reason: 'phoneme_not_in_inventory' });
-      continue;
-    }
-    push('phoneme', normalized, 'extra_slow', 0.55, 'syllable_by_syllable', phonemeIndex++);
-  }
-
-  // 4. 音节合成：用逗号制造停顿，再由客户端按片段顺序播放。
-  if (focus.syllables.length > 1) {
-    push('blend', focus.syllables.join(', '), 'slow', 0.65, 'syllable_by_syllable');
-  }
-
-  // 5. 恢复自然语速
+  // 2. 恢复自然语速
+  //
+  // 不再生成音节/音素/合成片段：孩子听到的应当是完整单词。
+  // 音节与难音只作为文字提示（音标、音节、难音标签）展示，
+  // 不再逐段朗读，否则会出现 “moth, er” 这类拆读插入词中间的问题。
   push('natural', word, 'normal', 1, 'natural');
   return specs;
 }

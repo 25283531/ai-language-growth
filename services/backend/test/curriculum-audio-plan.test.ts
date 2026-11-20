@@ -65,33 +65,27 @@ describe('curriculum audio plan', () => {
     assert.ok(first.every((clip) => clip.text === 'This is my father.'));
   });
 
-  it('重点词按整词 → 音节 → 音素 → 合成 → 自然语速排序', () => {
+  it('重点词只合成整词慢速与自然语速，不再拆分音节', () => {
     const plan = buildCurriculumAudioPlan(content);
     assert.ok(plan.focusWords.length >= 2 && plan.focusWords.length <= 4);
     const father = plan.focusWords.find((word) => word.word === 'father');
     assert.ok(father);
-    assert.deepEqual(father.clips.map((clip) => clip.kind), [
-      'word',
-      'syllable',
-      'syllable',
-      'phoneme',
-      'blend',
-      'natural',
-    ]);
-    assert.deepEqual(father.clips.map((clip) => clip.position), [0, 1, 2, 3, 4, 5]);
-    assert.equal(father.clips.find((clip) => clip.kind === 'phoneme')?.text, 'ð');
-    assert.equal(father.clips.find((clip) => clip.kind === 'phoneme')?.speed, 0.55);
+    assert.deepEqual(father.clips.map((clip) => clip.kind), ['word', 'natural']);
+    assert.deepEqual(father.clips.map((clip) => clip.position), [0, 1]);
+    assert.equal(father.clips[0]?.text, 'father');
+    assert.equal(father.clips[0]?.speed, 0.65);
     assert.equal(father.clips.at(-1)?.speed, 1);
     assert.match(father.reason, /课文出现 2 次/);
     assert.match(father.reason, /困难音素/);
   });
 
-  it('未收录音素不生成片段，并留下可读原因', () => {
+  it('音节与音素只作为文字提示，不生成朗读片段', () => {
     const plan = buildCurriculumAudioPlan(content, { knownPhonemes: new Set(['f', 'ɑː']) });
     const father = plan.focusWords.find((word) => word.word === 'father');
     assert.ok(father);
     assert.equal(father.clips.some((clip) => clip.kind === 'phoneme'), false);
-    assert.ok(plan.skipped.some((item) => item.reason === 'phoneme_not_in_inventory'));
+    assert.equal(plan.wordClips.some((clip) => ['syllable', 'phoneme', 'blend'].includes(clip.kind)), false);
+    assert.equal(plan.skipped.length, 0);
   });
 
   it('选择重点词时不编造音标/释义，且最多 4 个', () => {
