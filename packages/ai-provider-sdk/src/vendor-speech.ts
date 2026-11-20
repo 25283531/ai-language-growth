@@ -135,6 +135,24 @@ export function iflytekSpeedValue(speed: number): number {
   return Math.max(0, Math.min(100, Math.round(50 + (value - 1) * 171)));
 }
 
+/**
+ * 英文发音人 vimary 的语速标定。
+ *
+ * 上面的 0.0058x/单位 是 xiaoyan 读英文的斜率；换成 vimary 后同一句明显更克制：
+ * U07 课文 58 字符英文句实测 speed=50 → 4.464s、speed=0 → 8.784s，即 0→0.508x、50→1.00x。
+ * 若继续用旧公式，0.65 档会被钳到 speed=0，实际读成 0.51x（听感像被拖慢一倍）。
+ * 这里用 vimary 自己的两个锚点做线性反解：rate = 0.508 + 0.00984 * speed，
+ * 0.65 → 14、0.7 → 20、0.8 → 30、1.0 → 50。
+ */
+export const IFLYTEK_ENGLISH_SPEED = { floorRate: 0.508, naturalSpeed: 50 } as const;
+
+export function iflytekEnglishSpeedValue(speed: number): number {
+  const rate = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  const slope = (1 - IFLYTEK_ENGLISH_SPEED.floorRate) / IFLYTEK_ENGLISH_SPEED.naturalSpeed;
+  const value = Math.round((rate - IFLYTEK_ENGLISH_SPEED.floorRate) / slope);
+  return Math.max(0, Math.min(100, value));
+}
+
 /** @deprecated 改用 {@link iflytekSpeedValue}；语速判定已统一到 resolveEffectiveTeacherSpeed。 */
 export function iflytekSpeedForSegment(segment: SpeechSegment, teacherSpeed: number): number {
   if (segment.language !== 'en') return 50;
@@ -186,7 +204,12 @@ export class IflytekTtsAdapter implements TtsAdapter {
     const segments = splitByLanguage(request.text);
     if (!segments.length) throw new Error('讯飞 TTS 的文本为空');
     const effective = resolveEffectiveTeacherSpeed(request.text, request.voice.teacherSpeed ?? 1);
-    const speedValue = iflytekSpeedValue(effective.speed);
+    // 含英文的句子走英文发音人 vimary，必须用它的标定；纯中文保持自然语速 50。
+    // 整句只取一个速度，避免混排句被拆成一快一慢。
+    const hasEnglish = segments.some((segment) => segment.language === 'en');
+    const speedValue = hasEnglish
+      ? iflytekEnglishSpeedValue(effective.speed)
+      : iflytekSpeedValue(effective.speed);
     const speeds = segments.map(() => speedValue);
     const parts: Buffer[] = [];
     for (const [index, segment] of segments.entries()) {

@@ -18,6 +18,7 @@ import { afterEach, describe, it } from 'node:test';
 import type { TtsRequest } from '@alg/shared-contracts';
 import {
   iflytekSpeedValue,
+  iflytekEnglishSpeedValue,
   resolveEffectiveTeacherSpeed,
   splitByLanguage,
   TencentCloudTtsAdapter,
@@ -109,6 +110,19 @@ describe('供应商换算：把有效语速换成各自的参数', () => {
     assert.equal(iflytekSpeedValue(0.65), 0);
     assert.equal(iflytekSpeedValue(0.44), 0);
     assert.ok(iflytekSpeedValue(0.44) < iflytekSpeedValue(1.0));
+  });
+
+  it('英文发音人 vimary：按自身锚点反解，0.65 不再被钳到 0', () => {
+    // 实测：vimary speed=50 → 1.00x，speed=0 → 0.508x（U07 课文句 4.464s vs 8.784s）。
+    assert.equal(iflytekEnglishSpeedValue(1.0), 50);
+    assert.equal(iflytekEnglishSpeedValue(0.8), 30);
+    assert.equal(iflytekEnglishSpeedValue(0.7), 20);
+    assert.equal(iflytekEnglishSpeedValue(0.65), 14);
+    assert.equal(iflytekEnglishSpeedValue(0.5), 0);
+    assert.equal(iflytekEnglishSpeedValue(0.4), 0);
+    // 0.65 档必须明显慢于自然语速，也不能像旧逻辑那样直接拖到底。
+    assert.ok(iflytekEnglishSpeedValue(0.65) > 0);
+    assert.ok(iflytekEnglishSpeedValue(0.65) < iflytekEnglishSpeedValue(1.0));
   });
 });
 
