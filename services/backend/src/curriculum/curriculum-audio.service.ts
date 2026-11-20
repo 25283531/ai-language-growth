@@ -386,13 +386,17 @@ export class CurriculumAudioService {
         (candidate.variants ?? []).some((variant) => variant.toLowerCase() === key));
       if (!row) continue;
       const suffixes = allowedFormSuffixes(row.pos ?? '');
+      // balcony → balconies 这类改 y 为 i 的变形，比较词干时要先把词尾 y 去掉。
+      const stems = key.endsWith('y') ? [key, key.slice(0, -1)] : [key];
       const variants = (row.variants ?? [])
         .map((variant) => variant.trim())
         .filter((variant) => {
           const lower = variant.toLowerCase();
           if (!lower || lower === key || variant.length > 60) return false;
-          if (!lower.startsWith(key)) return false;
-          return suffixes.includes(lower.slice(key.length));
+          for (const stem of stems) {
+            if (lower.startsWith(stem) && suffixes.includes(lower.slice(stem.length))) return true;
+          }
+          return false;
         })
         .slice(0, 6);
       if (variants.length) forms.set(key, variants);
