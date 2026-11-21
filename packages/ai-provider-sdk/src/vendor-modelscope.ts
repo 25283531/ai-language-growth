@@ -141,6 +141,18 @@ export class ModelScopeTtsAdapter implements TtsAdapter {
 }
 
 /**
+ * 把 openpronounce 的原始教学分标定成孩子看到的 0-100 分。
+ *
+ * 实测：中文母语成人朗读只能拿到 30-40 分，孩子 0-20 分。原始分 40 已经接近
+ * 母语者水平，按 40 → 95 线性拉伸，超过 42 分直接满分。
+ * 标定表：0→0、10→24、20→48、30→71、40→95、≥43→100。
+ */
+export function calibrateModelscopeScore(rawScore: number): number {
+  if (!Number.isFinite(rawScore)) return 0;
+  return clampScore((Math.max(0, rawScore) * 95) / 40);
+}
+
+/**
  * 魔搭 /assess 发音评测。
  *
  * 该服务按美式母语者声学距离打分，对儿童系统性偏低（合成语音自测约 20 分），
@@ -202,8 +214,9 @@ export class ModelScopeAssessAdapter implements PronunciationAdapter {
     const wordErrorRate = typeof raw.differences?.word_error_rate === 'number'
       ? raw.differences.word_error_rate
       : errors.length / targetWords;
-    // 教学分：以“读错的词占比”为准，比母语者声学距离稳定，也不会把孩子一棍子打死。
-    const teaching = clampScore(100 * (1 - Math.min(1, Math.max(0, wordErrorRate))));
+    // 教学分：以“读错的词占比”为准，再按实测标定拉伸到 0-100（40 分≈母语者水平 → 95）。
+    const baseScore = 100 * (1 - Math.min(1, Math.max(0, wordErrorRate)));
+    const teaching = calibrateModelscopeScore(baseScore);
 
     const units: PronunciationResponse['units'] = [];
     for (const error of errors) {
