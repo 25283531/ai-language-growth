@@ -4,38 +4,35 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 新课堂流程的过关门禁：>50 才能前进，词汇要累计 3 次。 */
+/** 新课堂流程：重点词 → 整篇 → 分句 → 语法 → 完形；>50 才能前进，词汇要累计 3 次。 */
 class LessonFlowTest {
+
+    @Test
+    fun `课堂从重点词开始`() {
+        assertEquals(LessonStage.WORDS, LessonFlowState().stage)
+    }
 
     @Test
     fun `分句低于等于50分停在原句`() {
         val state = LessonFlowState(stage = LessonStage.SENTENCE, sentenceIndex = 1)
-        assertEquals(state, state.afterSentenceScore(50.0, sentenceCount = 5, wordCount = 4))
-        assertEquals(state, state.afterSentenceScore(12.0, sentenceCount = 5, wordCount = 4))
+        assertEquals(state, state.afterSentenceScore(50.0, sentenceCount = 5))
+        assertEquals(state, state.afterSentenceScore(12.0, sentenceCount = 5))
     }
 
     @Test
     fun `分句超过50分进入下一句`() {
         val state = LessonFlowState(stage = LessonStage.SENTENCE, sentenceIndex = 1)
-        val next = state.afterSentenceScore(51.0, sentenceCount = 5, wordCount = 4)
+        val next = state.afterSentenceScore(51.0, sentenceCount = 5)
         assertEquals(2, next.sentenceIndex)
         assertEquals(LessonStage.SENTENCE, next.stage)
     }
 
     @Test
-    fun `最后一句读完进入重点词`() {
+    fun `最后一句读完进入语法`() {
         val state = LessonFlowState(stage = LessonStage.SENTENCE, sentenceIndex = 4)
-        val next = state.afterSentenceScore(90.0, sentenceCount = 5, wordCount = 4)
-        assertEquals(LessonStage.WORDS, next.stage)
-        assertEquals(0, next.wordIndex)
-        assertEquals(0, next.wordPasses)
-    }
-
-    @Test
-    fun `没有重点词时直接进入语法`() {
-        val state = LessonFlowState(stage = LessonStage.SENTENCE, sentenceIndex = 4)
-        val next = state.afterSentenceScore(90.0, sentenceCount = 5, wordCount = 0)
+        val next = state.afterSentenceScore(90.0, sentenceCount = 5)
         assertEquals(LessonStage.GRAMMAR, next.stage)
+        assertEquals(0, next.wordPasses)
     }
 
     @Test
@@ -71,10 +68,19 @@ class LessonFlowTest {
     }
 
     @Test
-    fun `最后一个词通过三次后进入语法`() {
+    fun `最后一个词通过三次后进入整篇课文`() {
         val state = LessonFlowState(stage = LessonStage.WORDS, wordIndex = 1, wordPasses = 3)
         val next = state.advanceWord(wordCount = 2)
-        assertEquals(LessonStage.GRAMMAR, next.stage)
+        assertEquals(LessonStage.PASSAGE, next.stage)
+        assertEquals(0, next.wordIndex)
+        assertEquals(0, next.wordPasses)
+    }
+
+    @Test
+    fun `跟读提示显示第几次和上次分数`() {
+        assertEquals("第 1 次读 · 还没有上次分数", attemptLine(0, null))
+        assertEquals("第 2 次读 · 上次 80 分", attemptLine(1, 80.4))
+        assertEquals("第 4 次读 · 上次 62 分", attemptLine(3, 62.0))
     }
 
     @Test

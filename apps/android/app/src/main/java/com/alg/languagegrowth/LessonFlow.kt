@@ -35,20 +35,20 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * 课堂主流程：整篇 → 分句 → 重点词 → 语法 → 完形 → 完成。
+ * 课堂主流程：重点词 → 整篇 → 分句 → 语法 → 完形 → 完成。
  *
  * 门禁规则（纯函数，便于单测）：
- *  - 分句：单句评测 > 50 才进入下一句，最后一句读完进入重点词；
- *  - 重点词：同一个词累计 3 次 > 50 才换下一个词，最后一个词结束进入语法；
+ *  - 重点词：同一个词累计 3 次 > 50 才换下一个词，最后一个词结束进入整篇；
+ *  - 分句：单句评测 > 50 才进入下一句，最后一句读完进入语法；
  *  - 语法：可重复收听，听完进入完形；完形退出后出现「完成这堂课」。
  */
 internal const val LESSON_PASS_SCORE = 50.0
 internal const val WORD_PASS_REQUIRED = 3
 
-internal enum class LessonStage { PASSAGE, SENTENCE, WORDS, GRAMMAR, CLOZE, FINISH }
+internal enum class LessonStage { WORDS, PASSAGE, SENTENCE, GRAMMAR, CLOZE, FINISH }
 
 internal data class LessonFlowState(
-    val stage: LessonStage = LessonStage.PASSAGE,
+    val stage: LessonStage = LessonStage.WORDS,
     val sentenceIndex: Int = 0,
     val wordIndex: Int = 0,
     val wordPasses: Int = 0,
@@ -72,19 +72,14 @@ internal data class LessonClozeBinding(
 internal fun LessonFlowState.afterSentenceScore(
     score: Double,
     sentenceCount: Int,
-    wordCount: Int,
 ): LessonFlowState {
     if (score <= LESSON_PASS_SCORE) return this
     val next = sentenceIndex + 1
     if (next < sentenceCount) return copy(sentenceIndex = next)
-    return if (wordCount > 0) {
-        copy(stage = LessonStage.WORDS, sentenceIndex = sentenceIndex, wordIndex = 0, wordPasses = 0)
-    } else {
-        copy(stage = LessonStage.GRAMMAR, wordPasses = 0)
-    }
+    return copy(stage = LessonStage.GRAMMAR, wordPasses = 0)
 }
 
-/** 单词过关一次；同一个词累计到 3 次后由 [advanceWord] 翻到下ー个词。 */
+/** 单词过关一次；同一个词累计到 3 次后由 [advanceWord] 翻到下ー个词，最后一个词学完进课文。 */
 internal fun LessonFlowState.withWordPass(score: Double): LessonFlowState {
     if (score <= LESSON_PASS_SCORE) return this
     return copy(wordPasses = minOf(wordPasses + 1, WORD_PASS_REQUIRED))
@@ -96,9 +91,17 @@ internal fun LessonFlowState.advanceWord(wordCount: Int): LessonFlowState {
     return if (next < wordCount) {
         copy(wordIndex = next, wordPasses = 0)
     } else {
-        copy(stage = LessonStage.GRAMMAR, wordPasses = 0)
+        copy(stage = LessonStage.PASSAGE, wordIndex = 0, wordPasses = 0)
     }
 }
+
+/** 跟读页的尝试提示：屏幕和 TTS 都按同一个次数/上次分数说话。 */
+internal fun attemptLine(attempt: Int, lastScore: Double?): String =
+    if (attempt <= 0 || lastScore == null) {
+        "第 1 次读 · 还没有上次分数"
+    } else {
+        "第 ${attempt + 1} 次读 · 上次 ${lastScore.roundToInt()} 分"
+    }
 
 /** 重点词讲解稿：服务端已下发就用服务端的，旧数据用本地模板兜底。 */
 internal fun FocusWord.lessonExplanation(): String {
@@ -290,9 +293,9 @@ internal fun LessonFlowHost(
 
     LessonHeader(
         stage = when (state.stage) {
-            LessonStage.PASSAGE -> "第一步 · 读整篇"
-            LessonStage.SENTENCE -> "第二步 · 分句跟读"
-            LessonStage.WORDS -> "第三步 · 重点词汇"
+            LessonStage.WORDS -> "第一步 · 重点词汇"
+            LessonStage.PASSAGE -> "第二步 · 读整篇"
+            LessonStage.SENTENCE -> "第三步 · 分句跟读"
             LessonStage.GRAMMAR -> "第四步 · 语法讲解"
             LessonStage.CLOZE -> "第五步 · 完形练习"
             LessonStage.FINISH -> "完成这堂课"
@@ -324,7 +327,7 @@ internal fun LessonFlowHost(
         LessonStage.SENTENCE -> {
             val sentence = sentences.getOrNull(state.sentenceIndex)
             if (sentence == null) {
-                state = state.copy(stage = if (words.isEmpty()) LessonStage.GRAMMAR else LessonStage.WORDS)
+                state = state.copy(stage = LessonStage.GRAMMAR)
             } else {
                 SentencePage(
                     sentence = sentence,
@@ -335,17 +338,18 @@ internal fun LessonFlowHost(
                     recording = recording,
                     scoring = scoring,
                     score = score,
+                    attemptHint = attemptLine(attempt, score),
                     feedback = feedback,
                     passed = passed,
                     onPlay = { slow -> playSentence(sentence, slow) },
                     canAdvance = cleared,
                     advanceLabel = if (state.sentenceIndex == sentences.lastIndex) {
-                        if (words.isEmpty()) "进入语法讲解 →" else "进入重点词汇 →"
+                        "进入语法讲解 →"
                     } else {
                         "下一句 →"
                     },
                     onAdvance = {
-                        state = state.afterSentenceScore(clearedScore, sentences.size, words.size)
+                        state = state.afterSentenceScore(clearedScore, sentences.size)
                     },
                     onBegin = beginHold,
                     onEnd = endHold,
@@ -356,7 +360,7 @@ internal fun LessonFlowHost(
         LessonStage.WORDS -> {
             val word = words.getOrNull(state.wordIndex)
             if (word == null) {
-                state = state.copy(stage = LessonStage.GRAMMAR)
+                state = state.copy(stage = LessonStage.PASSAGE)
             } else {
                 WordPage(
                     word = word,
@@ -367,6 +371,7 @@ internal fun LessonFlowHost(
                     recording = recording,
                     scoring = scoring,
                     score = score,
+                    attemptHint = attemptLine(attempt, score),
                     feedback = feedback,
                     passed = passed,
                     onSpeak = { speakText(word.lessonExplanation()) },
@@ -376,7 +381,7 @@ internal fun LessonFlowHost(
                         if (ref != null) playRef(ref)
                     },
                     canAdvance = state.wordPasses >= WORD_PASS_REQUIRED,
-                    advanceLabel = if (state.wordIndex == words.lastIndex) "进入语法讲解 →" else "下一个词 →",
+                    advanceLabel = if (state.wordIndex == words.lastIndex) "进入课文 →" else "下一个词 →",
                     onAdvance = { state = state.advanceWord(words.size) },
                     onBegin = beginHold,
                     onEnd = endHold,
@@ -454,7 +459,7 @@ private fun PassagePage(
         GrowthSectionTitle("整篇课文", "📖")
         Text(passage.title, style = MaterialTheme.typography.titleLarge, color = GrowthColors.Ink)
         Text(
-            "一行英语一行翻译，先听两遍，再一句一句跟读。",
+            "重点词学完了，先听两遍整篇，再一句一句跟读。",
             style = MaterialTheme.typography.bodySmall,
             color = GrowthColors.InkSoft,
         )
@@ -511,6 +516,7 @@ private fun SentencePage(
     recording: Boolean,
     scoring: Boolean,
     score: Double?,
+    attemptHint: String,
     feedback: String,
     passed: Boolean,
     canAdvance: Boolean,
@@ -555,6 +561,7 @@ private fun SentencePage(
                 enabled = !busy && sentence.audio.slowRef != null,
             )
         }
+        Text(attemptHint, style = MaterialTheme.typography.labelLarge, color = GrowthColors.PrimaryDeep)
         LessonHoldButton(recording = recording, enabled = !scoring, onPress = onBegin, onRelease = onEnd)
         if (scoring) {
             Text("老师正在听…", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
@@ -591,6 +598,7 @@ private fun WordPage(
     recording: Boolean,
     scoring: Boolean,
     score: Double?,
+    attemptHint: String,
     feedback: String,
     passed: Boolean,
     canAdvance: Boolean,
@@ -667,6 +675,7 @@ private fun WordPage(
             style = MaterialTheme.typography.labelLarge,
             color = GrowthColors.SunDeep,
         )
+        Text(attemptHint, style = MaterialTheme.typography.labelLarge, color = GrowthColors.SunDeep)
         LessonHoldButton(recording = recording, enabled = !scoring, onPress = onBegin, onRelease = onEnd)
         if (scoring) {
             Text("老师正在听…", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
@@ -754,7 +763,7 @@ private fun FinishPage(onFinish: () -> Unit) {
     ) {
         GrowthSectionTitle("这一课学完了", "🎉")
         Text(
-            "读课文、分句跟读、重点词汇、语法讲解和完形练习都走完了。",
+            "重点词汇、读课文、分句跟读、语法讲解和完形练习都走完了。",
             style = MaterialTheme.typography.bodyMedium,
             color = GrowthColors.InkSoft,
         )
