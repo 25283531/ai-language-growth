@@ -128,6 +128,10 @@ services:
           - backend
           - admin-web
           - web
+          # 保留旧容器名作为网络别名，外部反代/同网容器无需改配置。
+          - alg-backend
+          - alg-admin-web
+          - alg-web
 
 volumes:
   pgdata:
