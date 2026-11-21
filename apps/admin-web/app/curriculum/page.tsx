@@ -22,7 +22,14 @@ type Draft = {
   wordList: string[];
   generatedContent: { objectives?: string[]; vocabulary?: Array<{ word: string }>; activities?: unknown[] } | null;
   textbook?: Textbook | null;
-  textbookUnit?: { unitCode: string; title: string } | null;
+  textbookUnit?: {
+    unitCode: string;
+    title: string;
+    metadata?: {
+      humanEdited?: { at?: string; by?: string } | null;
+      activation?: { unitId?: string } | null;
+    } | null;
+  } | null;
   reviewNote?: string | null;
   humanEdited?: boolean;
   humanApproved?: boolean;
@@ -69,6 +76,7 @@ function apiRoot() {
 export default function CurriculumPage() {
   const [textbooks, setTextbooks] = useState<Textbook[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [audioByUnit, setAudioByUnit] = useState<Record<string, { total: number; ready: number }>>({});
   const [editingId, setEditingId] = useState('');
   const [editingContent, setEditingContent] = useState<EditableContent | null>(null);
   const [selectedDrafts, setSelectedDrafts] = useState<string[]>([]);
@@ -120,6 +128,19 @@ export default function CurriculumPage() {
     setTextbooks(books);
     setDrafts(items);
     setSelectedDrafts((old) => old.filter((id) => items.some((item: Draft) => item.id === id)));
+    const unitIds = [...new Set(items
+      .map((item: Draft) => item.textbookUnit?.metadata?.activation?.unitId)
+      .filter((id: string | undefined): id is string => Boolean(id)))];
+    void Promise.all(unitIds.map(async (unitId) => {
+      try {
+        const summary = await request(`/api/v1/admin/curriculum/units/${unitId}/audio`);
+        return [unitId, { total: Number(summary.total) || 0, ready: Number(summary.byStatus?.ready) || 0 }] as const;
+      } catch {
+        return null;
+      }
+    })).then((pairs) => {
+      setAudioByUnit(Object.fromEntries(pairs.filter((pair): pair is readonly [string, { total: number; ready: number }] => Boolean(pair))));
+    });
   }
   useEffect(() => { void load().catch((error) => setMessage(error.message)); }, []);
 
@@ -444,9 +465,16 @@ export default function CurriculumPage() {
         <strong>{item.title}</strong> · {item.level} · {item.status} · {item.wordList.length} 个词
         {item.textbookUnit && ` · ${item.textbook?.publisher ?? ''} ${item.textbook?.grade ?? ''} ${item.textbookUnit.unitCode}`}
         {item.humanApproved && <> · <span className="status success">人工已审核</span></>}
-        {item.humanEdited && <> · <span className="status info">人工已编辑{item.humanEditedBy ? ` · 编辑人 ${item.humanEditedBy}` : ''}</span></>}
+        {(() => {
+          const metadata = item.textbookUnit?.metadata ?? null;
+          const editedBy = item.humanEditedBy ?? metadata?.humanEdited?.by;
+          const audio = metadata?.activation?.unitId ? audioByUnit[metadata.activation.unitId] : undefined;
+          return <>
+            {(item.humanEdited || metadata?.humanEdited?.at) && <> · <span className="status info">人工已编辑{editedBy ? ` · 编辑人 ${editedBy}` : ''}</span></>}
+            {audio && audio.total > 0 && <> · <span className={`status ${audio.ready === audio.total ? 'success' : 'warn'}`}>音频 {audio.ready}/{audio.total} 就绪</span></>}
+          </>;
+        })()}
         {item.generatedContent?.vocabulary && ` · 已生成 ${item.generatedContent.vocabulary.length} 个词条`}
-        {item.audio && item.audio.total > 0 && <> · <span className={`status ${item.audio.ready === item.audio.total ? 'success' : 'warn'}`}>音频 {item.audio.ready}/{item.audio.total} 就绪</span></>}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
           {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>AI 补全课程</button>}
           {item.generatedContent && ['generated', 'rejected', 'under_review', 'approved', 'published'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setEditingContent(toEditableContent(item.generatedContent)); }}>编辑课程</button>}
