@@ -30,11 +30,11 @@ function normalizedHost(url: URL): string {
   return ['localhost', '127.0.0.1', '::1'].includes(host) ? 'loopback' : host;
 }
 
-export function queueConnectionOptions(queueUrl: string, cacheUrl: string):
+export function queueConnectionOptions(queueUrl: string, cacheUrl: string, allowShared = false):
   { producer: RedisOptions; worker: RedisOptions } | undefined {
   if (!queueUrl.trim()) return undefined;
   const queue = redisEndpoint(queueUrl);
-  if (cacheUrl) {
+  if (cacheUrl && !allowShared) {
     const cache = redisEndpoint(cacheUrl);
     if (normalizedHost(queue) === normalizedHost(cache) && (queue.port || '6379') === (cache.port || '6379')) {
       throw new Error('QUEUE_REDIS_URL 必须使用独立 Redis server');
@@ -100,13 +100,14 @@ export class QueueRuntimeService implements OnModuleDestroy {
   startImageCache(processor: (job: Job<{ assetId?: string }>) => Promise<void>): void {
     if (this.initialization || this.closing) return;
     this.processor = processor;
-    this.initialization = this.initialize(processor).catch(() => {
-      this.logger.error('图片缓存队列配置或初始化失败；后台任务停用，不回退定时器');
+    this.initialization = this.initialize(processor).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`图片缓存队列配置或初始化失败；后台任务停用，不回退定时器：${message}`);
     });
   }
 
   private async initialize(processor: (job: Job<{ assetId?: string }>) => Promise<void>): Promise<void> {
-    const options = queueConnectionOptions(this.config.queueRedisUrl, this.config.redisUrl);
+    const options = queueConnectionOptions(this.config.queueRedisUrl, this.config.redisUrl, this.config.queueAllowSharedRedis);
     if (!options) {
       this.logger.warn('未配置 QUEUE_REDIS_URL；图片后台缓存已禁用');
       return;
