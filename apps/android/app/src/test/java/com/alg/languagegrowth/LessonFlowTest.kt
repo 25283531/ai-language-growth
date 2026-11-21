@@ -41,11 +41,16 @@ class LessonFlowTest {
     @Test
     fun `词汇同一词要累计三次才换词`() {
         var state = LessonFlowState(stage = LessonStage.WORDS, wordIndex = 0)
-        state = state.afterWordScore(80.0, wordCount = 2)
+        state = state.withWordPass(80.0)
         assertEquals(1, state.wordPasses)
-        state = state.afterWordScore(80.0, wordCount = 2)
+        state = state.withWordPass(80.0)
         assertEquals(2, state.wordPasses)
-        state = state.afterWordScore(80.0, wordCount = 2)
+        assertEquals(0, state.wordIndex)
+        state = state.withWordPass(80.0)
+        assertEquals(3, state.wordPasses)
+        // 不自动换词：孩子确认后再点「下一个词」。
+        assertEquals(0, state.wordIndex)
+        state = state.advanceWord(wordCount = 2)
         assertEquals(1, state.wordIndex)
         assertEquals(0, state.wordPasses)
         assertEquals(LessonStage.WORDS, state.stage)
@@ -54,15 +59,21 @@ class LessonFlowTest {
     @Test
     fun `词汇未过50分不计数`() {
         val state = LessonFlowState(stage = LessonStage.WORDS, wordIndex = 0, wordPasses = 2)
-        val next = state.afterWordScore(49.0, wordCount = 2)
+        val next = state.withWordPass(49.0)
         assertEquals(2, next.wordPasses)
         assertEquals(0, next.wordIndex)
     }
 
     @Test
+    fun `没满三次不能换词`() {
+        val state = LessonFlowState(stage = LessonStage.WORDS, wordIndex = 0, wordPasses = 2)
+        assertEquals(state, state.advanceWord(wordCount = 3))
+    }
+
+    @Test
     fun `最后一个词通过三次后进入语法`() {
-        val state = LessonFlowState(stage = LessonStage.WORDS, wordIndex = 1, wordPasses = 2)
-        val next = state.afterWordScore(75.0, wordCount = 2)
+        val state = LessonFlowState(stage = LessonStage.WORDS, wordIndex = 1, wordPasses = 3)
+        val next = state.advanceWord(wordCount = 2)
         assertEquals(LessonStage.GRAMMAR, next.stage)
     }
 

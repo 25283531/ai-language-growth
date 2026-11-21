@@ -141,15 +141,29 @@ export class ModelScopeTtsAdapter implements TtsAdapter {
 }
 
 /**
+ * 单词评测得分：openpronounce 的词错率对单个单词只有 0/1 两种结果，
+ * 直接用会把「差一个音」判成 0 分。这里按音素距离给部分分：
+ * 0→100、1→80、2→60、3→40，距离再大就 0 分。
+ */
+export function scoreSingleWordAudio(distance: number): number {
+  if (!Number.isFinite(distance) || distance <= 0) return 100;
+  return clampScore(100 - 20 * distance);
+}
+
+/**
  * 把 openpronounce 的原始教学分标定成孩子看到的 0-100 分。
  *
- * 实测：中文母语成人朗读只能拿到 30-40 分，孩子 0-20 分。原始分 40 已经接近
- * 母语者水平，按 40 → 95 线性拉伸，超过 42 分直接满分。
- * 标定表：0→0、10→24、20→48、30→71、40→95、≥43→100。
+ * 实测（中文母语者）：读得很好约 40 分，读得一般约 30 分。标定目标：
+ *  - 40 分（母语者水平）→ 95；
+ *  - 40 分以上平缓上升，只有原始满分才给 100（避免随便读到 100）；
+ *  - 40 分以下用 1.8 次方压降，读得一般约 57、读得含糊约 27。
+ * 标定表：0→0、10→8、20→27、30→57、40→95、50→96、100→100。
  */
 export function calibrateModelscopeScore(rawScore: number): number {
   if (!Number.isFinite(rawScore)) return 0;
-  return clampScore((Math.max(0, rawScore) * 95) / 40);
+  const raw = Math.max(0, Math.min(100, rawScore));
+  if (raw <= 40) return clampScore(95 * Math.pow(raw / 40, 1.8));
+  return clampScore(95 + (5 * (raw - 40)) / 60);
 }
 
 /**
@@ -214,9 +228,11 @@ export class ModelScopeAssessAdapter implements PronunciationAdapter {
     const wordErrorRate = typeof raw.differences?.word_error_rate === 'number'
       ? raw.differences.word_error_rate
       : errors.length / targetWords;
-    // 教学分：以“读错的词占比”为准，再按实测标定拉伸到 0-100（40 分≈母语者水平 → 95）。
+    // 句子按词错率标定；单个单词没有中间态，改按音素距离给分，避免差一个音就 0 分。
     const baseScore = 100 * (1 - Math.min(1, Math.max(0, wordErrorRate)));
-    const teaching = calibrateModelscopeScore(baseScore);
+    const teaching = targetWords === 1
+      ? scoreSingleWordAudio(errors.length === 0 ? 0 : Math.max(1, errors[0]?.phone_distance ?? 1))
+      : calibrateModelscopeScore(baseScore);
 
     const units: PronunciationResponse['units'] = [];
     for (const error of errors) {

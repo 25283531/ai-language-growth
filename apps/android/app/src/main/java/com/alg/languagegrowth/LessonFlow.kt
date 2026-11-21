@@ -84,10 +84,14 @@ internal fun LessonFlowState.afterSentenceScore(
     }
 }
 
-internal fun LessonFlowState.afterWordScore(score: Double, wordCount: Int): LessonFlowState {
+/** 单词过关一次；同一个词累计到 3 次后由 [advanceWord] 翻到下ー个词。 */
+internal fun LessonFlowState.withWordPass(score: Double): LessonFlowState {
     if (score <= LESSON_PASS_SCORE) return this
-    val passes = wordPasses + 1
-    if (passes < WORD_PASS_REQUIRED) return copy(wordPasses = passes)
+    return copy(wordPasses = minOf(wordPasses + 1, WORD_PASS_REQUIRED))
+}
+
+internal fun LessonFlowState.advanceWord(wordCount: Int): LessonFlowState {
+    if (wordPasses < WORD_PASS_REQUIRED) return this
     val next = wordIndex + 1
     return if (next < wordCount) {
         copy(wordIndex = next, wordPasses = 0)
@@ -119,8 +123,7 @@ internal fun FocusWord.lessonExplanation(): String {
     return parts.joinToString("")
 }
 
-/** 语法讲解稿：标题 + 形式 + 讲解 + 例句，重复收听时读同一段。 */
-private fun grammarSpeech(point: GrammarPoint): String {
+/** 语法讲解稿：标题 + 形式 + 讲解 + 例句，重复收听时读同一段。 */private fun grammarSpeech(point: GrammarPoint): String {
     val parts = mutableListOf<String>()
     if (point.title.isNotBlank()) parts += "${point.title}。"
     if (point.pattern.isNotBlank()) parts += "它的形式是：${point.pattern}。"
@@ -129,6 +132,30 @@ private fun grammarSpeech(point: GrammarPoint): String {
         parts += "例句：${example.en}${if (example.zh.isNotBlank()) "。意思是：${example.zh}" else ""}。"
     }
     return parts.joinToString("")
+}
+
+/** TTS 点评稿：优先用服务端给的得分点/失分点，缺失时按错音列表拼一句。 */
+private fun speechForResult(score: Double, result: JSONObject): String {
+    val coaching = result.optJSONObject("coaching")
+        ?.optString("displayText", "")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() && it != "null" }
+    if (coaching != null) return coaching
+    val units = result.optJSONArray("units")
+    val wrong = buildList {
+        for (index in 0 until (units?.length() ?: 0)) {
+            val unit = units?.optJSONObject(index) ?: continue
+            if (unit.optBoolean("correct", true)) continue
+            val text = unit.optString("text", "").trim()
+            if (text.isNotEmpty()) add(text)
+        }
+    }.distinct().take(4)
+    val head = "这次 ${score.roundToInt()} 分。"
+    return if (wrong.isEmpty()) {
+        head + "整句都读得很清楚，再读一遍会更稳。"
+    } else {
+        head + "这几个词还要再练：${wrong.joinToString("、")}。先听一遍，再跟着读。"
+    }
 }
 
 @Composable
@@ -160,6 +187,8 @@ internal fun LessonFlowHost(
     var feedback by remember { mutableStateOf("") }
     var attempt by remember { mutableStateOf(0) }
     var passed by remember { mutableStateOf(false) }
+    var cleared by remember { mutableStateOf(false) }
+    var clearedScore by remember { mutableStateOf(0.0) }
     var startedAt by remember { mutableStateOf(0L) }
 
     fun resetAttempts() {
@@ -209,11 +238,20 @@ internal fun LessonFlowHost(
                         if (value.isFinite()) {
                             score = value
                             passed = value > LESSON_PASS_SCORE
+                            if (passed) {
+                                cleared = true
+                                clearedScore = value
+                                if (state.stage == LessonStage.WORDS) {
+                                    state = state.withWordPass(value)
+                                }
+                            }
                             feedback = if (passed) {
                                 "很好，${value.roundToInt()} 分，可以继续了。"
                             } else {
                                 "${value.roundToInt()} 分，再清楚一点，超过 50 分就能继续。"
                             }
+                            // 分数出来后用中文语音点评得分点与失分点，孩子不用盯着小字。
+                            speakText(speechForResult(value, result))
                         } else {
                             feedback = "老师没听清，再按住试一次。"
                         }
@@ -227,17 +265,20 @@ internal fun LessonFlowHost(
         }
     }
 
-    // 过关后稍等一会儿再翻页，让孩子先看到分数。
-    LaunchedEffect(passed, state.stage, state.sentenceIndex, state.wordIndex) {
-        if (!passed) return@LaunchedEffect
-        delay(1200)
-        val value = score ?: return@LaunchedEffect
-        state = when (state.stage) {
-            LessonStage.SENTENCE -> state.afterSentenceScore(value, sentences.size, words.size)
-            LessonStage.WORDS -> state.afterWordScore(value, words.size)
-            else -> state
+    // 不自动翻页：孩子要能盯着屏幕看分数，听完点评后自己点按钮继续。
+    // 进入下一个单词时顺带把「要跟读哪个词」说出来。
+    LaunchedEffect(state.stage, state.sentenceIndex, state.wordIndex) {
+        cleared = false
+        clearedScore = 0.0
+        score = null
+        feedback = ""
+        attempt = 0
+        passed = false
+        if (state.stage == LessonStage.WORDS) {
+            words.getOrNull(state.wordIndex)?.let { word ->
+                speakText("请跟读单词 ${word.word}。按住按钮，读出这个词。")
+            }
         }
-        resetAttempts()
     }
 
     LessonHeader(
@@ -290,6 +331,15 @@ internal fun LessonFlowHost(
                     feedback = feedback,
                     passed = passed,
                     onPlay = { slow -> playSentence(sentence, slow) },
+                    canAdvance = cleared,
+                    advanceLabel = if (state.sentenceIndex == sentences.lastIndex) {
+                        if (words.isEmpty()) "进入语法讲解 →" else "进入重点词汇 →"
+                    } else {
+                        "下一句 →"
+                    },
+                    onAdvance = {
+                        state = state.afterSentenceScore(clearedScore, sentences.size, words.size)
+                    },
                     onBegin = beginHold,
                     onEnd = endHold,
                 )
@@ -318,6 +368,9 @@ internal fun LessonFlowHost(
                             ?: word.playableClips.firstOrNull()?.audioRef
                         if (ref != null) playRef(ref)
                     },
+                    canAdvance = state.wordPasses >= WORD_PASS_REQUIRED,
+                    advanceLabel = if (state.wordIndex == words.lastIndex) "进入语法讲解 →" else "下一个词 →",
+                    onAdvance = { state = state.advanceWord(words.size) },
                     onBegin = beginHold,
                     onEnd = endHold,
                 )
@@ -453,6 +506,9 @@ private fun SentencePage(
     score: Double?,
     feedback: String,
     passed: Boolean,
+    canAdvance: Boolean,
+    advanceLabel: String,
+    onAdvance: () -> Unit,
     onPlay: (Boolean) -> Unit,
     onBegin: () -> Unit,
     onEnd: () -> Unit,
@@ -501,16 +557,20 @@ private fun SentencePage(
         }
         if (passed) {
             Text(
-                "超过 50 分，马上进入下一句 →",
-                style = MaterialTheme.typography.labelLarge,
+                "打分完成，看完分数再点下面的按钮继续。",
+                style = MaterialTheme.typography.bodySmall,
                 color = GrowthColors.PrimaryDeep,
             )
         }
-        Text(
-            "这句超过 50 分才能进入下一句。",
-            style = MaterialTheme.typography.bodySmall,
-            color = GrowthColors.InkSoft,
-        )
+        if (canAdvance) {
+            GrowthPrimaryButton(advanceLabel, onAdvance, emoji = "→")
+        } else {
+            Text(
+                "这句超过 50 分才能继续。",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
     }
 }
 
@@ -526,6 +586,9 @@ private fun WordPage(
     score: Double?,
     feedback: String,
     passed: Boolean,
+    canAdvance: Boolean,
+    advanceLabel: String,
+    onAdvance: () -> Unit,
     onSpeak: () -> Unit,
     onPlayWord: () -> Unit,
     onBegin: () -> Unit,
@@ -551,6 +614,11 @@ private fun WordPage(
         if (word.phonetic.isNotBlank()) {
             Text(word.phonetic, style = MaterialTheme.typography.titleMedium, color = GrowthColors.InkSoft)
         }
+        Text(
+            "请跟读这个单词：${word.word}",
+            style = MaterialTheme.typography.titleMedium,
+            color = GrowthColors.PrimaryDeep,
+        )
         if (word.meaningZh.isNotBlank()) {
             Text(word.meaningZh, style = MaterialTheme.typography.titleMedium, color = GrowthColors.Ink)
         }
@@ -604,6 +672,9 @@ private fun WordPage(
             style = MaterialTheme.typography.bodySmall,
             color = GrowthColors.InkSoft,
         )
+        if (canAdvance) {
+            GrowthPrimaryButton(advanceLabel, onAdvance, emoji = "→")
+        }
     }
 }
 
