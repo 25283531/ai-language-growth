@@ -1,5 +1,5 @@
 services:
-  backend:
+  app:
     environment:
       # 生产固定走真实模型网关；避免不带环境变量执行 compose up 时回退 mock。
       # 具体供应商密钥仍只从 .env / 密钥管理注入，不写入本文件。

@@ -20,6 +20,8 @@ services:
     networks:
       - alg-net
 
+  # 缓存与队列共用同一实例，用不同 DB 区分：0=缓存，1=队列。
+  # noeviction 保证队列 job 不会被 LRU 淘汰；容量上限由 maxmemory 控制。
   redis:
     image: redis:7-alpine
     container_name: alg-redis
@@ -28,10 +30,12 @@ services:
       - redis-server
       - --appendonly
       - "yes"
+      - --appendfsync
+      - everysec
       - --maxmemory
-      - 256mb
+      - "${REDIS_MAXMEMORY:-512mb}"
       - --maxmemory-policy
-      - allkeys-lru
+      - noeviction
     volumes:
       - redisdata:/data
     healthcheck:
@@ -43,53 +47,25 @@ services:
     networks:
       - alg-net
 
-  redis-queue:
-    image: redis:7-alpine
-    container_name: alg-redis-queue
-    restart: unless-stopped
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-      - --appendfsync
-      - everysec
-      - --maxmemory
-      # 可覆盖的开发初始值，非容量评估；生产须实测容量并预留 AOF 重写等开销。
-      - "${QUEUE_REDIS_MAXMEMORY:-256mb}"
-      - --maxmemory-policy
-      - noeviction
-    volumes:
-      - redisqueuedata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    networks:
-      - alg-net
-
-  backend:
-    image: ghcr.io/25283531/ai-language-growth-backend:latest
-    container_name: alg-backend
+  # 单容器应用：backend + curriculum-generator + admin-web + web。
+  app:
+    image: ghcr.io/25283531/ai-language-growth-app:latest
+    container_name: alg-app
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      redis-queue:
-        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-alg}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_language_growth}?schema=public
       REDIS_URL: redis://redis:6379
-      QUEUE_REDIS_URL: ${QUEUE_REDIS_URL:-redis://redis-queue:6379}
+      QUEUE_REDIS_URL: ${QUEUE_REDIS_URL:-redis://redis:6379/1}
       AI_GATEWAY_MODE: ${AI_GATEWAY_MODE:-mock}
       AI_GATEWAY_LIVE_SERVICES: ${AI_GATEWAY_LIVE_SERVICES:-llm,asr,tts}
       # 所有 Provider 配置必须在此透传；漏一个就会在容器里静默回落 Mock（约束二）。
-      # 新增配置项时同步更新 .env.example 与本段。
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-}
@@ -136,71 +112,30 @@ services:
       MEMBER_ASR_DAILY_QUOTA_SECONDS: ${MEMBER_ASR_DAILY_QUOTA_SECONDS:-1800}
       MEMBER_TTS_DAILY_QUOTA_SECONDS: ${MEMBER_TTS_DAILY_QUOTA_SECONDS:-1800}
       MEMBER_PRONUNCIATION_DAILY_QUOTA_SECONDS: ${MEMBER_PRONUNCIATION_DAILY_QUOTA_SECONDS:-1800}
-      CURRICULUM_GENERATOR_URL: http://curriculum-generator:3200
+      CURRICULUM_GENERATOR_URL: http://127.0.0.1:3200
       CURRICULUM_GENERATOR_TOKEN: ${CURRICULUM_GENERATOR_TOKEN:?CURRICULUM_GENERATOR_TOKEN is required}
-    volumes:
-      - backenddata:/app/.cache
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 25s
-    networks:
-      - alg-net
-
-  curriculum-generator:
-    image: ghcr.io/25283531/curriculum-generator:latest
-    container_name: alg-curriculum-generator
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      PORT: 3200
       CURRICULUM_PACKAGE_DIR: /app/data/packages
-      BACKEND_INTERNAL_URL: http://backend:3000
-      CURRICULUM_GENERATOR_TOKEN: ${CURRICULUM_GENERATOR_TOKEN:?CURRICULUM_GENERATOR_TOKEN is required}
-    volumes:
-      - curriculum_packages:/app/data/packages
-    networks:
-      - alg-net
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  admin-web:
-    image: ghcr.io/25283531/ai-language-growth-admin-web:latest
-    container_name: alg-admin-web
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_started
-    environment:
-      BACKEND_INTERNAL_URL: http://backend:3000
+      BACKEND_INTERNAL_URL: http://127.0.0.1:3000
     ports:
       - "${ADMIN_WEB_PORT:-3001}:3001"
+      - "${WEB_PORT:-3002}:3002"
+    volumes:
+      - backenddata:/app/.cache
+      - curriculum_packages:/app/data/packages
     networks:
-      - alg-net
-
-  web:
-    image: ghcr.io/25283531/ai-language-growth-web:latest
-    container_name: alg-web
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_started
-    environment:
-      BACKEND_INTERNAL_URL: http://backend:3000
-    ports:
-      - "${WEB_PORT:-3002}:3000"
-    networks:
-      - alg-net
+      alg-net:
+        aliases:
+          - backend
+          - admin-web
+          - web
 
 volumes:
   pgdata:
   redisdata:
-  redisqueuedata:
   backenddata:
   curriculum_packages:
+  # 旧版独立队列 Redis 的数据卷保留，便于回滚；新栈不再使用。
+  redisqueuedata:
 
 networks:
   alg-net:

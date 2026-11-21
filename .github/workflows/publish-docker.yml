@@ -24,6 +24,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - name: app
+            image: ghcr.io/25283531/ai-language-growth-app
+            dockerfile: deploy/docker/app.Dockerfile
           - name: backend
             image: ghcr.io/25283531/ai-language-growth-backend
             dockerfile: deploy/docker/backend.Dockerfile
