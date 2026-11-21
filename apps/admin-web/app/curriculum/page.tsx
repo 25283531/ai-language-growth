@@ -24,6 +24,9 @@ type Draft = {
   textbook?: Textbook | null;
   textbookUnit?: { unitCode: string; title: string } | null;
   reviewNote?: string | null;
+  humanEdited?: boolean;
+  humanApproved?: boolean;
+  reviews?: Array<{ action: string; reviewer?: string | null; note?: string | null; createdAt?: string }>;
 };
 type EditableContent = {
   title: string;
@@ -76,6 +79,7 @@ export default function CurriculumPage() {
   const [textbook, setTextbook] = useState({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
   const [draft, setDraft] = useState({ title: '', level: 'pre-A', outline: '', objectives: '', words: '', textbookId: '', textbookUnitId: '' });
   const [wordListText, setWordListText] = useState('');
+  const [reviewFilter, setReviewFilter] = useState({ level: '', textbookId: '', textbookUnitId: '', status: '', source: 'textbook', q: '' });
   const [curriculumTitle, setCurriculumTitle] = useState('');
   const [curriculumLevel, setCurriculumLevel] = useState('pre-A1');
   const [generatedJson, setGeneratedJson] = useState('');
@@ -93,9 +97,17 @@ export default function CurriculumPage() {
     return body;
   }
   async function load() {
+    const params = new URLSearchParams();
+    if (reviewFilter.level) params.set('level', reviewFilter.level);
+    if (reviewFilter.textbookId) params.set('textbookId', reviewFilter.textbookId);
+    if (reviewFilter.textbookUnitId) params.set('textbookUnitId', reviewFilter.textbookUnitId);
+    if (reviewFilter.status) params.set('status', reviewFilter.status);
+    if (reviewFilter.source) params.set('source', reviewFilter.source);
+    if (reviewFilter.q.trim()) params.set('q', reviewFilter.q.trim());
+    const query = params.toString();
     const [books, items] = await Promise.all([
       request('/api/v1/admin/curriculum/textbooks'),
-      request('/api/v1/admin/curriculum/drafts'),
+      request(`/api/v1/admin/curriculum/drafts${query ? `?${query}` : ''}`),
     ]);
     setTextbooks(books);
     setDrafts(items);
@@ -318,6 +330,28 @@ export default function CurriculumPage() {
       await load(); setEditingId(''); setMessage(item.status === 'published' ? '已上线内容已保存，下一节课生效。' : '课程内容已保存，可直接发布。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存课程内容失败'); } finally { setBusy(false); }
   }
+  async function reviewAction(item: Draft, action: 'submit' | 'approve' | 'reject') {
+    let note: string | undefined;
+    if (action === 'reject') {
+      const input = window.prompt('退回原因（会写进审核记录）', '');
+      if (input === null) return;
+      note = input.trim() || undefined;
+    }
+    setPendingAction(`${item.id}:${action}`);
+    try {
+      await request(`/api/v1/admin/curriculum/drafts/${item.id}/review`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, reviewer: 'admin-web', ...(note ? { note } : {}) }),
+      });
+      await load();
+      setMessage(action === 'submit' ? '已提交人工审核。' : action === 'approve' ? '审核通过，可发布。' : '已退回修改。');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '审核操作失败');
+    } finally {
+      setPendingAction('');
+    }
+  }
   function updateVocabulary(index: number, patch: Partial<EditableContent['vocabulary'][number]>) {
     setEditingContent((old) => old ? { ...old, vocabulary: old.vocabulary.map((item, i) => i === index ? { ...item, ...patch } : item) } : old);
   }
@@ -404,7 +438,19 @@ export default function CurriculumPage() {
       {generatedPackage && <a className="doclink" href={`/api/v1/admin/curriculum/generator/packages/${generatedPackage}/download`}>下载刚生成的课程 ZIP</a>}
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
-      <div className="panel-head"><div><p className="eyebrow">COURSE DRAFTS</p><h2>课程草稿与发布</h2></div></div>
+      <div className="panel-head"><div><p className="eyebrow">REVIEW QUEUE</p><h2>审核队列</h2><p className="muted">默认只看教材单元内容；可按 CEFR 等级、教材、单元和审核状态筛选。人工保存过的内容标「人工已编辑」，审核通过的标「人工已审核」。</p></div></div>
+      <div className="fields">
+        <label>CEFR 等级<select value={reviewFilter.level} onChange={(event) => setReviewFilter({ ...reviewFilter, level: event.target.value })}><option value="">全部</option><option>pre-A1</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select></label>
+        <label>教材<select value={reviewFilter.textbookId} onChange={(event) => setReviewFilter({ ...reviewFilter, textbookId: event.target.value, textbookUnitId: '' })}><option value="">全部</option>{textbooks.map((book) => <option key={book.id} value={book.id}>{book.publisher} · {book.grade} · {book.title || '教材'}</option>)}</select></label>
+        <label>单元<select value={reviewFilter.textbookUnitId} disabled={!reviewFilter.textbookId} onChange={(event) => setReviewFilter({ ...reviewFilter, textbookUnitId: event.target.value })}><option value="">全部</option>{(textbooks.find((book) => book.id === reviewFilter.textbookId)?.units ?? []).map((unit) => <option key={unit.id} value={unit.id}>{unit.unitCode} · {unit.title}</option>)}</select></label>
+        <label>审核状态<select value={reviewFilter.status} onChange={(event) => setReviewFilter({ ...reviewFilter, status: event.target.value })}><option value="">全部</option><option value="draft">未补全</option><option value="generated">已生成/AI 补全</option><option value="under_review">待人工审核</option><option value="approved">已审核通过</option><option value="rejected">已退回</option><option value="published">已发布</option></select></label>
+        <label>内容来源<select value={reviewFilter.source} onChange={(event) => setReviewFilter({ ...reviewFilter, source: event.target.value })}><option value="textbook">教材单元（新）</option><option value="legacy">旧课程包</option><option value="">全部</option></select></label>
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <button onClick={() => void load().catch((error) => setMessage(error.message))}>应用筛选</button>
+        <button className="secondary" onClick={() => setReviewFilter({ level: '', textbookId: '', textbookUnitId: '', status: '', source: '', q: '' })}>清空条件</button>
+        <span className="status">当前 {drafts.length} 节</span>
+      </div>
       <div className="row-actions" style={{ marginBottom: 14 }}>
         <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           <input type="checkbox" aria-label="全选当前列表课程" aria-checked={partiallySelected ? 'mixed' : allSelected} checked={allSelected} ref={(element) => { if (element) element.indeterminate = partiallySelected; }} disabled={!drafts.length || busy || Boolean(pendingAction)} onChange={(event) => setSelectedDrafts(event.target.checked ? drafts.map((item) => item.id) : [])} />
@@ -417,13 +463,22 @@ export default function CurriculumPage() {
       {drafts.map((item) => <div className="helper" key={item.id}>
         <label className="switch" style={{ display: 'inline-flex', marginRight: 8 }}><input type="checkbox" aria-label={`选择课程：${item.title}`} disabled={busy || Boolean(pendingAction)} checked={selectedDrafts.includes(item.id)} onChange={(event) => setSelectedDrafts((old) => event.target.checked ? [...old, item.id] : old.filter((id) => id !== item.id))} /><span /></label>
         <strong>{item.title}</strong> · {item.level} · {item.status} · {item.wordList.length} 个词
+        {item.textbookUnit && ` · ${item.textbook?.publisher ?? ''} ${item.textbook?.grade ?? ''} ${item.textbookUnit.unitCode}`}
+        {item.humanApproved && <> · <span className="status success">人工已审核</span></>}
+        {item.humanEdited && <> · <span className="status info">人工已编辑</span></>}
         {item.generatedContent?.vocabulary && ` · 已生成 ${item.generatedContent.vocabulary.length} 个词条`}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
           {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>AI 补全课程</button>}
           {item.generatedContent && ['generated', 'rejected', 'under_review', 'approved', 'published'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setEditingContent(toEditableContent(item.generatedContent)); }}>编辑课程</button>}
           {['generated', 'rejected', 'under_review', 'approved'].includes(item.status) && <button disabled={Boolean(pendingAction)} onClick={() => void draftAction(item.id, 'publish')}>{pendingAction === `${item.id}:publish` ? '正在发布…' : '发布课程'}</button>}
+          {item.status === 'generated' && <button className="secondary" disabled={busy || Boolean(pendingAction)} onClick={() => void reviewAction(item, 'submit')}>提交审核</button>}
+          {item.status === 'under_review' && <>
+            <button disabled={busy || Boolean(pendingAction)} onClick={() => void reviewAction(item, 'approve')}>审核通过</button>
+            <button className="secondary" disabled={busy || Boolean(pendingAction)} onClick={() => void reviewAction(item, 'reject')}>退回修改</button>
+          </>}
         </div>
         {draftErrors[item.id] && <p className="status" role="alert">操作失败：{draftErrors[item.id]}</p>}
+        {item.reviewNote && <div className="muted">审核备注：{item.reviewNote}</div>}
         {editingId === item.id && editingContent && <div style={{ marginTop: 12 }}>
           <div className="fields">
             <label>课程标题<input value={editingContent.title} onChange={(event) => setEditingContent({ ...editingContent, title: event.target.value })} /></label>

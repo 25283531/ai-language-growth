@@ -104,6 +104,8 @@ type TextbookUnit = {
   contentVersion: string | null;
   availability: string | null;
   reviewStatus: string | null;
+  humanEditedAt?: string | null;
+  humanEditedBy?: string | null;
   textbook: (TextbookOption & { volume?: string }) | null;
 };
 
@@ -878,6 +880,7 @@ export function TextbookUnitPanel({
             {unit.currentVersion !== null ? ` · currentVersion=${unit.currentVersion}` : ''}
             {unit.contentVersion ? ` · contentVersion=${unit.contentVersion.slice(0, 8)}` : ''}
             {unit.reviewStatus ? ` · reviewStatus=${unit.reviewStatus}` : ''}
+            {unit.humanEditedAt ? ` · 人工已编辑（${unit.humanEditedBy ?? 'admin'} ${unit.humanEditedAt.slice(0, 10)}）` : ''}
             {qcReport?.needsReview ? ' · needsReview' : ''}
           </p>
         </div>

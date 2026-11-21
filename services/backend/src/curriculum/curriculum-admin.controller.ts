@@ -1053,6 +1053,7 @@ export class CurriculumAdminController {
     const objectives = input.objectives === undefined
       ? toStringArray(previousMetadata.objectives)
       : normalizeLineInput(input.objectives, 20);
+    const editor = this.adminAuth.resolveRequest({ headers: { cookie } });
     const existingSentenceMetadata = passageSentenceMetadata(existing?.metadata);
     const splitPassageContent = {
       title: input.unit.title,
@@ -1077,6 +1078,8 @@ export class CurriculumAdminController {
       schoolModules: input.schoolModules ?? (Array.isArray(previousMetadata.schoolModules) ? previousMetadata.schoolModules : []),
       objectives,
       autoPublish: input.autoPublish,
+      // 人工录入/修改留痕：列表与详情可据此显示「人工已编辑」。
+      humanEdited: { at: new Date().toISOString(), by: editor },
       ...(input.content ? { content: input.content } : {}),
     };
     // 原文变化后旧资源包已失效；没有显式传入新 content 时清掉，避免详情页展示过期活动。
@@ -1140,17 +1143,39 @@ export class CurriculumAdminController {
     @Headers('cookie') cookie: string | undefined,
     @Query('status') status?: string,
     @Query('level') level?: string,
+    @Query('textbookId') textbookId?: string,
+    @Query('textbookUnitId') textbookUnitId?: string,
+    @Query('source') source?: string,
+    @Query('q') q?: string,
   ) {
     this.authorize(cookie);
-    return this.prisma.curriculum_drafts.findMany({
+    const search = q?.trim();
+    if (textbookId && !z.string().uuid().safeParse(textbookId).success) {
+      throw new BadRequestException('textbookId 格式不正确');
+    }
+    if (textbookUnitId && !z.string().uuid().safeParse(textbookUnitId).success) {
+      throw new BadRequestException('textbookUnitId 格式不正确');
+    }
+    const items = await this.prisma.curriculum_drafts.findMany({
       where: {
         ...(status ? { status } : {}),
         ...(level ? { level } : {}),
+        ...(textbookId ? { textbookId } : {}),
+        ...(textbookUnitId ? { textbookUnitId } : {}),
+        ...(source === 'textbook' ? { textbookUnitId: { not: null } } : {}),
+        ...(source === 'legacy' ? { textbookUnitId: null } : {}),
+        ...(search ? { title: { contains: search, mode: 'insensitive' as const } } : {}),
       },
       include: { textbook: true, textbookUnit: true, reviews: { orderBy: { createdAt: 'desc' }, take: 10 } },
       orderBy: { updatedAt: 'desc' },
       take: 100,
     });
+    // 人工痕迹直接从审核记录派生，无需额外字段：admin-edit 为人工保存过内容，approved 为人工审核通过。
+    return items.map((item) => ({
+      ...item,
+      humanEdited: item.reviews.some((review) => review.reviewer === 'admin-edit' || review.action === 'edited'),
+      humanApproved: item.status === 'approved' || item.reviews.some((review) => review.action === 'approved'),
+    }));
   }
 
   @Post('drafts')
@@ -2074,6 +2099,12 @@ function toTextbookUnitView(
     contentVersion: publishedUnit?.contentVersion ?? null,
     availability: publishedUnit?.availability ?? null,
     reviewStatus: publishedUnit?.reviewStatus ?? null,
+    humanEditedAt: typeof metadata.humanEdited === 'object' && metadata.humanEdited !== null
+      ? asRecord(metadata.humanEdited).at ?? null
+      : null,
+    humanEditedBy: typeof metadata.humanEdited === 'object' && metadata.humanEdited !== null
+      ? asRecord(metadata.humanEdited).by ?? null
+      : null,
     metadata: unit.metadata,
     textbook: unit.textbook ? {
       ...unit.textbook,
