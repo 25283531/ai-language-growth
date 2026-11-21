@@ -134,29 +134,35 @@ internal fun FocusWord.lessonExplanation(): String {
     return parts.joinToString("")
 }
 
-/** TTS 点评稿：优先用服务端给的得分点/失分点，缺失时按错音列表拼一句。 */
+/**
+ * TTS 点评稿：分数由客户端自己报（保证和屏幕一致），只拼接服务端的动作建议。
+ * 服务端模型有时会自己编一个分数或说“第一次读”，所以不直接读 displayText。
+ */
 private fun speechForResult(score: Double, result: JSONObject): String {
     val coaching = result.optJSONObject("coaching")
-        ?.optString("displayText", "")
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() && it != "null" }
-    if (coaching != null) return coaching
+    val advice = stripScoreNumbers(coaching?.optString("advice", "").orEmpty())
+    val encourage = stripScoreNumbers(coaching?.optString("encouragement", "").orEmpty())
     val units = result.optJSONArray("units")
     val wrong = buildList {
         for (index in 0 until (units?.length() ?: 0)) {
             val unit = units?.optJSONObject(index) ?: continue
             if (unit.optBoolean("correct", true)) continue
             val text = unit.optString("text", "").trim()
-            if (text.isNotEmpty()) add(text)
+            if (text.isNotEmpty() && !contains(text)) add(text)
         }
-    }.distinct().take(4)
+    }.take(4)
     val head = "这次 ${score.roundToInt()} 分。"
-    return if (wrong.isEmpty()) {
-        head + "整句都读得很清楚，再读一遍会更稳。"
+    val body = if (wrong.isEmpty()) {
+        "每个词都读清楚了。"
     } else {
-        head + "这几个词还要再练：${wrong.joinToString("、")}。先听一遍，再跟着读。"
+        "这几个词还要再练：${wrong.joinToString("、")}。"
     }
+    return head + body + advice + encourage
 }
+
+/** 去掉点评里的数字分数，避免模型编造和屏幕不一致的分数。 */
+private fun stripScoreNumbers(text: String): String =
+    text.replace(Regex("[0-9]+(\\.[0-9]+)?\\s*分"), "").trim()
 
 @Composable
 internal fun LessonFlowHost(
@@ -208,7 +214,8 @@ internal fun LessonFlowHost(
         stopAudio()
         scope.launch {
             if (recording || scoring) return@launch
-            resetAttempts()
+            // 只清本次提示：次数和上一次分数要留着，否则服务端每次都以为是“第一次读”。
+            feedback = ""
             if (!startRecording()) {
                 feedback = "请允许麦克风权限后再跟读。"
                 return@launch

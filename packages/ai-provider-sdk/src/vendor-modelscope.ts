@@ -142,12 +142,24 @@ export class ModelScopeTtsAdapter implements TtsAdapter {
 
 /**
  * 单词评测得分：openpronounce 的词错率对单个单词只有 0/1 两种结果，
- * 直接用会把「差一个音」判成 0 分。这里按音素距离给部分分：
- * 0→100、1→80、2→60、3→40，距离再大就 0 分。
+ * 直接用会把「差一个音」判成 0 分。这里综合音素距离与音素错误率：
+ *  - 完全没听到声音（转写为空）→ 0；
+ *  - 读对 → 100；
+ *  - 否则取「音素距离得分」与「1-音素错误率」的较大值，并给 30 分底。
+ * 同一段发音不再在 0 / 100 之间跳。
  */
-export function scoreSingleWordAudio(distance: number): number {
+export function scoreSingleWordAudio(
+  distance: number,
+  phonemeErrorRate?: number | null,
+  transcribed?: string,
+): number {
+  if (typeof transcribed === 'string' && transcribed.trim() === '') return 0;
   if (!Number.isFinite(distance) || distance <= 0) return 100;
-  return clampScore(100 - 20 * distance);
+  const byDistance = 100 - 20 * distance;
+  const byPhoneme = typeof phonemeErrorRate === 'number' && Number.isFinite(phonemeErrorRate)
+    ? 100 * (1 - Math.min(1, Math.max(0, phonemeErrorRate)))
+    : 0;
+  return clampScore(Math.max(byDistance, byPhoneme, 30));
 }
 
 /**
@@ -156,13 +168,13 @@ export function scoreSingleWordAudio(distance: number): number {
  * 实测（中文母语者）：读得很好约 40 分，读得一般约 30 分。标定目标：
  *  - 40 分（母语者水平）→ 95；
  *  - 40 分以上平缓上升，只有原始满分才给 100（避免随便读到 100）；
- *  - 40 分以下用 1.8 次方压降，读得一般约 57、读得含糊约 27。
- * 标定表：0→0、10→8、20→27、30→57、40→95、50→96、100→100。
+ *  - 40 分以下用 1.5 次方压降，读得一般约 62、读得含糊约 34。
+ * 标定表：0→0、10→12、20→34、30→62、40→95、50→96、100→100。
  */
 export function calibrateModelscopeScore(rawScore: number): number {
   if (!Number.isFinite(rawScore)) return 0;
   const raw = Math.max(0, Math.min(100, rawScore));
-  if (raw <= 40) return clampScore(95 * Math.pow(raw / 40, 1.8));
+  if (raw <= 40) return clampScore(95 * Math.pow(raw / 40, 1.5));
   return clampScore(95 + (5 * (raw - 40)) / 60);
 }
 
@@ -231,7 +243,11 @@ export class ModelScopeAssessAdapter implements PronunciationAdapter {
     // 句子按词错率标定；单个单词没有中间态，改按音素距离给分，避免差一个音就 0 分。
     const baseScore = 100 * (1 - Math.min(1, Math.max(0, wordErrorRate)));
     const teaching = targetWords === 1
-      ? scoreSingleWordAudio(errors.length === 0 ? 0 : Math.max(1, errors[0]?.phone_distance ?? 1))
+      ? scoreSingleWordAudio(
+          errors.length === 0 ? 0 : Math.max(1, errors[0]?.phone_distance ?? 1),
+          raw.differences?.phoneme_error_rate ?? null,
+          typeof raw.transcribe === 'string' ? raw.transcribe : undefined,
+        )
       : calibrateModelscopeScore(baseScore);
 
     const units: PronunciationResponse['units'] = [];
