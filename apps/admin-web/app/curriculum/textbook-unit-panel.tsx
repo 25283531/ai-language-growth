@@ -295,6 +295,18 @@ export function TextbookUnitPanel({
   const [textbookCoverageReload, setTextbookCoverageReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [pick, setPick] = useState({ publisher: '', year: '', grade: '', edition: '' });
+  const pickBook = textbooks.find((book) =>
+    book.publisher === pick.publisher &&
+    String(book.publicationYear) === pick.year &&
+    book.grade === pick.grade &&
+    (book.edition || '') === pick.edition);
+
+  useEffect(() => {
+    if (pickBook && entry.textbookId !== pickBook.id) {
+      setEntry((old) => ({ ...old, textbookId: pickBook.id }));
+    }
+  }, [pickBook, entry.textbookId]);
 
   function notify(text: string) {
     setMessage(text);
@@ -716,85 +728,18 @@ export function TextbookUnitPanel({
     </div>
 
     <div className="fields">
-      <label>教材版本<select value={entry.textbookId} onChange={(event) => setEntry({ ...entry, textbookId: event.target.value })}>
-        <option value="">请选择教材版本</option>
-        {textbooks.map((book) => <option key={book.id} value={book.id}>{book.publisher} · {book.publicationYear} · {book.grade} · {book.title || '教材'} {book.edition || ''}</option>)}
-      </select></label>
+      <label>出版社<select value={pick.publisher} onChange={(event) => setPick({ publisher: event.target.value, year: '', grade: '', edition: '' })}><option value="">请选择</option>{Array.from(new Set(textbooks.map((book) => book.publisher))).map((publisher) => <option key={publisher} value={publisher}>{publisher}</option>)}</select></label>
+      <label>出版年份<select value={pick.year} disabled={!pick.publisher} onChange={(event) => setPick({ ...pick, year: event.target.value, grade: '', edition: '' })}><option value="">请选择</option>{Array.from(new Set(textbooks.filter((book) => book.publisher === pick.publisher).map((book) => book.publicationYear))).map((year) => <option key={year} value={String(year)}>{year}</option>)}</select></label>
+      <label>年级<select value={pick.grade} disabled={!pick.year} onChange={(event) => setPick({ ...pick, grade: event.target.value, edition: '' })}><option value="">请选择</option>{Array.from(new Set(textbooks.filter((book) => book.publisher === pick.publisher && String(book.publicationYear) === pick.year).map((book) => book.grade))).map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select></label>
+      <label>版本<select value={pick.edition} disabled={!pick.grade} onChange={(event) => setPick({ ...pick, edition: event.target.value })}><option value="">请选择</option>{Array.from(new Set(textbooks.filter((book) => book.publisher === pick.publisher && String(book.publicationYear) === pick.year && book.grade === pick.grade).map((book) => book.edition || ''))).map((edition) => <option key={edition} value={edition}>{edition || '未标注版本'}</option>)}</select></label>
+      {pick.grade && !pickBook && <span className="status warn">该组合还没有教材版本，请先在上方“教材版本”中创建。</span>}
       <label>已有单元<select value={selectedUnitId} onChange={(event) => setSelectedUnitId(event.target.value)}>
         <option value="">选择单元</option>
         {units.map((item) => <option key={item.id} value={item.id}>{item.unitCode} · {item.title} · {item.availability || '未启用'} · v{item.currentVersion ?? '—'}</option>)}
       </select></label>
     </div>
 
-    {unit && <div className="coverage-card">
-      <div className="coverage-head">
-        <div>
-          <p className="eyebrow">TEXTBOOK MAPPING</p>
-          <h3>教材单元映射</h3>
-          <p className="muted">
-            {mappingInfo?.stored
-              ? `已保存 v${mappingInfo.stored.version} · ${mappingInfo.stored.source}`
-              : '尚未保存，当前按单元标题/编码与词表自动推断'}
-          </p>
-        </div>
-        <span className="status">{mappingInfo?.effective.schoolModules.length ? `学校轨 ${mappingInfo.effective.schoolModules.join('/')}` : '无学校轨'}</span>
-      </div>
-      {mappingError && <p className="status error" role="status">{mappingError}</p>}
-      {mappingLoading && !mappingInfo && <p className="muted">正在读取映射…</p>}
-      {mappingInfo && <>
-        <div className="fields">
-          <label>能力节点（逗号分隔）
-            <input
-              list="textbook-skill-node-options"
-              value={mappingForm.skillNodeIds}
-              onChange={(event) => setMappingForm({ ...mappingForm, skillNodeIds: event.target.value })}
-              placeholder="LA.VOCAB.receptive, SE.SCHOOL.reading"
-            />
-          </label>
-          <label>主题领域（逗号分隔）
-            <input
-              value={mappingForm.domains}
-              onChange={(event) => setMappingForm({ ...mappingForm, domains: event.target.value })}
-              placeholder="family, daily life"
-            />
-          </label>
-          <label>学校模块（A-E，逗号分隔）
-            <input
-              value={mappingForm.schoolModules}
-              onChange={(event) => setMappingForm({ ...mappingForm, schoolModules: event.target.value })}
-              placeholder="A,C"
-            />
-          </label>
-          <label>建议阶段（0-6）
-            <input
-              type="number"
-              min={0}
-              max={6}
-              value={mappingForm.stageHint}
-              onChange={(event) => setMappingForm({ ...mappingForm, stageHint: event.target.value })}
-              placeholder="不设置"
-            />
-          </label>
-          <label>映射来源
-            <select value={mappingForm.source} onChange={(event) => setMappingForm({ ...mappingForm, source: event.target.value })}>
-              <option value="editorial">editorial（人工维护）</option>
-              <option value="ai">ai（模型提议）</option>
-              <option value="inferred">inferred（规则推断）</option>
-            </select>
-          </label>
-        </div>
-        <datalist id="textbook-skill-node-options">
-          {mappingInfo.skillNodeOptions.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}
-        </datalist>
-        <div className="row-actions">
-          <button disabled={busy || !mappingForm.skillNodeIds.trim()} onClick={() => void saveMapping()}>保存映射</button>
-          <button className="secondary" disabled={busy || !mappingInfo.stored} onClick={() => void clearMapping()}>恢复自动推断</button>
-        </div>
-        <p className="muted coverage-note">
-          映射决定生成哪些 A-E 学校轨活动、单元建议阶段和能力节点；它不写入掌握状态，也不作为学生解锁门槛。修改后需重新生成资源包才会反映到内容。
-        </p>
-      </>}
-    </div>}
+    {unit && <p className="muted">教材映射由系统自动推断（学校轨 {mappingInfo?.effective.schoolModules.join('/') || '无'}），无需人工维护。</p>}
 
     {entry.textbookId && <div className="coverage-card textbook-coverage-card">
       <div className="coverage-head">
@@ -852,14 +797,14 @@ export function TextbookUnitPanel({
     </div>}
 
     <div className="fields">
-      <label>单元编码<input value={entry.unitCode} onChange={(event) => setEntry({ ...entry, unitCode: event.target.value })} placeholder="Unit 3" /></label>
+      <label>单元序号<input value={entry.unitCode} onChange={(event) => setEntry({ ...entry, unitCode: event.target.value })} placeholder="3" /></label>
       <label>单元标题<input value={entry.title} onChange={(event) => setEntry({ ...entry, title: event.target.value })} placeholder="My Family" /></label>
       <label>顺序<input type="number" min={0} value={entry.order} onChange={(event) => setEntry({ ...entry, order: event.target.value })} /></label>
       <label>学校模块（逗号分隔）<input value={entry.schoolModules} onChange={(event) => setEntry({ ...entry, schoolModules: event.target.value })} placeholder="A,B" /></label>
     </div>
     <label>课文原文<textarea className="routing-editor" style={{ minHeight: 110 }} value={entry.passage} onChange={(event) => setEntry({ ...entry, passage: event.target.value })} placeholder="This is my family. This is my mother." /></label>
     <div className="fields">
-      <label>教材词表（每行一个）<textarea className="routing-editor" style={{ minHeight: 90 }} value={entry.words} onChange={(event) => setEntry({ ...entry, words: event.target.value })} placeholder={'family\nmother'} /></label>
+      <label>课本单词表（每行一个）<textarea className="routing-editor" style={{ minHeight: 90 }} value={entry.words} onChange={(event) => setEntry({ ...entry, words: event.target.value })} placeholder={'family\nmother'} /></label>
       <label>语法重点（每行一条）<textarea className="routing-editor" style={{ minHeight: 90 }} value={entry.grammarFocus} onChange={(event) => setEntry({ ...entry, grammarFocus: event.target.value })} placeholder="This is my ..." /></label>
     </div>
     <label>教学目标（每行一条）<textarea className="routing-editor" style={{ minHeight: 70 }} value={entry.objectives} onChange={(event) => setEntry({ ...entry, objectives: event.target.value })} placeholder="能听懂并朗读课文" /></label>

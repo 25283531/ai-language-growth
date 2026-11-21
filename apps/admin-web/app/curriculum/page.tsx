@@ -73,13 +73,18 @@ export default function CurriculumPage() {
   const [busy, setBusy] = useState(false);
   const [pendingAction, setPendingAction] = useState('');
   const [draftErrors, setDraftErrors] = useState<Record<string, string>>({});
-  const [packageFile, setPackageFile] = useState<File | null>(null);
   const [generationDescription, setGenerationDescription] = useState('');
   const [generatedPackage, setGeneratedPackage] = useState('');
   const [textbook, setTextbook] = useState({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
   const [draft, setDraft] = useState({ title: '', level: 'pre-A', outline: '', objectives: '', words: '', textbookId: '', textbookUnitId: '' });
   const [wordListText, setWordListText] = useState('');
   const [reviewFilter, setReviewFilter] = useState({ level: '', textbookId: '', textbookUnitId: '', status: '', source: 'textbook', q: '' });
+  const [reviewPublisher, setReviewPublisher] = useState('');
+  const [reviewYear, setReviewYear] = useState('');
+  const [reviewGrade, setReviewGrade] = useState('');
+  const [reviewEdition, setReviewEdition] = useState('');
+  const [reviewUnitCode, setReviewUnitCode] = useState('');
+  const [reviewLevelPick, setReviewLevelPick] = useState('');
   const [curriculumTitle, setCurriculumTitle] = useState('');
   const [curriculumLevel, setCurriculumLevel] = useState('pre-A1');
   const [generatedJson, setGeneratedJson] = useState('');
@@ -118,7 +123,7 @@ export default function CurriculumPage() {
   async function createTextbook() {
     setBusy(true);
     try {
-      await request('/api/v1/admin/curriculum/textbooks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(textbook) });
+      await request('/api/v1/admin/curriculum/textbooks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...textbook, title: undefined }) });
       setTextbook({ publisher: '', publicationYear: new Date().getFullYear(), grade: '', title: '', edition: '' });
       await load(); setMessage('教材版本已保存。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); } finally { setBusy(false); }
@@ -130,29 +135,6 @@ export default function CurriculumPage() {
       setDraft({ title: '', level: 'pre-A', outline: '', objectives: '', words: '', textbookId: '', textbookUnitId: '' });
       await load(); setMessage('课程草稿已创建。');
     } catch (error) { setMessage(error instanceof Error ? error.message : '创建失败'); } finally { setBusy(false); }
-  }
-  async function importPackage() {
-    if (!packageFile) return;
-    setBusy(true);
-    try {
-      const form = new FormData();
-      form.append('file', packageFile);
-      const response = await fetch(`${apiRoot()}/api/v1/admin/curriculum/package/import`, {
-        method: 'POST',
-        body: form,
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || `导入失败 (${response.status})`);
-      setPackageFile(null);
-      const input = document.getElementById('curriculum-package-file') as HTMLInputElement | null;
-      if (input) input.value = '';
-      await load();
-      setMessage(`课程包导入完成：新增 ${body.imported} 个单元，跳过 ${body.skipped} 个重复单元。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : '课程包导入失败');
-    } finally {
-      setBusy(false);
-    }
   }
   async function generatePackage() {
     setBusy(true);
@@ -356,6 +338,11 @@ export default function CurriculumPage() {
     setEditingContent((old) => old ? { ...old, vocabulary: old.vocabulary.map((item, i) => i === index ? { ...item, ...patch } : item) } : old);
   }
   const selectedBook = textbooks.find((book) => book.id === draft.textbookId);
+  const reviewBook = textbooks.find((book) =>
+    book.publisher === reviewPublisher &&
+    String(book.publicationYear) === reviewYear &&
+    book.grade === reviewGrade &&
+    (book.edition || '') === reviewEdition);
   const selectedStatus = drafts.filter((item) => selectedDrafts.includes(item.id));
   const canBatchPublish = selectedStatus.length > 0 && selectedStatus.every((item) => ['generated', 'rejected', 'under_review', 'approved'].includes(item.status));
   const canBatchDelete = selectedStatus.length > 0 && selectedStatus.every((item) => item.status === 'published');
@@ -405,21 +392,12 @@ export default function CurriculumPage() {
         <label>出版社<input value={textbook.publisher} onChange={(e) => setTextbook({ ...textbook, publisher: e.target.value })} /></label>
         <label>出版年份<input type="number" value={textbook.publicationYear} onChange={(e) => setTextbook({ ...textbook, publicationYear: Number(e.target.value) })} /></label>
         <label>年级<input value={textbook.grade} onChange={(e) => setTextbook({ ...textbook, grade: e.target.value })} placeholder="三年级" /></label>
-        <label>教材名称<input value={textbook.title} onChange={(e) => setTextbook({ ...textbook, title: e.target.value })} /></label>
         <label>版本<input value={textbook.edition} onChange={(e) => setTextbook({ ...textbook, edition: e.target.value })} placeholder="上册/修订版" /></label>
       </div>
       <button disabled={busy || !textbook.publisher || !textbook.grade} onClick={() => void createTextbook()}>保存教材版本</button>
       <div className="benchmark-list">{textbooks.map((book) => <div className="helper" key={book.id}><strong>{book.publisher}</strong> · {book.publicationYear} · {book.grade} · {book.title || '未命名'} {book.edition || ''} · 单元 {book.units.length}</div>)}</div>
     </section>
     <TextbookUnitPanel textbooks={textbooks} onMessage={setMessage} />
-    <section className="panel" style={{ marginTop: 24 }}>
-      <div className="panel-head"><div><p className="eyebrow">CEFR COURSE PACKAGE</p><h2>导入完整 CEFR 课程包</h2><p className="muted">支持 pre-A1、A1、A2、B1、B2、C1、C2。导入后每个单元写入课程草稿；自动校验通过后可直接发布。</p></div></div>
-      <div className="fields">
-        <label>课程包 ZIP 文件<input id="curriculum-package-file" type="file" accept=".zip,application/zip" onChange={(event) => setPackageFile(event.target.files?.[0] || null)} /></label>
-        <div className="helper">课程包必须包含根目录文件 <strong>curriculum-package.json</strong>，等级顺序和结构由服务端校验。重复导入同一 packageId 与单元编码会自动跳过。</div>
-      </div>
-      <button disabled={busy || !packageFile} onClick={() => void importPackage()}>导入课程包</button>
-    </section>
     <section className="panel" style={{ marginTop: 24 }}>
       <div className="panel-head"><div><p className="eyebrow">AI DRAFT</p><h2>按大纲和教学目的补全课程</h2><p className="muted">提交课程大纲与教学目的，词表可选；也支持沿用词表生成。小参数模型整理语言素材，主文本模型补全课程和教学活动，结果自动校验后可直接发布。</p></div></div>
       <div className="fields">
@@ -438,13 +416,17 @@ export default function CurriculumPage() {
       {generatedPackage && <a className="doclink" href={`/api/v1/admin/curriculum/generator/packages/${generatedPackage}/download`}>下载刚生成的课程 ZIP</a>}
     </section>
     <section className="panel" style={{ marginTop: 24 }}>
-      <div className="panel-head"><div><p className="eyebrow">REVIEW QUEUE</p><h2>审核队列</h2><p className="muted">默认只看教材单元内容；可按 CEFR 等级、教材、单元和审核状态筛选。人工保存过的内容标「人工已编辑」，审核通过的标「人工已审核」。</p></div></div>
+      <div className="panel-head"><div><p className="eyebrow">CONTENT REVIEW</p><h2>课程内容审核</h2><p className="muted">先选教材（出版社/年份/年级/版本）和单元，或直接选 CEFR 等级；只有选中的内容才在下方显示，可审核、编辑、发布。</p></div></div>
       <div className="fields">
         <label>CEFR 等级<select value={reviewFilter.level} onChange={(event) => setReviewFilter({ ...reviewFilter, level: event.target.value })}><option value="">全部</option><option>pre-A1</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select></label>
-        <label>教材<select value={reviewFilter.textbookId} onChange={(event) => setReviewFilter({ ...reviewFilter, textbookId: event.target.value, textbookUnitId: '' })}><option value="">全部</option>{textbooks.map((book) => <option key={book.id} value={book.id}>{book.publisher} · {book.grade} · {book.title || '教材'}</option>)}</select></label>
-        <label>单元<select value={reviewFilter.textbookUnitId} disabled={!reviewFilter.textbookId} onChange={(event) => setReviewFilter({ ...reviewFilter, textbookUnitId: event.target.value })}><option value="">全部</option>{(textbooks.find((book) => book.id === reviewFilter.textbookId)?.units ?? []).map((unit) => <option key={unit.id} value={unit.id}>{unit.unitCode} · {unit.title}</option>)}</select></label>
+        <label>出版社<select value={reviewPublisher} onChange={(event) => { setReviewPublisher(event.target.value); setReviewYear(''); setReviewGrade(''); setReviewEdition(''); setReviewUnitCode(''); }}><option value="">请选择</option>{Array.from(new Set(textbooks.map((book) => book.publisher))).map((publisher) => <option key={publisher} value={publisher}>{publisher}</option>)}</select></label>
+        <label>出版年份<select value={reviewYear} disabled={!reviewPublisher} onChange={(event) => { setReviewYear(event.target.value); setReviewGrade(''); setReviewEdition(''); setReviewUnitCode(''); }}><option value="">请选择</option>{Array.from(new Set(textbooks.filter((book) => book.publisher === reviewPublisher).map((book) => book.publicationYear))).map((year) => <option key={year} value={String(year)}>{year}</option>)}</select></label>
+        <label>年级<select value={reviewGrade} disabled={!reviewYear} onChange={(event) => { setReviewGrade(event.target.value); setReviewEdition(''); setReviewUnitCode(''); }}><option value="">请选择</option>{Array.from(new Set(textbooks.filter((book) => book.publisher === reviewPublisher && String(book.publicationYear) === reviewYear).map((book) => book.grade))).map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select></label>
+        <label>版本<select value={reviewEdition} disabled={!reviewGrade} onChange={(event) => { setReviewEdition(event.target.value); setReviewUnitCode(''); }}><option value="">请选择</option>{Array.from(new Set(textbooks.filter((book) => book.publisher === reviewPublisher && String(book.publicationYear) === reviewYear && book.grade === reviewGrade).map((book) => book.edition || ''))).map((edition) => <option key={edition} value={edition}>{edition || '未标注版本'}</option>)}</select></label>
+        <label>单元序号<select value={reviewUnitCode} disabled={!reviewEdition && !reviewBook} onChange={(event) => { setReviewUnitCode(event.target.value); setReviewFilter({ ...reviewFilter, level: '', textbookId: reviewBook?.id ?? '', textbookUnitId: reviewBook?.units.find((unit) => unit.unitCode === event.target.value)?.id ?? '' }); }}><option value="">请选择</option>{(reviewBook?.units ?? []).map((unit) => <option key={unit.id} value={unit.unitCode}>{unit.unitCode} · {unit.title}</option>)}</select></label>
         <label>审核状态<select value={reviewFilter.status} onChange={(event) => setReviewFilter({ ...reviewFilter, status: event.target.value })}><option value="">全部</option><option value="draft">未补全</option><option value="generated">已生成/AI 补全</option><option value="under_review">待人工审核</option><option value="approved">已审核通过</option><option value="rejected">已退回</option><option value="published">已发布</option></select></label>
         <label>内容来源<select value={reviewFilter.source} onChange={(event) => setReviewFilter({ ...reviewFilter, source: event.target.value })}><option value="textbook">教材单元（新）</option><option value="legacy">旧课程包</option><option value="">全部</option></select></label>
+        <label>或按 CEFR 等级<select value={reviewLevelPick} onChange={(event) => { setReviewLevelPick(event.target.value); setReviewPublisher(''); setReviewYear(''); setReviewGrade(''); setReviewEdition(''); setReviewUnitCode(''); setReviewFilter({ ...reviewFilter, level: event.target.value, textbookId: '', textbookUnitId: '' }); }}><option value="">不按等级</option><option>pre-A1</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select></label>
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
         <button onClick={() => void load().catch((error) => setMessage(error.message))}>应用筛选</button>
@@ -452,15 +434,9 @@ export default function CurriculumPage() {
         <span className="status">当前 {drafts.length} 节</span>
       </div>
       <div className="row-actions" style={{ marginBottom: 14 }}>
-        <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-          <input type="checkbox" aria-label="全选当前列表课程" aria-checked={partiallySelected ? 'mixed' : allSelected} checked={allSelected} ref={(element) => { if (element) element.indeterminate = partiallySelected; }} disabled={!drafts.length || busy || Boolean(pendingAction)} onChange={(event) => setSelectedDrafts(event.target.checked ? drafts.map((item) => item.id) : [])} />
-          全选当前列表
-        </label>
-        <button disabled={!canBatchPublish || busy || Boolean(pendingAction)} onClick={() => void batchAction('publish')}>批量发布</button>
-        <button className="secondary" disabled={!canBatchDelete || busy || Boolean(pendingAction)} onClick={() => void batchDelete()}>批量删除已发布课程</button>
         <span className="status">已选择 {selectedDrafts.length} 节</span>
       </div>
-      {drafts.map((item) => <div className="helper" key={item.id}>
+      {(reviewFilter.textbookUnitId || reviewFilter.level) && drafts.map((item) => <div className="helper" key={item.id}>
         <label className="switch" style={{ display: 'inline-flex', marginRight: 8 }}><input type="checkbox" aria-label={`选择课程：${item.title}`} disabled={busy || Boolean(pendingAction)} checked={selectedDrafts.includes(item.id)} onChange={(event) => setSelectedDrafts((old) => event.target.checked ? [...old, item.id] : old.filter((id) => id !== item.id))} /><span /></label>
         <strong>{item.title}</strong> · {item.level} · {item.status} · {item.wordList.length} 个词
         {item.textbookUnit && ` · ${item.textbook?.publisher ?? ''} ${item.textbook?.grade ?? ''} ${item.textbookUnit.unitCode}`}
@@ -517,7 +493,8 @@ export default function CurriculumPage() {
           </div>
         </div>}
       </div>)}
-      {!drafts.length && <p className="muted">暂无课程草稿。</p>}
+      {!drafts.length && (reviewFilter.textbookUnitId || reviewFilter.level) && <p className="muted">该筛选下暂无课程内容。</p>}
+      {!reviewFilter.textbookUnitId && !reviewFilter.level && <p className="muted">先选择教材版本和单元，或选择 CEFR 等级，下方才显示对应课程内容。</p>}
     </section>
     <p className="status">{message}</p>
   </main>;
