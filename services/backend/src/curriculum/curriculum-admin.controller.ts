@@ -1171,11 +1171,53 @@ export class CurriculumAdminController {
       take: 100,
     });
     // 人工痕迹直接从审核记录派生，无需额外字段：admin-edit 为人工保存过内容，approved 为人工审核通过。
-    return items.map((item) => ({
-      ...item,
-      humanEdited: item.reviews.some((review) => review.reviewer === 'admin-edit' || review.action === 'edited'),
-      humanApproved: item.status === 'approved' || item.reviews.some((review) => review.action === 'approved'),
-    }));
+    const textbookUnitIds = [...new Set(items.map((item) => item.textbookUnitId).filter((id): id is string => Boolean(id)))];
+    const activeUnits = textbookUnitIds.length
+      ? await this.prisma.curriculum_units.findMany({
+          where: { textbookUnitId: { in: textbookUnitIds }, availability: 'active' },
+          orderBy: { publishedAt: 'desc' },
+          select: { id: true, textbookUnitId: true, contentVersion: true },
+        })
+      : [];
+    const latestByTextbookUnit = new Map<string, { id: string; contentVersion: string | null }>();
+    for (const unit of activeUnits) {
+      if (unit.textbookUnitId && !latestByTextbookUnit.has(unit.textbookUnitId)) {
+        latestByTextbookUnit.set(unit.textbookUnitId, unit);
+      }
+    }
+    const publishedUnits = [...latestByTextbookUnit.values()];
+    const clipRows = publishedUnits.length
+      ? await this.prisma.curriculum_audio_clips.findMany({
+          where: { OR: publishedUnits.map((unit) => ({ unitId: unit.id, contentVersion: unit.contentVersion ?? '' })) },
+          select: { unitId: true, status: true },
+        })
+      : [];
+    const audioByUnit = new Map<string, { total: number; ready: number; failed: number }>();
+    for (const row of clipRows) {
+      const current = audioByUnit.get(row.unitId) ?? { total: 0, ready: 0, failed: 0 };
+      current.total += 1;
+      if (row.status === 'ready') current.ready += 1;
+      if (row.status === 'failed') current.failed += 1;
+      audioByUnit.set(row.unitId, current);
+    }
+    return items.map((item) => {
+      const metadata = item.textbookUnit?.metadata && typeof item.textbookUnit.metadata === 'object' && !Array.isArray(item.textbookUnit.metadata)
+        ? item.textbookUnit.metadata as Record<string, unknown> : {};
+      const editedMeta = metadata.humanEdited && typeof metadata.humanEdited === 'object'
+        ? metadata.humanEdited as { at?: unknown; by?: unknown } : null;
+      const humanEditedAt = typeof editedMeta?.at === 'string' ? editedMeta.at : null;
+      const humanEditedBy = typeof editedMeta?.by === 'string' ? editedMeta.by : null;
+      const published = item.textbookUnitId ? latestByTextbookUnit.get(item.textbookUnitId) : undefined;
+      const audio = published ? audioByUnit.get(published.id) ?? { total: 0, ready: 0, failed: 0 } : null;
+      return {
+        ...item,
+        humanEdited: item.reviews.some((review) => review.reviewer === 'admin-edit' || review.action === 'edited') || Boolean(humanEditedAt),
+        humanApproved: item.status === 'approved' || item.reviews.some((review) => review.action === 'approved'),
+        humanEditedAt,
+        humanEditedBy,
+        audio,
+      };
+    });
   }
 
   @Post('drafts')

@@ -26,6 +26,9 @@ type Draft = {
   reviewNote?: string | null;
   humanEdited?: boolean;
   humanApproved?: boolean;
+  humanEditedAt?: string | null;
+  humanEditedBy?: string | null;
+  audio?: { total: number; ready: number; failed: number } | null;
   reviews?: Array<{ action: string; reviewer?: string | null; note?: string | null; createdAt?: string }>;
 };
 type EditableContent = {
@@ -441,8 +444,9 @@ export default function CurriculumPage() {
         <strong>{item.title}</strong> · {item.level} · {item.status} · {item.wordList.length} 个词
         {item.textbookUnit && ` · ${item.textbook?.publisher ?? ''} ${item.textbook?.grade ?? ''} ${item.textbookUnit.unitCode}`}
         {item.humanApproved && <> · <span className="status success">人工已审核</span></>}
-        {item.humanEdited && <> · <span className="status info">人工已编辑</span></>}
+        {item.humanEdited && <> · <span className="status info">人工已编辑{item.humanEditedBy ? ` · 编辑人 ${item.humanEditedBy}` : ''}</span></>}
         {item.generatedContent?.vocabulary && ` · 已生成 ${item.generatedContent.vocabulary.length} 个词条`}
+        {item.audio && item.audio.total > 0 && <> · <span className={`status ${item.audio.ready === item.audio.total ? 'success' : 'warn'}`}>音频 {item.audio.ready}/{item.audio.total} 就绪</span></>}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
           {item.status === 'draft' && <button className="secondary" disabled={busy} onClick={() => void draftAction(item.id, 'generate')}>AI 补全课程</button>}
           {item.generatedContent && ['generated', 'rejected', 'under_review', 'approved', 'published'].includes(item.status) && <button className="secondary" disabled={busy} onClick={() => { setEditingId(item.id); setEditingContent(toEditableContent(item.generatedContent)); }}>编辑课程</button>}
