@@ -123,7 +123,9 @@ export class QueueRuntimeService implements OnModuleDestroy {
           return;
         }
       }
-      if (this.config.redisUrl) {
+      if (this.config.queueAllowSharedRedis) {
+        this.logger.warn('队列与缓存共用同一 Redis（QUEUE_ALLOW_SHARED_REDIS=true）；队列使用独立 DB 与 noeviction');
+      } else if (this.config.redisUrl) {
         const cache = redisEndpoint(this.config.redisUrl);
         if ((cache.port || '6379') === String(options.worker.port)) {
           const [queueAddresses, cacheAddresses] = await deadline(Promise.all([

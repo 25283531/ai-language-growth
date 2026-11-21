@@ -11,6 +11,7 @@ export interface AppConfig {
   databaseUrl: string;
   redisUrl: string;
   queueRedisUrl: string;
+  queueAllowSharedRedis: boolean;
   aiGatewayMode: 'mock' | 'live';
   llm: { apiKey?: string; baseUrl?: string; model?: string };
   tts: { apiKey?: string; baseUrl?: string; model?: string };
@@ -42,6 +43,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl: env.DATABASE_URL ?? '',
     redisUrl: env.REDIS_URL ?? '',
     queueRedisUrl: env.QUEUE_REDIS_URL ?? '',
+    queueAllowSharedRedis: (env.QUEUE_ALLOW_SHARED_REDIS ?? '').toLowerCase() === 'true',
     aiGatewayMode: (env.AI_GATEWAY_MODE ?? 'mock') as 'mock' | 'live',
     llm: pick('LLM'),
     tts: pick('TTS'),

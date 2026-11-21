@@ -63,6 +63,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-alg}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_language_growth}?schema=public
       REDIS_URL: redis://redis:6379
       QUEUE_REDIS_URL: ${QUEUE_REDIS_URL:-redis://redis:6379/1}
+      QUEUE_ALLOW_SHARED_REDIS: ${QUEUE_ALLOW_SHARED_REDIS:-true}
       AI_GATEWAY_MODE: ${AI_GATEWAY_MODE:-mock}
       AI_GATEWAY_LIVE_SERVICES: ${AI_GATEWAY_LIVE_SERVICES:-llm,asr,tts}
       # 所有 Provider 配置必须在此透传；漏一个就会在容器里静默回落 Mock（约束二）。
