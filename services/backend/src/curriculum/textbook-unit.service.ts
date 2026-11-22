@@ -38,6 +38,51 @@ import { resolveTextbookUnitMapping, schoolModuleForSkillNode, type StoredTextbo
  *  - 翻译只作辅助，不生成掌握状态；活动评估规则由确定性骨架给出。
  */
 
+const FUNCTION_WORD_MEANINGS: Record<string, string> = {
+  am: '是（用于 I）',
+  is: '是（用于他/她/它）',
+  are: '是（用于你/我们/他们）',
+  was: '是（过去式）',
+  were: '是（过去式）',
+  be: '是；成为',
+  what: '什么',
+  the: '这个；那个（特指）',
+  a: '一个',
+  an: '一个',
+  this: '这个',
+  that: '那个',
+  these: '这些',
+  those: '那些',
+  i: '我',
+  you: '你；你们',
+  he: '他',
+  she: '她',
+  it: '它',
+  we: '我们',
+  they: '他们；她们；它们',
+  my: '我的',
+  your: '你的；你们的',
+  his: '他的',
+  her: '她的',
+  its: '它的',
+  our: '我们的',
+  their: '他们的',
+  and: '和',
+  or: '或者',
+  but: '但是',
+  in: '在……里',
+  on: '在……上',
+  at: '在',
+  of: '……的',
+  to: '到；向',
+  for: '为了；给',
+  with: '和……一起',
+  do: '做（助动词）',
+  does: '做（助动词）',
+  did: '做（过去式助动词）',
+  can: '能；会',
+};
+
 type TaskRoute =
   | 'llm.curriculum_unit_plan'
   | 'llm.curriculum_unit_enrich'
@@ -693,7 +738,7 @@ export class TextbookUnitService {
       const entry = lookup.get(normalized);
       const ai = aiByWord.get(normalized);
       const phonetic = cleanPhonetic(entry?.phonetic) || cleanPhonetic(ai?.phonetic);
-      const meaningZh = cleanChineseText(entry?.meaningZh) || cleanChineseText(ai?.meaningZh);
+      const meaningZh = cleanChineseText(entry?.meaningZh) || cleanChineseText(ai?.meaningZh) || FUNCTION_WORD_MEANINGS[normalized] || '';
       if (!phonetic) {
         issues.push({
           code: 'missing_phonetic',
