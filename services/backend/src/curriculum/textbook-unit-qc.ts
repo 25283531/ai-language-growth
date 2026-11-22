@@ -106,6 +106,17 @@ export function validateTextbookUnitContent(
     return result(errors, warnings, checks, emptyStats());
   }
   const data = parsed.data;
+  // 句中人名/地名等专有名词：首字母大写且不在句首；无音标时豁免覆盖率硬门槛。
+  const properNouns = new Set<string>();
+  for (const paragraph of data.passage.paragraphs) {
+    for (const sentence of paragraph.sentences) {
+      for (const match of sentence.en.matchAll(/\b[A-Z][A-Za-z'’-]{1,}\b/g)) {
+        const index = match.index ?? 0;
+        const prefix = sentence.en.slice(0, index).trimEnd();
+        if (prefix && !/[.!?]$/.test(prefix)) properNouns.add(match[0].toLowerCase());
+      }
+    }
+  }
 
   // 1. 句子 ID 与中文译文
   const paragraphSentences = data.passage.paragraphs.flatMap((paragraph, paragraphIndex) =>
@@ -164,11 +175,15 @@ export function validateTextbookUnitContent(
       add('error', 'vocabulary_word_duplicate', `${path}.word`, `词条 ${item.word} 重复。`);
     }
     seenWords.add(wordKey);
-    if (item.phonetic.trim()) {
+    const phonetic = item.phonetic.trim();
+    const properNounExempt = !phonetic && properNouns.has(wordKey);
+    if (phonetic) {
       phoneticCount += 1;
-      if (!/^\/.+\/$|^\[.+\]$/.test(item.phonetic.trim())) {
+      if (!/^\/.+\/$|^\[.+\]$/.test(phonetic)) {
         add('warning', 'phonetic_format', `${path}.phonetic`, `词条 ${item.word} 的音标未使用 /.../ 或 [...] 定界。`);
       }
+    } else if (properNounExempt) {
+      add('warning', 'proper_noun_phonetic_exempt', `${path}.phonetic`, `专有名词 ${item.word} 未匹配到音标，已按专名豁免音标覆盖校验。`);
     }
     if (!item.meaningZh.trim()) {
       add('error', 'vocabulary_meaning_empty', `${path}.meaningZh`, `词条 ${item.word} 缺少中文释义。`);
@@ -186,13 +201,14 @@ export function validateTextbookUnitContent(
       }
     }
   }
-  const phoneticRate = data.vocabulary.length ? phoneticCount / data.vocabulary.length : 1;
-  if (data.vocabulary.length && phoneticRate < 0.98) {
+  const phoneticBase = data.vocabulary.filter((item) => item.phonetic.trim() || !properNouns.has(item.word.trim().toLowerCase())).length;
+  const phoneticRate = phoneticBase ? phoneticCount / phoneticBase : 1;
+  if (phoneticBase && phoneticRate < 0.98) {
     add(
       'error',
       'phonetic_coverage_low',
       'vocabulary',
-      `音标覆盖率 ${(phoneticRate * 100).toFixed(1)}% 低于 98%（${phoneticCount}/${data.vocabulary.length}）。`,
+      `音标覆盖率 ${(phoneticRate * 100).toFixed(1)}% 低于 98%（${phoneticCount}/${phoneticBase}，专名已豁免）。`,
     );
   }
   if (data.vocabulary.length && meaningCount !== data.vocabulary.length) {
@@ -203,8 +219,7 @@ export function validateTextbookUnitContent(
       `中文释义覆盖率 ${meaningCount}/${data.vocabulary.length}，要求 100%。`,
     );
   }
-  mark('vocabulary_phonetic', phoneticRate < 0.98 ? 1 : 0, data.vocabulary.length - phoneticCount > 0 ? 1 : 0);
-  mark('vocabulary_meaning', meaningCount === data.vocabulary.length ? 0 : 1);
+  mark('vocabulary_phonetic', phoneticRate < 0.98 ? 1 : 0, data.vocabulary.length - phoneticCount > 0 ? 1 : 0);  mark('vocabulary_meaning', meaningCount === data.vocabulary.length ? 0 : 1);
   mark('images', errors.filter((issue) => issue.code.startsWith('image_')).length);
 
   // 3. 活动：语音上限、证据类型、评估规则、能力节点
