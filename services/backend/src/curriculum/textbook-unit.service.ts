@@ -223,7 +223,7 @@ export class TextbookUnitService {
     @Optional() private readonly lexicon?: LexiconService,
   ) {}
 
-  async generate(unitId: string): Promise<TextbookUnitGenerationResult> {
+  async generate(unitId: string, attempt = 0): Promise<TextbookUnitGenerationResult> {
     const unit = await this.loadUnit(unitId);
     const passageSource = (unit.passageSource ?? '').trim();
     if (!passageSource) throw new BadRequestException('请先录入课文原文');
@@ -370,6 +370,11 @@ export class TextbookUnitService {
       grammarFocus: toStringArray(metadata.grammarFocus),
       generationIssues: issues,
     });
+    // 富化偶发空返回会留下占位译文；仅对此类失败自动重跑一次，避免运营手动点第二次。
+    if (attempt < 1 && validation.errors.some((issue) => issue.code === 'sentence_zh_placeholder')) {
+      this.logger.warn(`教材单元 ${unit.unitCode} 命中占位译文，自动重跑一次富化`);
+      return this.generate(unitId, attempt + 1);
+    }
     const needsReview = validation.issues.length > 0;
     const qcReport: Record<string, unknown> = {
       ...(parsed.data.qcReport ?? draft.qcReport),
