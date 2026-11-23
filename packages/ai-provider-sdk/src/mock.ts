@@ -261,9 +261,16 @@ export class MockAsrAdapter implements AsrAdapter {
 
 /**
  * Mock 发音评估适配器。
- * 产出音节级结果：全部正确或第一个音节偏低（可由调用方控制），
+ * 产出音节级结果：全部正确或最后一个音节偏低（可由调用方控制），
  * 用于验证「定位到具体出错的音，只练出错的部分」的教学逻辑（D-010）。
+ *
+ * `pass` 是本地验收夹具：开启后所有音节返回通过分，
+ * 用于在没有真实发音评测凭据时走通「通过 → 排复习」链路。
  */
+export interface MockPronunciationOptions {
+  pass?: boolean;
+}
+
 export class MockPronunciationAdapter implements PronunciationAdapter {
   readonly alias = 'mock_pronunciation';
   readonly serviceKind = 'pronunciation' as const;
@@ -274,6 +281,8 @@ export class MockPronunciationAdapter implements PronunciationAdapter {
     supportsSyllableAssessment: true,
   };
   readonly pricing: ProviderPricing = MOCK_PRICING;
+
+  constructor(private readonly options: MockPronunciationOptions = {}) {}
 
   /**
    * 模拟规则：
@@ -304,13 +313,13 @@ export class MockPronunciationAdapter implements PronunciationAdapter {
 
     const units = syllables.map((s, idx) => {
       const isLast = idx === syllables.length - 1;
-      const score = isLast ? 62 : 92;
+      const score = this.options.pass ? 92 : (isLast ? 62 : 92);
       return {
         text: s,
         kind: 'syllable' as const,
         score,
         correct: score >= 80,
-        detail: isLast ? '尾音不稳定' : null,
+        detail: !this.options.pass && isLast ? '尾音不稳定' : null,
       };
     });
 

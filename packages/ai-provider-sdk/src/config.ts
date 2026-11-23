@@ -93,6 +93,8 @@ export interface ProviderConfig {
   ttsProtocol: TtsProtocol;
   /** 实际启用真实调用的服务种类 */
   liveServices: ServiceKind[];
+  /** 本地验收夹具：mock 发音评测返回通过分，默认关闭。 */
+  mockPronunciationPass?: boolean;
 }
 
 /**
@@ -336,6 +338,7 @@ export function loadProviderConfig(env: NodeJS.ProcessEnv = process.env): Provid
     pronunciation: build('pronunciation', LIVE_PROVIDER_ALIASES.pronunciation),
     ttsProtocol: resolveTtsProtocol(env),
     liveServices: resolveLiveServices(env),
+    mockPronunciationPass: env.MOCK_PRONUNCIATION_PASS === '1',
   };
 }
 
@@ -352,7 +355,10 @@ export function registerAdapters(
   registry.register('llm', new MockLlmAdapter());
   registry.register('tts', new MockTtsAdapter());
   registry.register('asr', new MockAsrAdapter());
-  registry.register('pronunciation', new MockPronunciationAdapter());
+  registry.register(
+    'pronunciation',
+    new MockPronunciationAdapter({ pass: config.mockPronunciationPass === true }),
+  );
 
   const live = new Set(config.liveServices);
   if (live.has('llm') && config.llm?.baseUrl) {
