@@ -83,6 +83,24 @@ const FUNCTION_WORD_MEANINGS: Record<string, string> = {
   can: '能；会',
 };
 
+const CONTEXT_SENSES: Array<{ word: string; test: RegExp; meaning: string }> = [
+  { word: 'fine', test: /\b(?:am|is|are|feel|feels)\s+fine\b/i, meaning: '好的；健康的' },
+  { word: 'like', test: /\b(?:i|you|we|they)\s+like\b/i, meaning: '喜欢' },
+  { word: 'likes', test: /\b(?:he|she|it)\s+likes\b/i, meaning: '喜欢' },
+  { word: 'cooking', test: /\b(?:cook|cooking)\b/i, meaning: '做饭；烹饪' },
+  { word: 'reading', test: /\bread(?:ing)?\b/i, meaning: '阅读；读书' },
+  { word: 'helped', test: /\bhelp(?:ed|ing)?\b/i, meaning: '帮助' },
+  { word: 'opened', test: /\bopen(?:ed|ing)?\b/i, meaning: '打开' },
+  { word: 'clean', test: /\bclean\b/i, meaning: '打扫；清洁' },
+  { word: 'play', test: /\bplay(?:s|ed|ing)?\b/i, meaning: '玩；玩耍' },
+];
+
+function contextMeaningFor(word: string, sentences: PlannedSentence[]): string | undefined {
+  if (!sentences.length) return undefined;
+  const text = sentences.map((sentence) => sentence.en).join(' ');
+  return CONTEXT_SENSES.find((rule) => rule.word === word && rule.test.test(text))?.meaning;
+}
+
 type TaskRoute =
   | 'llm.curriculum_unit_plan'
   | 'llm.curriculum_unit_enrich'
@@ -738,7 +756,11 @@ export class TextbookUnitService {
       const entry = lookup.get(normalized);
       const ai = aiByWord.get(normalized);
       const phonetic = cleanPhonetic(entry?.phonetic) || cleanPhonetic(ai?.phonetic);
-      const meaningZh = cleanChineseText(entry?.meaningZh) || cleanChineseText(ai?.meaningZh) || FUNCTION_WORD_MEANINGS[normalized] || '';
+      const meaningZh = contextMeaningFor(normalized, sentences)
+        || cleanChineseText(ai?.meaningZh)
+        || cleanChineseText(entry?.meaningZh)
+        || FUNCTION_WORD_MEANINGS[normalized]
+        || '';
       if (!phonetic) {
         issues.push({
           code: 'missing_phonetic',
