@@ -42,6 +42,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
     private var cachedWordParts: List<Pair<File, Float>> = emptyList()
     private var cachedWordKey = ""
     private val cachedPassageFiles = mutableMapOf<String, File>()
+    private val passageCache = PassageAudioCache(File(cacheDir, "passage-audio"))
     private var generation = 0
 
     fun stop(clearAudio: Boolean = true) {
@@ -64,9 +65,8 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         cachedWordKey = ""
     }
 
-    /** 课文音频按 audioRef 缓存；只在换课/退出课堂时清理，不在每个回合丢弃。 */
+    /** 只清内存引用；磁盘缓存保留，供弱网或下次启动复用。 */
     fun clearPassageAudio() {
-        cachedPassageFiles.values.forEach { it.delete() }
         cachedPassageFiles.clear()
     }
 
@@ -398,12 +398,11 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         task = scope.launch {
             previous?.join()
             var reservationId: String? = null
-            var pendingFile: File? = null
             var settled = false
             emit(true, "正在准备课文音频…")
             try {
-                val local = cachedPassageFiles[audioRef]
-                if (local != null && local.isFile) {
+                val local = cachedPassage(audioRef)
+                if (local != null) {
                     emit(true, "老师正在读这一句…")
                     playParts(listOf(local to 1f))
                     emit(false, "这一句读完了，可以再听")
@@ -431,7 +430,8 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 reservationId = rid
                 val headers = learnerHeaders + ("X-Speech-Quota-Reservation" to rid)
                 val file = withContext(Dispatchers.IO) {
-                    download(base, audioRef, token, headers).also { pendingFile = it }
+                    val downloaded = download(base, audioRef, token, headers)
+                    passageCache.store(audioRef, downloaded)
                 }
                 emit(true, "老师正在读这一句…")
                 playParts(listOf(file to 1f))
@@ -443,7 +443,6 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                     )
                 }
                 settled = true
-                pendingFile = null
                 cachedPassageFiles[audioRef] = file
                 emit(false, "这一句读完了，可以再听")
             } catch (e: CancellationException) {
@@ -457,7 +456,6 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 }
                 emit(false, childMessage)
             } finally {
-                if (!settled) pendingFile?.delete()
                 if (!settled && reservationId != null) {
                     withContext(NonCancellable + Dispatchers.IO) {
                         try {
@@ -506,7 +504,7 @@ internal class TeacherSpeechController(private val cacheDir: File) {
             try {
                 val resolved = mutableMapOf<String, File>()
                 items.forEach { item ->
-                    cachedPassageFiles[item.audioRef]?.takeIf { it.isFile }?.let { resolved[item.audioRef] = it }
+                    cachedPassage(item.audioRef)?.let { resolved[item.audioRef] = it }
                 }
                 val missing = items.filter { resolved[it.audioRef] == null }
                 var headers = emptyMap<String, String>()
@@ -538,7 +536,8 @@ internal class TeacherSpeechController(private val cacheDir: File) {
                 items.forEachIndexed { index, item ->
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val local = resolved[item.audioRef] ?: withContext(Dispatchers.IO) {
-                        download(base, item.audioRef, token, headers)
+                        val downloaded = download(base, item.audioRef, token, headers)
+                        passageCache.store(item.audioRef, downloaded)
                     }
                     // 开课时预生成的音频只要下载成功就保留，取消后重播也不用再下载。
                     resolved[item.audioRef] = local
@@ -599,6 +598,13 @@ internal class TeacherSpeechController(private val cacheDir: File) {
         }
         val ref = speech.optString("audioRef")
         return if (safeRef(ref)) listOf(AudioPart(ref, rateOf(speech))) else emptyList()
+    }
+
+    private fun cachedPassage(audioRef: String): File? {
+        cachedPassageFiles[audioRef]
+            ?.takeIf { it.isFile && it.length() > 0 }
+            ?.let { return it }
+        return passageCache.find(audioRef)?.also { cachedPassageFiles[audioRef] = it }
     }
 
     private fun safeRef(value: String?): Boolean =
