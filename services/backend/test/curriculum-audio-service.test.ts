@@ -84,6 +84,9 @@ function fixture(options: { providerAlias?: string } = {}) {
     phoneme_items: {
       findMany: async () => [{ phoneme: 'ð', ipa: '/ð/' }],
     },
+    lexicon_entries: {
+      findMany: async () => [],
+    },
     curriculum_audio_clips: {
       findUnique: async (args: { where: { curriculum_audio_clip_identity: Record<string, unknown> } }) =>
         rows.get(identityOf(args.where.curriculum_audio_clip_identity)) ?? null,
@@ -174,7 +177,8 @@ describe('CurriculumAudioService', () => {
     assert.equal(first.plannedSentences, 2);
     assert.equal(first.plannedFocusWords, 1);
     assert.equal(first.sentenceClips, 4);
-    assert.ok(first.wordClips >= 5);
+    // 重点词只合成整词慢速 + 自然语速两段，不再逐音节/音素朗读。
+    assert.equal(first.wordClips, 2);
     assert.equal(first.failed, 0);
     assert.equal(f.ttsCalls, first.plannedClips);
 
@@ -185,7 +189,9 @@ describe('CurriculumAudioService', () => {
       ['normal', 'slow'],
     );
     assert.ok(sentence.every((row) => row.contentVersion === 'v1' && row.status === 'ready'));
-    assert.ok([...f.rows.values()].some((row) => row.kind === 'phoneme' && row.text === 'ð'));
+    const wordRows = [...f.rows.values()].filter((row) => row.kind === 'word' || row.kind === 'natural');
+    assert.equal(wordRows.length, 2);
+    assert.ok(wordRows.every((row) => row.text === 'father'));
 
     const before = f.ttsCalls;
     const second = await f.service.warmUnit('unit-1');

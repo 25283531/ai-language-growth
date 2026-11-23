@@ -134,6 +134,7 @@ function setup(options: {
     {} as never,
     {} as never,
     options.lexicon as never,
+    {} as never,
     options.textbookUnits as never,
     options.publisher as never,
   );

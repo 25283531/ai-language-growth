@@ -139,6 +139,7 @@ function setup(options: {
     (options.warmup ?? {}) as never,
     undefined,
     undefined,
+    undefined,
     publisher as never,
   );
   return { controller, calls, publisher };
