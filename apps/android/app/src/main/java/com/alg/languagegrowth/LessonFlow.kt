@@ -187,7 +187,16 @@ internal fun LessonFlowHost(
 ) {
     val sentences = passage.sentences
     val words = passage.focusWords
-    var state by remember(passage.unitId) { mutableStateOf(LessonFlowState()) }
+    var state by remember(passage.unitId) {
+        // 没有重点词的单元不能停在空白“重点词汇”页：直接从整篇课文开始。
+        mutableStateOf(
+            if (passage.focusWords.isEmpty()) {
+                LessonFlowState(stage = LessonStage.PASSAGE)
+            } else {
+                LessonFlowState()
+            },
+        )
+    }
     val scope = rememberCoroutineScope()
 
     var recording by remember { mutableStateOf(false) }
