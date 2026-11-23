@@ -466,7 +466,7 @@ private fun GrowthApp(
     }
 
     // evaluateSentence 定义在本函数之后；用函数引用避免 Kotlin 局部函数的前向引用限制。
-    var evaluateSentenceFx: (suspend (String, String, Long, Double?, Int) -> JSONObject)? = null
+    var evaluateSentenceFx: (suspend (String, String, Long, Double?, Int, String) -> JSONObject)? = null
 
     /** P2-07：整句跟读。目标句就是课文原句，分数与错音直接用于定向练习。 */
     fun recordPassageSentence(sentence: PassageSentence, pressed: Boolean) {
@@ -506,6 +506,7 @@ private fun GrowthApp(
                     val evaluator = evaluateSentenceFx ?: error("发音评测未就绪")
                     val result = evaluator(
                         encoded, sentence.english, durationMs, followScore, followAttempts + 1,
+                        sentence.learningItemId,
                     )
                     followAttempts += 1
                     val score = result.optDouble("score", Double.NaN)
@@ -681,6 +682,7 @@ private fun GrowthApp(
         durationMs: Long,
         previousScore: Double?,
         attemptIndex: Int,
+        learningItemId: String = "",
     ): JSONObject {
         val seconds = (durationMs / 1000.0).coerceIn(1.0, 30.0)
         val reservation = withContext(Dispatchers.IO) {
@@ -704,6 +706,7 @@ private fun GrowthApp(
             // 把上一次分数一并交给服务端，让文本模型能说“比上次进步在哪里”。
             if (previousScore != null && previousScore.isFinite()) body.put("previousScore", previousScore)
             if (lessonSessionId.isNotBlank()) body.put("lessonSessionId", lessonSessionId)
+            if (learningItemId.isNotBlank()) body.put("learningItemId", learningItemId)
             return withContext(Dispatchers.IO) {
                 http(
                     base(), "/speech/evaluate", "POST", body, token(),
@@ -1078,8 +1081,10 @@ private fun GrowthApp(
                                     stopRecording = {
                                         runCatching { activity.stopRecording().first }.getOrNull()
                                     },
-                                    evaluate = { encoded, targetText, durationMs, previousScore, attemptIndex ->
-                                        evaluateSentence(encoded, targetText, durationMs, previousScore, attemptIndex)
+                                    evaluate = { encoded, targetText, durationMs, previousScore, attemptIndex, learningItemId ->
+                                        evaluateSentence(
+                                            encoded, targetText, durationMs, previousScore, attemptIndex, learningItemId,
+                                        )
                                     },
                                     cloze = LessonClozeBinding(
                                         loading = clozeLoading,

@@ -34,6 +34,8 @@ internal data class FocusWordExample(
 internal data class FocusWord(
     val word: String,
     val phonetic: String,
+    /** 教材 learning_items 行主键；跟读评测时回传，用于写证据与复习。 */
+    val learningItemId: String = "",
     /** P2 词性；词库无记录时为空。 */
     val pos: String = "",
     val meaningZh: String,
@@ -74,6 +76,7 @@ internal fun parseFocusWord(raw: JSONObject?): FocusWord? {
     return FocusWord(
         word = word,
         phonetic = raw.optString("phonetic", "").trim(),
+        learningItemId = raw.optString("learningItemId", "").trim(),
         pos = raw.optString("pos", "").trim(),
         meaningZh = raw.optString("meaningZh", "").trim(),
         examples = parseFocusWordExamples(raw.optJSONArray("examples")),

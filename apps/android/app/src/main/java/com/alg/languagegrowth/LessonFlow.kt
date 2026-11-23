@@ -179,7 +179,7 @@ internal fun LessonFlowHost(
     speakText: (String) -> Unit,
     startRecording: () -> Boolean,
     stopRecording: () -> String?,
-    evaluate: suspend (String, String, Long, Double?, Int) -> JSONObject,
+    evaluate: suspend (String, String, Long, Double?, Int, String) -> JSONObject,
     cloze: LessonClozeBinding,
     onEnterCloze: () -> Unit,
     onComplete: () -> Unit,
@@ -212,6 +212,11 @@ internal fun LessonFlowHost(
         LessonStage.WORDS -> words.getOrNull(state.wordIndex)?.word.orEmpty()
         else -> ""
     }
+    val currentLearningItemId: String = when (state.stage) {
+        LessonStage.SENTENCE -> sentences.getOrNull(state.sentenceIndex)?.learningItemId.orEmpty()
+        LessonStage.WORDS -> words.getOrNull(state.wordIndex)?.learningItemId.orEmpty()
+        else -> ""
+    }
 
     val beginHold: () -> Unit = {
         stopAudio()
@@ -242,7 +247,7 @@ internal fun LessonFlowHost(
                             android.util.Base64.encodeToString(File(path).readBytes(), android.util.Base64.NO_WRAP)
                         }
                         val duration = (System.currentTimeMillis() - startedAt).coerceAtLeast(300L)
-                        val result = evaluate(encoded, currentTarget, duration, score, attempt + 1)
+                        val result = evaluate(encoded, currentTarget, duration, score, attempt + 1, currentLearningItemId)
                         attempt += 1
                         val value = result.optDouble("score", Double.NaN)
                         if (value.isFinite()) {

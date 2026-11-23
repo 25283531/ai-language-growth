@@ -43,6 +43,8 @@ internal data class PassageSentence(
     val chinese: String,
     /** P1 整句音标；服务端查不全时为空，界面不展示。 */
     val phonetic: String = "",
+    /** 教材 learning_items 行主键；跟读评测时回传，用于写证据与复习。 */
+    val learningItemId: String = "",
     val audio: PassageSentenceAudio,
 )
 
@@ -101,6 +103,7 @@ private fun parsePassageSentence(raw: JSONObject?): PassageSentence? {
         english = english,
         chinese = raw.cleanString("zh"),
         phonetic = raw.cleanString("phonetic"),
+        learningItemId = raw.cleanString("learningItemId"),
         audio = PassageSentenceAudio(
             normalRef = audioJson.curriculumAudioRef("normalRef"),
             slowRef = audioJson.curriculumAudioRef("slowRef"),
