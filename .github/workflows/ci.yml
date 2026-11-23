@@ -130,6 +130,12 @@ jobs:
             services/backend/test/tts-language-speed.test.ts \
             services/backend/test/tts-pregeneration.test.ts \
             services/backend/test/pronunciation-coach.test.ts \
+            services/backend/test/passage-practice.test.ts \
+            services/backend/test/planner-review-renderable.test.ts \
+            services/backend/test/textbook-item-plan-review.test.ts \
+            services/backend/test/curriculum-audio-service.test.ts \
+            services/backend/test/textbook-units-api.test.ts \
+            services/backend/test/textbook-unit-edit-api.test.ts \
             services/backend/test/word-pronunciation-routing.test.ts \
             services/backend/test/speech-usage.test.ts \
             services/backend/test/usage-cost.test.ts \

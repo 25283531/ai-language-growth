@@ -40,4 +40,33 @@ describe('复习形态可渲染判定', () => {
   it('未知类型一律按不可渲染处理，避免新增类型默认泄漏到复习轮', () => {
     assert.equal(isReviewRenderable({ taskType: 'brand_new_task_type' }), false);
   });
+
+  it('课文原句/重点词带 read_aloud 标记时可复习：复习轮保留目标文本', () => {
+    assert.equal(
+      isReviewRenderable({ taskType: 'word_mimicry', reviewMode: 'read_aloud' }),
+      true,
+    );
+    assert.equal(
+      isReviewRenderable({ taskType: 'pronunciation_drill', reviewMode: 'read_aloud' }),
+      true,
+    );
+  });
+
+  it('read_aloud 只放行跟读类，不放行听力/阅读题', () => {
+    assert.equal(
+      isReviewRenderable({ taskType: 'listening_comprehension', reviewMode: 'read_aloud' }),
+      false,
+    );
+  });
+
+  it('历史教材条目没有 reviewMode 时，按 topic-textbook 前缀放行跟读类', () => {
+    assert.equal(
+      isReviewRenderable({ taskType: 'word_mimicry', topicId: 'topic-textbook-u07' }),
+      true,
+    );
+    assert.equal(
+      isReviewRenderable({ taskType: 'listening_comprehension', topicId: 'topic-textbook-u07' }),
+      false,
+    );
+  });
 });
