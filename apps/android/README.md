@@ -32,7 +32,7 @@
 
 JVM 单测覆盖 `LessonPassageTest`：解析段落/中英文/双速引用、拒绝不安全引用、旧响应缺少 `passage` 时返回空；`PassageAudioCacheTest` 覆盖缓存键校验、跨实例复用、容量清理与只清理完整音频文件。工作流的 `testDebugUnitTest` 会执行这些用例。
 
-> 当前开发机仅有 JDK 17，没有 Android SDK 与 Gradle，本轮未做本机编译；GitHub Android 工作流 [run 44295179269](https://github.com/25283531/ai-language-growth/actions/runs/44295179269) 已通过 `testDebugUnitTest`、`lintDebug` 与 `assembleDebug`，产物为 `android-client-debug-0.0.3`（约 154 MB）。真机交互仍待验收。
+> 2026-11-23：P2-09 真机断网复验通过。Android Formal Client CI run [45202128013](https://github.com/25283531/ai-language-growth/actions/runs/45202128013) 构建的 `0.0.3` APK 在线缓存课文音频后，设备 `cache/passage-audio/7859fb7f4c5f47b2a36b2bee.wav` 为 92,842 字节；关闭 Wi‑Fi/移动数据后复播正常，额度计数保持 22 条不变，确认命中持久缓存且未申请语音额度。Android JVM 单测 29/29 通过。
 
 ## 云端构建
 
