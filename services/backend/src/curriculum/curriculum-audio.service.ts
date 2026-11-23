@@ -313,7 +313,16 @@ export class CurriculumAudioService {
         status: true,
       },
     });
-    const lexicon = await this.loadSentencePhonetics(parsed.data);
+    const [lexicon, learningItems] = await Promise.all([
+      this.loadSentencePhonetics(parsed.data),
+      // 旧单测的 prisma 替身没有 learning_items；生产 Prisma 一定有。
+      this.prisma.learning_items?.findMany({
+        where: { topicId: unit.topicId, reviewStatus: 'published' },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, content: true },
+      }) ?? Promise.resolve([]),
+    ]);
+    const { bySentence, byWord } = this.learningItemIdsByPassage(parsed.data, learningItems ?? []);
     return assembleCurriculumPassage({
       unitId: unit.id,
       topicId: unit.topicId,
@@ -324,7 +333,49 @@ export class CurriculumAudioService {
       wordPhonetic: lexicon.phonetic,
       wordPos: lexicon.pos,
       wordForms: lexicon.forms,
+      learningItemIdBySentence: bySentence,
+      learningItemIdByWord: byWord,
     });
+  }
+
+  /**
+   * 把课文句子/重点词对回教材 learning_items 行主键。
+   *
+   * 新发布条目带 `activityKey`（如 `U07-s01`）；历史条目没有该字段时，
+   * 用示范文本/目标词做等价匹配，保证旧单元跟读后也能写入证据。
+   */
+  private learningItemIdsByPassage(
+    content: TextbookUnitContent,
+    items: Array<{ id: string; content: unknown }> = [],
+  ): { bySentence: Map<string, string>; byWord: Map<string, string> } {
+    const sentences = content.passage.paragraphs.flatMap((paragraph) => paragraph.sentences);
+    const bySentence = new Map<string, string>();
+    const byWord = new Map<string, string>();
+    for (const item of items) {
+      const activity = (item.content ?? {}) as Record<string, unknown>;
+      const taskType = typeof activity.taskType === 'string' ? activity.taskType : '';
+      const demonstration = typeof activity.demonstrationText === 'string'
+        ? activity.demonstrationText.trim()
+        : '';
+      const activityKey = typeof activity.activityKey === 'string' ? activity.activityKey : '';
+      const targets = Array.isArray(activity.targetWords)
+        ? activity.targetWords.filter((word): word is string => typeof word === 'string').map((word) => word.trim())
+        : [];
+      const targetKeys = new Set([demonstration, ...targets].filter(Boolean).map((text) => text.toLowerCase()));
+
+      if (taskType === 'word_mimicry' || taskType === 'pronunciation_drill') {
+        for (const sentence of sentences) {
+          if (activityKey === sentence.id || demonstration === sentence.en.trim() || targetKeys.has(sentence.en.trim().toLowerCase())) {
+            if (!bySentence.has(sentence.id)) bySentence.set(sentence.id, item.id);
+          }
+        }
+      }
+      if (taskType === 'pronunciation_drill' && demonstration && !demonstration.includes(' ')) {
+        const key = demonstration.toLowerCase();
+        if (!byWord.has(key)) byWord.set(key, item.id);
+      }
+    }
+    return { bySentence, byWord };
   }
 
   /**

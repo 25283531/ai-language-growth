@@ -85,6 +85,13 @@ export const cefrLessonSchema = z.object({
   passiveReading: z.boolean().optional(),
   /** 学校轨活动所属模块；语言轨活动不设置。 */
   schoolModule: textbookModuleSchema.optional(),
+  /**
+   * 复习形态。
+   *
+   * `read_aloud`：课文原句/重点词跟读。复习轮保留目标文本（孩子照着读），
+   * 不按“无提示回忆”清空 targetWords，否则客户端会只剩空卡片。
+   */
+  reviewMode: z.enum(['read_aloud']).optional(),
   assessment: z.object({
     acceptedImageIds: z.array(z.string().max(200)).max(100).default([]),
     acceptedTexts: z.array(z.string().max(1000)).max(100).default([]),
@@ -116,6 +123,8 @@ export const passageSentenceSchema = z.object({
   zh: z.string().trim().min(1).max(500),
   /** 整句音标（P1）；能逐词查到音标时才拼，查不全时为空，客户端不展示。 */
   phonetic: z.string().max(400).optional(),
+  /** 本句对应的教材 learning_items 行主键；无对应条目时不下发。 */
+  learningItemId: z.string().trim().min(1).max(160).optional(),
   keyWords: z.array(z.string().trim().min(1).max(100)).max(12).default([]),
   grammarIds: z.array(z.string().trim().min(1).max(80)).max(6).default([]),
   schoolModules: z.array(textbookModuleSchema).max(5).default([]),
@@ -206,6 +215,8 @@ export const focusWordAudioSchema = z.object({
   difficultPhonemes: z.array(z.string().max(100)).max(30).default([]),
   /** 为什么选这个词（课文复现/多音节/困难音素），供管理端解释。 */
   reason: z.string().max(200).default(''),
+  /** 本词对应的教材 learning_items 行主键；无对应条目时不下发。 */
+  learningItemId: z.string().trim().min(1).max(160).optional(),
   clips: z.array(focusWordClipSchema).max(80).default([]),
 });
 export type FocusWordAudio = z.infer<typeof focusWordAudioSchema>;

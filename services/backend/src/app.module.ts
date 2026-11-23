@@ -52,6 +52,7 @@ import { LexiconProofreadService } from './curriculum/lexicon-proofread.service'
 import { ClozeService } from './curriculum/cloze.service';
 import { TextbookUnitService } from './curriculum/textbook-unit.service';
 import { TextbookUnitPublisherService } from './curriculum/textbook-unit-publisher.service';
+import { PassagePracticeService } from './curriculum/passage-practice.service';
 import { AdminAuthController, AuthController, EmailAdminController } from './auth/auth.controller';
 import { UserController } from './auth/user.controller';
 import { AuthService } from './auth/auth.service';
@@ -108,6 +109,7 @@ import { ReplayModule } from './replay/replay.module';
     ClozeService,
     TextbookUnitService,
     TextbookUnitPublisherService,
+    PassagePracticeService,
     AiGatewayService,
     LearnerModelService,
     StageProfileService,

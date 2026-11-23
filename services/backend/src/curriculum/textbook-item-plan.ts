@@ -14,6 +14,11 @@ import type { PublishableActivity } from './curriculum-publish';
 
 type ExistingActivity = { skillNodeIds?: string[] };
 
+/** 与句子 id 使用同一套单元编码归一化（空格转连字符、去特殊字符）。 */
+function unitKey(code: string): string {
+  return (code.trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9_.-]/g, '') || 'unit').slice(0, 100);
+}
+
 function firstSkill(existing: ReadonlyArray<ExistingActivity>): string {
   return existing
     .flatMap((activity) => activity.skillNodeIds ?? [])
@@ -29,11 +34,13 @@ export function buildPassageSentenceActivities(
   if (!sentences.length) return [];
   const skill = firstSkill(existing);
   return sentences.map((sentence, index) => ({
-    id: `${content.unit.code}-s${String(index + 1).padStart(2, '0')}`,
+    id: `${unitKey(content.unit.code)}-s${String(index + 1).padStart(2, '0')}`,
     title: `跟读：${sentence.en.slice(0, 40)}`,
     taskType: 'word_mimicry',
     scenario: 'story_scene',
     difficulty: 1,
+    // 复习轮保留原句，让孩子照着读；不能按无提示回忆清空目标文本。
+    reviewMode: 'read_aloud' as const,
     skillNodeIds: [skill],
     targetWords: [sentence.en],
     teacherUtteranceZh: index === 0 ? '先听这一句，再跟着读一遍。' : '跟着读这一句。',
@@ -65,11 +72,12 @@ export function buildFocusWordActivities(
   if (!words.length) return [];
   const skill = firstSkill(existing);
   return words.map((focus, index) => ({
-    id: `${content.unit.code}-w${String(index + 1).padStart(2, '0')}`,
+    id: `${unitKey(content.unit.code)}-w${String(index + 1).padStart(2, '0')}`,
     title: `重点词：${focus.word}`,
     taskType: 'pronunciation_drill',
     scenario: 'story_scene',
     difficulty: 1,
+    reviewMode: 'read_aloud' as const,
     skillNodeIds: [skill],
     targetWords: [focus.word],
     teacherUtteranceZh: `重点词 ${focus.word}，先听整词，再跟读一遍。`,

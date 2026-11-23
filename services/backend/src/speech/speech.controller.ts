@@ -18,6 +18,7 @@ import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { SpeechQuotaService } from '../usage/speech-quota.service';
 import { AuthService, extractBearerToken } from '../auth/auth.service';
 import { PronunciationCoachService } from '../agents/pronunciation-coach.service';
+import { PassagePracticeService } from '../curriculum/passage-practice.service';
 
 /**
  * 直连 synthesize / cache/lookup 的可选课程作用域。
@@ -60,6 +61,8 @@ const evaluateSchema = z.object({
   previousScore: z.number().min(0).max(100).nullable().optional(),
   /** 这是本轮第几次尝试（从 1 开始）。 */
   attemptIndex: z.number().int().min(1).max(50).optional(),
+  /** 课文句子/重点词对应的教材 learning_items 行主键；提供时写学习证据与复习。 */
+  learningItemId: z.string().trim().min(1).max(160).optional(),
 });
 
 @Controller('api/v1/speech')
@@ -70,6 +73,7 @@ export class SpeechController {
     @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(PronunciationCoachService) private readonly pronunciationCoach: PronunciationCoachService,
+    @Inject(PassagePracticeService) private readonly passagePractice: PassagePracticeService,
   ) {}
 
   @Post('synthesize')
@@ -233,18 +237,36 @@ export class SpeechController {
     // 分数本身不构成教学：把这次分数、错误单元和上一次分数交给文本模型，
     // 生成“哪里进步了 / 这次怎么改 / 再读一次”的口头反馈。
     // 模型失败只回退文案，不影响分数与证据。
+    const errorUnits = (result.units ?? [])
+      .filter((unit) => !unit.correct)
+      .map((unit) => ({ unit: unit.text, kind: unit.kind, detail: unit.detail ?? null }));
     const coaching = await this.pronunciationCoach.createCorrection({
       learnerId,
       lessonSessionId,
       targetText: parsed.data.targetText,
       score: result.score ?? null,
-      errorUnits: (result.units ?? [])
-        .filter((unit) => !unit.correct)
-        .map((unit) => ({ unit: unit.text, kind: unit.kind, detail: unit.detail ?? null })),
+      errorUnits,
       previousScore: parsed.data.previousScore ?? null,
       attemptIndex: parsed.data.attemptIndex ?? 1,
     });
-    return { ...result, coaching };
+
+    // 课文跟读/重点词跟读：只有显式带教材条目时才写证据。普通发音试听
+    // 仍保持原行为，不因为一次跟读就制造掌握证据。
+    let practice: Awaited<ReturnType<PassagePracticeService['record']>> | null = null;
+    if (parsed.data.learningItemId) {
+      if (!lessonSessionId) {
+        throw new HttpException('课文跟读必须带 lessonSessionId', 400);
+      }
+      practice = await this.passagePractice.record({
+        learnerId,
+        lessonSessionId,
+        learningItemId: parsed.data.learningItemId,
+        targetText: parsed.data.targetText,
+        score: result.score ?? null,
+        errorUnits,
+      });
+    }
+    return { ...result, coaching, ...(practice ? { practice } : {}) };
   }
 
   private async optionalLessonSessionId(

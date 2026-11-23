@@ -205,6 +205,8 @@ export const teachingActivitySchema = z.object({
   difficulty: z.number().int().min(1).max(3).default(1),
   /** 该活动的顺序权重 */
   order: z.number().int().min(0).default(0),
+  /** 课文跟读条目的复习形态；普通活动不设置。 */
+  reviewMode: z.enum(['read_aloud']).optional(),
   /** 是否属于 M1 首批交付 */
   m1Scope: z.boolean().default(false),
   /**

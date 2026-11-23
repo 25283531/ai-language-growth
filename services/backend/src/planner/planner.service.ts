@@ -47,8 +47,16 @@ const REVIEW_CLAIM_TTL_MS = 30 * 60 * 1000;
  */
 export function isReviewRenderable(activity: {
   taskType: string;
+  topicId?: string;
   imageOptions?: Array<{ id: string }>;
+  reviewMode?: string;
 }): boolean {
+  // 课文原句/重点词是“照着读”的复习，不是无提示回忆：复习轮保留目标文本，
+  // 客户端能渲染出句子/单词卡，因此不再被图片选择题的限制挡住。
+  // 历史教材条目没有 reviewMode，按 topic 前缀兜底，避免必须先重发全部单元。
+  if (activity.reviewMode === 'read_aloud' || activity.topicId?.startsWith('topic-textbook-')) {
+    return ['word_mimicry', 'pronunciation_drill'].includes(activity.taskType);
+  }
   return activity.taskType === 'image_identification' && (activity.imageOptions?.length ?? 0) > 0;
 }
 
@@ -144,11 +152,27 @@ export class PlannerService {
         ? this.curriculum.getActivity(review.learningItemId)
         : undefined;
       const originalWords = new Set((originalActivity?.targetWords ?? []).map((word) => word.toLowerCase()));
-      const sameKnowledgeActivities = originalWords.size === 0
-        ? reviewActivities
-        : reviewActivities.filter((activity) =>
-            activity.targetWords.some((word) => originalWords.has(word.toLowerCase())),
-          );
+      // 教材条目的复习必须回到同一条句子/同一个重点词。learning_items.content.id
+      // 是发布时的稳定键；按它精确命中，避免“复习 A 句却抽到 B 句”。
+      const reviewItem = review.learningItemId
+        ? await this.prisma.learning_items.findUnique({
+            where: { id: review.learningItemId },
+            select: { content: true },
+          })
+        : null;
+      const originalContentId = reviewItem && typeof reviewItem.content === 'object' && reviewItem.content !== null
+        ? (reviewItem.content as { id?: unknown }).id
+        : null;
+      const exactItemActivities = typeof originalContentId === 'string'
+        ? reviewActivities.filter((activity) => activity.id === originalContentId)
+        : [];
+      const sameKnowledgeActivities = exactItemActivities.length > 0
+        ? exactItemActivities
+        : originalWords.size === 0
+          ? reviewActivities
+          : reviewActivities.filter((activity) =>
+              activity.targetWords.some((word) => originalWords.has(word.toLowerCase())),
+            );
       const recentEvidence = await this.prisma.learning_evidence.findMany({
         where: {
           learnerId: input.learnerId,

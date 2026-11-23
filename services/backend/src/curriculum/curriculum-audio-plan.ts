@@ -310,6 +310,10 @@ export function assembleCurriculumPassage(input: {
   wordPos?: ReadonlyMap<string, string>;
   /** 重点词（小写）→ 变形列表（复数/过去式等）；词库无记录时留空。 */
   wordForms?: ReadonlyMap<string, string[]>;
+  /** 句子 id → 教材 learning_items 行主键，供跟读后写证据。 */
+  learningItemIdBySentence?: ReadonlyMap<string, string>;
+  /** 重点词（小写）→ 教材 learning_items 行主键。 */
+  learningItemIdByWord?: ReadonlyMap<string, string>;
 }): CurriculumPassage {
   const plan = buildCurriculumAudioPlan(input.content, { knownPhonemes: input.knownPhonemes });
   const byIdentity = new Map(
@@ -322,10 +326,12 @@ export function assembleCurriculumPassage(input: {
       const normal = byIdentity.get(identity(`sentence:${sentence.id}`, 'sentence', 0, 'normal'));
       const slow = byIdentity.get(identity(`sentence:${sentence.id}`, 'sentence', 0, 'slow'));
       if (normal?.audioRef) audioReady = true;
+      const learningItemId = input.learningItemIdBySentence?.get(sentence.id);
       return {
         ...sentence,
         // 词表/AI 优先；存量 sentence.phonetic 只当兜底（生成期可能给出 helped→/help/ 这类错音）。
         phonetic: sentencePhonetic(sentence.en, input.wordPhonetic) || sentence.phonetic || '',
+        ...(learningItemId ? { learningItemId } : {}),
         audio: {
           normalKey: `sentence:${sentence.id}:normal`,
           slowKey: `sentence:${sentence.id}:slow`,
@@ -348,10 +354,12 @@ export function assembleCurriculumPassage(input: {
       .map((example) => ({ en: example.en.trim(), zh: (example.zh ?? '').trim() }))
       .filter((example) => example.en.length > 0)
       .slice(0, 3);
+    const learningItemId = input.learningItemIdByWord?.get(focus.word.trim().toLowerCase());
     return {
       ...focus,
       // 词表/AI 有权威读音时覆盖单元词条（dishes 应为 /ˈdɪʃɪz/，不是 /diʃ/）。
       phonetic: input.wordPhonetic?.get(focus.word.trim().toLowerCase()) || focus.phonetic,
+      ...(learningItemId ? { learningItemId } : {}),
       pos: input.wordPos?.get(focus.word.trim().toLowerCase()) ?? '',
       examples,
       forms: (input.wordForms?.get(focus.word.trim().toLowerCase()) ?? []).slice(0, 6),

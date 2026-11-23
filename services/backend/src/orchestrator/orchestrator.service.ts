@@ -610,13 +610,16 @@ export class OrchestratorService {
     }
 
     if (assessment.passed && assessment.evaluated) {
+      // 教材活动的 content.id 是 `${unitId}:${index}`，不是 learning_items 行主键。
+      // 排复习时必须回填真实行主键，否则 FK 失败或复习指向不存在的条目。
+      const fallbackLearningItemId = await this.resolveLearningItemId(currentActivity!.id);
       for (const skillNodeId of currentActivity!.skillNodeIds) {
         await this.planner.scheduleInitialReview({
           learnerId: input.learnerId,
           skillNodeId,
           learningItemId: reviewTarget?.skillNodeId === skillNodeId && reviewTarget.learningItemId
             ? reviewTarget.learningItemId
-            : currentActivity!.id,
+            : fallbackLearningItemId,
         });
       }
     }
@@ -1910,6 +1913,20 @@ export class OrchestratorService {
     };
   }
 
+  /** 把活动内容 id 解析为 learning_items 行主键；预置课程与教材课程共用。 */
+  private async resolveLearningItemId(activityId: string): Promise<string | null> {
+    const byId = await this.prisma.learning_items.findUnique({
+      where: { id: activityId },
+      select: { id: true },
+    });
+    if (byId) return byId.id;
+    const byContentId = await this.prisma.learning_items.findFirst({
+      where: { content: { path: ['id'], equals: activityId } },
+      select: { id: true },
+    });
+    return byContentId?.id ?? null;
+  }
+
   /** 写证据（只 INSERT）。 */
   private async recordEvidence(input: {
     assessment: Awaited<ReturnType<OrchestratorService['assess']>>;
@@ -1929,11 +1946,12 @@ export class OrchestratorService {
 
     const targets = resolveEvidenceTargets(activity.skillNodeIds);
     const occurredAt = new Date().toISOString();
+    const fallbackLearningItemId = await this.resolveLearningItemId(activity.id);
     return Promise.all(
       targets.map(async ({ skillNodeId, abilityCategory }) => {
         const learningItemId = input.reviewTarget?.skillNodeId === skillNodeId && input.reviewTarget.learningItemId
           ? input.reviewTarget.learningItemId
-          : activity.id;
+          : fallbackLearningItemId;
         const id = await this.learnerModel.appendEvidence({
           learnerId: input.learnerId,
           lessonSessionId: input.lessonSessionId,
@@ -2034,6 +2052,7 @@ export class OrchestratorService {
       taskType: string;
       scenario: string;
       evidenceKind?: string;
+      reviewMode?: string;
       skillNodeIds: string[];
       targetWords: string[];
       demonstrationText: string | null;
@@ -2111,10 +2130,21 @@ export class OrchestratorService {
     const expectedResponse = expectedResponseOf(activity.taskType);
     // 图片选择题：选项即题目，复习/回忆时同样需要保留（见下方 directive 注释）。
     const isTapImage = activity.taskType === 'image_identification';
+    // 课文跟读复习保留原句/原词，孩子看着文本读；不是无提示回忆。
+    // 历史教材条目没有 reviewMode，按 topicId 前缀兜底。
+    const readAloudReview = input.isReview && (
+      activity.reviewMode === 'read_aloud' ||
+      (item.topicId?.startsWith('topic-textbook-') === true &&
+        ['word_mimicry', 'pronunciation_drill'].includes(activity.taskType))
+    );
     const baseTeacherUtterance = input.isReview
       ? expectedResponse === 'tap_image'
         ? '我们来做一次复习。请回想之前学过的内容，选择对应的图片。'
-        : '我们来做一次复习。请回想之前学过的内容，试着自己回答。'
+        : readAloudReview
+          ? activity.taskType === 'pronunciation_drill'
+            ? '我们复习一下。请看着这个单词读一遍，注意上次读错的地方。'
+            : '我们复习一下。请看着这句话读一遍，注意上次读错的地方。'
+          : '我们来做一次复习。请回想之前学过的内容，试着自己回答。'
       : activity.teacherUtteranceZh;
     // 用“认识词义 → 知道什么时候用 → 听例句 → 再跟读”的顺序组织教师话语，
     // 像父母教幼儿说话一样先建立意义，再练声音；复习轮不提前给答案。
@@ -2147,12 +2177,14 @@ export class OrchestratorService {
         : input.coachingText
           ? `${input.coachingText} ${richTeacherUtterance}`
           : richTeacherUtterance,
-      demonstrationText: input.isReview ? null : demo.demonstrationText,
-      pronunciationUnits: input.isReview ? [] : pronunciationUnits,
+      demonstrationText: input.isReview
+        ? (readAloudReview ? (activity.demonstrationText ?? demo.demonstrationText) : null)
+        : demo.demonstrationText,
+      pronunciationUnits: input.isReview && !readAloudReview ? [] : pronunciationUnits,
       expectedResponse: input.isReview && expectedResponse !== 'tap_image' ? 'speak' : expectedResponse,
-      // 图片选择题的图片就是题目本身：即使属于复习/回忆，也不能剥掉选项与目标词，
-      // 否则客户端只剩一张没有单词的跟读卡，孩子无从作答。
-      targetWords: input.isReview && !isTapImage ? [] : activity.targetWords,
+      // 图片选择题的图片就是题目本身；课文跟读复习的文本也是题目本身。
+      // 两种复习都不能剥掉目标词，否则客户端只剩一张空白卡。
+      targetWords: input.isReview && !isTapImage && !readAloudReview ? [] : activity.targetWords,
       imageOptions: isTapImage ? (activity.imageOptions ?? []) : [],
       wordMeaningZh: meaningZh || null,
       wordPhonetic: phonetic || null,

@@ -34,6 +34,8 @@ export type PublishableActivity = {
   scenario?: string;
   difficulty?: number;
   order?: number;
+  /** 课文跟读活动在复习轮保留目标文本。 */
+  reviewMode?: 'read_aloud';
   skillNodeIds: string[];
   targetWords: string[];
   teacherUtteranceZh?: string;
@@ -190,6 +192,9 @@ function buildLearningItemContent(
     imageAssetIds,
     imageAssets,
     id: `${unitId}:${index}`,
+    // 保留发布前的稳定活动键（如 `U07-s01`），运行时据此把课文句子/重点词
+    // 对回 learning_items 行主键；`id` 仍是预置课程沿用的 `${unitId}:${index}`。
+    activityKey: activity.id ?? null,
     topicId,
     order: index,
     m1Scope: false,
