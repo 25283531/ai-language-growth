@@ -3014,6 +3014,7 @@ private fun ProfileScreen(
         }
     }
     val textbooks = data?.optJSONArray("textbooks")
+    val stageProfile = remember(data) { parseStageProfile(data?.optJSONObject("stageProfile")) }
     val textbookLabels = (0 until (textbooks?.length() ?: 0)).mapNotNull { index ->
         textbooks?.optJSONObject(index)?.let { it.optString("id") to "${it.optString("publisher")} · ${it.optInt("publicationYear")} · ${it.optString("grade")} ${it.optString("title")}" }
     }
@@ -3094,6 +3095,12 @@ private fun ProfileScreen(
     }
 
     WeeklyReportCard(weekly, weeklyError, weeklyRefreshing, weeklyStatus, onRefreshWeekly)
+
+    // P3-03：复用 dashboard 同一次请求里的 stageProfile，不再单独请求 /learners/:id/stages。
+    // 旧服务端没有该字段时整张卡片不出现；字段存在但计算失败时卡片内部显示降级提示。
+    if (data?.has("stageProfile") == true) {
+        StageProfileCard(stageProfile)
+    }
 
     GrowthCard(modifier = Modifier.fillMaxWidth()) {
         GrowthSectionTitle("选择教材", "📚")

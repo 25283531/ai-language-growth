@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Headers,
+  Logger,
   Put,
 } from '@nestjs/common';
 import { z } from 'zod';
@@ -14,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { mapTextbookUnitToSkillNodeIds } from '../curriculum/textbook-skill-mapping';
 import { resolveTextbookTopic } from '../curriculum/textbook-topic';
 import { CurriculumWarmupService } from '../curriculum/curriculum-warmup.service';
+import { StageProfileService } from '../learner-model/stage-profile.service';
 
 // avatarUrl 字段名保持不变：允许 http(s):// 外链或 preset:// 本地头像资源标识。
 // preset:// 不是通用 URL，不能用 .url()；不改数据库 schema、不加 migration。
@@ -41,10 +43,13 @@ const abilityLabels: Record<string, string> = {
 
 @Controller('api/v1/user')
 export class UserController {
+  private readonly logger = new Logger(UserController.name);
+
   constructor(
     private readonly auth: AuthService,
     private readonly prisma: PrismaService,
     private readonly warmup: CurriculumWarmupService,
+    private readonly stages: StageProfileService,
   ) {}
 
   private async session(authorization?: string, cookie?: string) {
@@ -66,7 +71,7 @@ export class UserController {
   ) {
     const user = await this.session(authorization, cookie);
     const learner = await this.learner(user.id);
-    const [profile, mapping, abilities, evidence, textbooks] = await Promise.all([
+    const [profile, mapping, abilities, evidence, textbooks, stageProfile] = await Promise.all([
       this.prisma.learner_profiles.findUnique({
         where: { id: learner.id },
         include: { preferences: true },
@@ -96,6 +101,15 @@ export class UserController {
       this.prisma.textbook_catalogs.findMany({
         include: { units: { orderBy: { order: 'asc' } } },
         orderBy: [{ publisher: 'asc' }, { publicationYear: 'desc' }, { grade: 'asc' }],
+      }),
+      // P3-03：七领域阶段画像随同一次 dashboard 请求返回，家长端不必再发第二次请求。
+      // 它是增量字段：`abilities` 仍是按 masteryCode 聚合的旧口径，二者不得混用。
+      // 画像计算失败只降级为 null，不能让整个仪表盘不可用。
+      this.stages.compute(learner.id).catch((error: unknown) => {
+        this.logger.warn(
+          `stage profile unavailable for learner ${learner.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return null;
       }),
     ]);
 
@@ -170,6 +184,8 @@ export class UserController {
       unlockedCount: avatarLevel.unlockedCount,
       levelProgress: avatarLevel.progress,
       abilities: abilitiesByCategory,
+      // P3-03：七领域独立阶段（0—6），只读展示，不是总等级，也不是课程门槛。
+      stageProfile,
       stats,
       achievements: {
         hundredWords: stats.usedWords >= 100,
