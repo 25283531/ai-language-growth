@@ -20,6 +20,7 @@ import { AuthService, extractBearerToken } from '../auth/auth.service';
 import { ParentReportService } from '../reports/parent-report.service';
 import { ClozeService } from '../curriculum/cloze.service';
 import { ComprehensionService } from '../curriculum/comprehension.service';
+import { ExpressionTaskService } from '../curriculum/expression-task.service';
 
 @Controller('api/v1/lessons')
 export class LessonsController {
@@ -31,6 +32,7 @@ export class LessonsController {
     @Inject(AuthService) private readonly auth: AuthService,
     @Optional() @Inject(ClozeService) private readonly cloze?: ClozeService,
     @Optional() @Inject(ComprehensionService) private readonly comprehension?: ComprehensionService,
+    @Optional() @Inject(ExpressionTaskService) private readonly expression?: ExpressionTaskService,
   ) {}
 
   @Post('start')
@@ -180,6 +182,24 @@ export class LessonsController {
       : [];
     if (!answers.length) throw new HttpException('answers 不能为空', 400);
     return this.comprehension.grade(topicId, answers);
+  }
+
+  /** P4-03：当前教材单元的角色扮演/复述模板（参考答案在判分前不下发）。 */
+  @Get('topics/:topicId/expression')
+  async expressionTask(@Param('topicId') topicId: string) {
+    if (!this.expression) throw new HttpException('表达任务服务未启用', 503);
+    return this.expression.payload(topicId);
+  }
+
+  /** P4-03：按必用短语覆盖率判分；本接口只返回判定，不写学习者证据。 */
+  @Post('topics/:topicId/expression/grade')
+  async expressionGrade(@Param('topicId') topicId: string, @Body() body: unknown) {
+    if (!this.expression) throw new HttpException('表达任务服务未启用', 503);
+    const input = (body ?? {}) as { answer?: unknown };
+    if (typeof input.answer !== 'string' || !input.answer.trim()) {
+      throw new HttpException('answer 不能为空', 400);
+    }
+    return this.expression.grade(topicId, input.answer);
   }
 
   @Get(':id')

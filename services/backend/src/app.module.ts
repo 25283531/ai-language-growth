@@ -51,6 +51,7 @@ import { LexiconService } from './curriculum/lexicon.service';
 import { LexiconProofreadService } from './curriculum/lexicon-proofread.service';
 import { ClozeService } from './curriculum/cloze.service';
 import { ComprehensionService } from './curriculum/comprehension.service';
+import { ExpressionTaskService } from './curriculum/expression-task.service';
 import { TextbookUnitService } from './curriculum/textbook-unit.service';
 import { TextbookUnitPublisherService } from './curriculum/textbook-unit-publisher.service';
 import { PassagePracticeService } from './curriculum/passage-practice.service';
@@ -109,6 +110,7 @@ import { ReplayModule } from './replay/replay.module';
     LexiconProofreadService,
     ClozeService,
     ComprehensionService,
+    ExpressionTaskService,
     TextbookUnitService,
     TextbookUnitPublisherService,
     PassagePracticeService,

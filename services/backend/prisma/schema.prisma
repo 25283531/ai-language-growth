@@ -1087,6 +1087,25 @@ model unit_cloze_items {
   @@map("unit_cloze_items")
 }
 
+/// P4：教材单元的角色扮演/复述模板。每单元 1 个，参考答案只在判分后下发。
+model unit_expression_tasks {
+  id               String   @id @default(uuid())
+  unitId           String   @unique
+  topicId          String
+  kind             String
+  title            String
+  scenarioZh       String
+  promptEn         String
+  promptZh         String
+  referenceAnswer  String
+  requiredPhrases  String[] @default([])
+  sourceSentenceIds String[] @default([])
+  createdAt        DateTime @default(now())
+
+  @@index([topicId])
+  @@map("unit_expression_tasks")
+}
+
 /// P4：教材单元的理解题。每单元 2–3 题，支持判断与单选。
 model unit_comprehension_items {
   id               String   @id @default(uuid())
