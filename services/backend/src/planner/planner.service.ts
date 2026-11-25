@@ -282,9 +282,10 @@ export class PlannerService {
         lessonSessionId: input.lessonSessionId,
         states,
       });
+      const selectedBand = this.activityDifficultyBand(selected, states, masteryCode);
       return {
         activity: selected,
-        rationale: `本课重点领域：${abilityDomainsOf(selected.skillNodeIds).join('、') || '综合'}；服务端按当前能力开放难度 ${progressive.difficultyBand}，在 ${candidates.length} 个候选中选择；能力状态与硬前置由服务端校验${progressive.freeConversationLocked ? '，自主日常交流尚未开放' : ''}${progressive.activities.length ? '' : '；当前课程缺少该难度活动，回退至最低难度的非自由交流活动'}`,
+        rationale: `本课重点领域：${abilityDomainsOf(selected.skillNodeIds).join('、') || '综合'}；服务端按该活动所属能力开放难度 ${selectedBand}，在 ${candidates.length} 个候选中选择；能力状态与硬前置由服务端校验${progressive.freeConversationLocked ? '，自主日常交流尚未开放' : ''}${progressive.activities.length ? '' : '；当前课程缺少该难度活动，回退至最低难度的非自由交流活动'}`,
         isReview: false,
         reviewScheduleId: null,
       };
@@ -356,8 +357,13 @@ export class PlannerService {
   /**
    * 其他主题/能力领域的可排活动池。
    *
-   * 只读已发布（`reviewStatus='published'`）的数据库课程：内置课程没有下架/停用状态，
-   * 混进来会绕过运营刚刚下架的内容。限制取 200 条：只有本主题完全无候选时才走这条路。
+   * 数据源分两层：
+   *  1. 数据库已发布（`reviewStatus='published'`）的课程优先；
+   *  2. 该主题还没有数据库课程时，补内置 M1 课程。
+   *
+   * 停用主题不得因为内置回退被重新下发，因此先排除 `curriculum_units`
+   * 中 `availability='disabled'` 的主题；数据库已有可解析已发布活动的主题
+   * 不再补内置版本，避免同一主题出现两套内容。
    */
   private async crossDomainActivityPool(input: {
     topicId: string;
@@ -375,19 +381,43 @@ export class PlannerService {
       .filter((parsed): parsed is { success: true; data: TeachingActivity } => parsed.success)
       .map((parsed) => parsed.data)
       .filter((activity) => activity.topicId !== input.topicId);
+    const publishedTopics = new Set(published.map((activity) => activity.topicId));
 
-    return published
+    const disabledRows = await this.prisma.curriculum_units.findMany({
+      where: { availability: 'disabled' },
+      select: { topicId: true },
+    });
+    const disabledTopics = new Set(
+      disabledRows
+        .map((row) => row.topicId)
+        .filter((topicId): topicId is string => Boolean(topicId)),
+    );
+    const builtIn = this.curriculum
+      .allActivities()
       .filter((activity) =>
+        activity.topicId !== input.topicId &&
+        !publishedTopics.has(activity.topicId) &&
+        !disabledTopics.has(activity.topicId),
+      );
+
+    return [
+      ...published.map((activity) => ({ activity, sourceRank: 0 })),
+      ...builtIn.map((activity) => ({ activity, sourceRank: 1 })),
+    ]
+      .filter(({ activity }) =>
+        !disabledTopics.has(activity.topicId) &&
         !input.excludeActivityIds.includes(activity.id) &&
         input.typeAllowed(activity) &&
         this.canSchedule(activity, input.states).met &&
         this.isWithinProgressiveAccess(activity, input.states),
       )
       .sort((left, right) =>
-        left.difficulty - right.difficulty ||
-        left.order - right.order ||
-        left.id.localeCompare(right.id),
-      );
+        left.activity.difficulty - right.activity.difficulty ||
+        left.sourceRank - right.sourceRank ||
+        left.activity.order - right.activity.order ||
+        left.activity.id.localeCompare(right.activity.id),
+      )
+      .map(({ activity }) => activity);
   }
 
   /**

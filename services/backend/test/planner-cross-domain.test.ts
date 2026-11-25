@@ -65,6 +65,7 @@ function plannerWith(options: {
   otherItems?: TeachingActivity[];
   states?: Record<string, MasteryState>;
   disabled?: boolean;
+  disabledTopics?: string[];
   onOtherTopicQuery?: () => void;
 }) {
   const rows = (items: TeachingActivity[] = []) => items.map((content) => ({ content }));
@@ -87,6 +88,7 @@ function plannerWith(options: {
     review_schedules: { findMany: async () => [] },
     curriculum_units: {
       findFirst: async () => (options.disabled ? { id: 'unit-disabled' } : null),
+      findMany: async () => (options.disabledTopics ?? []).map((topicId) => ({ topicId })),
     },
   };
   return new PlannerService(prisma as never, {} as never, {} as never);
@@ -127,6 +129,46 @@ describe('P3-02 Planner 跨领域补齐', () => {
     assert.ok(step);
     assert.equal(step!.activity.id, 'act-other-listening');
     assert.equal(step!.activity.topicId, 'topic-greetings');
+  });
+
+  it('数据库没有其他主题时，内置 M1 课程仍可补入跨领域候选', async () => {
+    const planner = plannerWith({
+      topicItems: [freeTalk('topic-dialogue')],
+      otherItems: [],
+      states: { 'LA.LISTEN.instruction': 'mastered' },
+    });
+
+    const step = await planner.planNext(input('topic-dialogue'));
+
+    assert.ok(step, '内置课程也应补入跨领域候选');
+    assert.equal(step!.activity.id, 'act-greet-listen-greeting');
+    assert.equal(step!.activity.topicId, 'topic-greetings');
+    assert.match(step!.rationale, /其他能力领域/);
+  });
+
+  it('内置主题被停用时不得补入跨领域候选', async () => {
+    const planner = plannerWith({
+      topicItems: [freeTalk('topic-dialogue')],
+      otherItems: [],
+      states: { 'LA.LISTEN.instruction': 'mastered' },
+      disabledTopics: ['topic-greetings'],
+    });
+
+    const step = await planner.planNext(input('topic-dialogue'));
+
+    assert.equal(step, null, '停用的内置主题不能被跨领域候选中转下发');
+  });
+
+  it('停用主题即使存在残留已发布条目也不进入跨领域池', async () => {
+    const planner = plannerWith({
+      topicItems: [freeTalk('topic-dialogue')],
+      otherItems: [listening('topic-greetings')],
+      disabledTopics: ['topic-greetings'],
+    });
+
+    const step = await planner.planNext(input('topic-dialogue'));
+
+    assert.equal(step, null, '停用状态优先于残留的已发布学习项');
   });
 
   it('跨领域只取硬前置已满足且在难度带内的活动', async () => {
@@ -248,6 +290,59 @@ describe('P3-02 自由交流门槛只作用于自身', () => {
 
     assert.equal(scoped.freeConversationLocked, false);
     assert.deepEqual(scoped.activities.map((item) => item.id), ['act-topic-free-talk']);
+  });
+
+  it('自由交流基础未达成时，完整 Planner 仍排情景对话而不是自由交流', async () => {
+    const dialogue = activity({
+      id: 'act-dialogue-practice',
+      topicId: 'topic-dialogue',
+      skillNodeIds: ['LA.COMM.dialogue'],
+      taskType: 'situational_dialogue',
+      difficulty: 1,
+      order: 2,
+    });
+    const planner = plannerWith({
+      topicItems: [freeTalk('topic-dialogue'), dialogue],
+      states: {
+        'LA.SPEAK.simple_sentences': 'mastered',
+        'LA.COMM.respond': 'mastered',
+      },
+    });
+
+    const step = await planner.planNext(input('topic-dialogue'));
+
+    assert.ok(step);
+    assert.equal(step!.activity.id, 'act-dialogue-practice');
+    assert.match(step!.rationale, /自主日常交流尚未开放/);
+    assert.match(step!.rationale, /所属能力开放难度/);
+  });
+
+  it('一个领域阶段高不得被另一个领域阶段低拉低', () => {
+    const planner = new PlannerService({} as never, {} as never, {} as never) as unknown as Internals;
+    const listeningAdvanced = activity({
+      id: 'act-listening-band3',
+      topicId: 'topic-greetings',
+      skillNodeIds: ['LA.LISTEN.word_recognition'],
+      taskType: 'listening_comprehension',
+      difficulty: 3,
+      order: 1,
+    });
+    const pronunciationAdvanced = activity({
+      id: 'act-pronunciation-band3',
+      topicId: 'topic-greetings',
+      skillNodeIds: ['LA.PRON.short_vowels'],
+      taskType: 'pronunciation_drill',
+      difficulty: 3,
+      order: 2,
+    });
+
+    const scoped = planner.applyProgressiveAccess(
+      [pronunciationAdvanced, listeningAdvanced],
+      { 'LA.LISTEN.word_recognition': 'mastered' },
+    );
+
+    assert.equal(scoped.difficultyBand, 3);
+    assert.deepEqual(scoped.activities.map((item) => item.id), ['act-listening-band3']);
   });
 });
 
