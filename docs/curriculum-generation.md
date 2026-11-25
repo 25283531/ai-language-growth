@@ -695,3 +695,39 @@ npx tsx --test test/lesson-plan.test.ts
 cd services/backend
 npx tsx --test test/stage-lexicon-regression.test.ts
 ```
+
+## 15. 教材理解题（P4-02，后端）
+
+任务书 §7.1 要求每个教材单元生成 2–3 道理解题，复用现有理解证据类型。首版实现判断（`true_false`）与单选（`single_choice`），排序题需要拖拽/排序交互，暂不在本轮落地。
+
+### 15.1 数据与接口
+
+题目落在 `unit_comprehension_items`（`unitId + itemIndex` 唯一），按单元缓存，避免每次取题重复调用模型。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/v1/lessons/topics/:topicId/comprehension` | 返回 2–3 题；不下发 `answer`、`explanationZh` |
+| `POST` | `/api/v1/lessons/topics/:topicId/comprehension/grade` | body `{ answers: [{ itemId, answer }] }`，一次判分 |
+
+取题响应包含 `items[]` 与 `rule: { minItems: 2, maxItems: 3 }`。判分返回 `correct/total/accuracy` 及逐题 `correctAnswer`、`correct`、`explanationZh`；未作答按错题处理，不做续批。
+
+### 15.2 生成与兜底
+
+- 模型路由：`llm.curriculum_unit_comprehension`（L2，日预算 100 元）。
+- 提示词只提供本单元课文句、词表与语法点；要求 2–3 题、答案可判定、不能依赖课文外知识。
+- 判断题的 `options` 统一为 `['true','false']`；单选题的 `answer` 必须出现在选项中。
+- 模型失败、JSON 不合规或不足 2 题时，用课文原句生成“原文判断 + 替换词判断”，再用原句和替换句生成“哪句出现在课文中”的单选，保证至少 2 题；课文过短且无法构成 3 题时允许 2 题。
+- 已有 2 题即不再补题，避免重复生成；同一单元并发生成用进程内 promise 去重。
+
+### 15.3 回归
+
+```powershell
+cd services/backend
+npx tsx --test test/comprehension.service.test.ts
+```
+
+7 个用例锁定：已有题不重复调用模型、已有 2 题不强行补 3 题、合法模型结果落库且不泄答案、模型失败兜底 3 题、判分容错与解析、缺答按错题、无教材包 404。模型路由回归同时覆盖新路由的 L2 分级。
+
+### 15.4 Android 决策
+
+本轮不动 Android：现有课文课第五步是完形，加入理解题需要新增课堂阶段、状态机与作答页面，且排序题型尚无确定的交互方案。先稳定后端契约；后续接入时可将理解题放在“课文跟读”与“语法完形”之间，或作为独立复习入口，由产品确认。
