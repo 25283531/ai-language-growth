@@ -731,3 +731,43 @@ npx tsx --test test/comprehension.service.test.ts
 ### 15.4 Android 决策
 
 本轮不动 Android：现有课文课第五步是完形，加入理解题需要新增课堂阶段、状态机与作答页面，且排序题型尚无确定的交互方案。先稳定后端契约；后续接入时可将理解题放在“课文跟读”与“语法完形”之间，或作为独立复习入口，由产品确认。
+
+## 16. 角色扮演/复述模板（P4-03，后端）
+
+任务书 §7.1 要求每个教材单元提供 1 个角色扮演/复述任务，包含情境与参考答案，只记表达证据。首版每单元生成 1 个模板，Android 暂不接入。
+
+### 16.1 数据与接口
+
+模板落在 `unit_expression_tasks`（`unitId` 唯一），按单元缓存，避免重复调用模型。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/v1/lessons/topics/:topicId/expression` | 返回情境、英文/中文指令与必用短语；**不返回参考答案** |
+| `POST` | `/api/v1/lessons/topics/:topicId/expression/grade` | body `{ answer: string }`；返回覆盖率、命中/缺失短语、参考答案与反馈 |
+
+取题响应包含 `task.kind`（`role_play` / `retell`）与 `rule.passCoverage = 0.6`。参考答案只在判分后返回，避免直接照读。
+
+### 16.2 生成与兜底
+
+- 模型路由：`llm.curriculum_unit_expression`（L2，日预算 100 元）。
+- 提示词只使用本单元课文句、词表与语法点；要求 1–2 句英文参考答案和 2–4 个必用短语，短语必须逐字出现在参考答案中。
+- 模型失败、JSON 不合规或必用短语不足 2 个时，用前两句课文生成角色扮演兜底；必用短语优先取课文原句中的本单元词，不足时从参考答案补足。
+- 同一单元并发生成用进程内 promise 去重；已有模板直接返回，不重复生成。
+
+### 16.3 判分
+
+- 对回答和必用短语做小写、去标点、压缩空白归一化；短语按整词/整短语匹配。
+- `coverage = 命中短语数 / 必用短语数`，`coverage >= 0.6` 判定达标；不做逐字参考答案匹配。
+- 返回 `matchedPhrases`、`missingPhrases`、`referenceAnswer` 和中文反馈；未通过时提示缺少的表达。
+- 本接口只返回判定，不写 `learning_evidence`；课堂侧接入时需带 `learnerId` / `lessonSessionId` 再记录表达证据。
+
+### 16.4 回归与 Android 决策
+
+```powershell
+cd services/backend
+npx tsx --test test/expression-task.service.test.ts
+```
+
+6 个用例锁定：已有模板不重复生成且不泄参考答案、合法模型结果落库并过滤不在参考答案中的短语、模型失败兜底、60% 覆盖率判分与解析、未达标反馈、无教材包/无法生成 404。模型路由回归 18/18。
+
+Android 暂不动：角色扮演需要录音/ASR、复述需要长文本输入与反馈展示；当前先稳定取题与判分契约，待产品确认放在课堂末尾还是独立表达练习入口后再接入。
