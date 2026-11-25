@@ -45,7 +45,7 @@ import kotlin.math.roundToInt
 internal const val LESSON_PASS_SCORE = 50.0
 internal const val WORD_PASS_REQUIRED = 3
 
-internal enum class LessonStage { WORDS, PASSAGE, SENTENCE, GRAMMAR, CLOZE, FINISH }
+internal enum class LessonStage { WORDS, PASSAGE, SENTENCE, GRAMMAR, COMPREHENSION, CLOZE, EXPRESSION, FINISH }
 
 internal data class LessonFlowState(
     val stage: LessonStage = LessonStage.WORDS,
@@ -67,6 +67,28 @@ internal data class LessonClozeBinding(
     val onSubmit: () -> Unit,
     val onNext: (Int) -> Unit,
     val onExit: () -> Unit,
+)
+
+/** 理解题的页面状态；题目、选项与判分都由服务端下发。 */
+internal data class LessonComprehensionBinding(
+    val loading: Boolean,
+    val items: List<ComprehensionItem>,
+    val selections: Map<String, String>,
+    val grade: ComprehensionGrade?,
+    val error: String,
+    val onSelect: (String, String) -> Unit,
+    val onSubmit: () -> Unit,
+)
+
+/** 表达任务只做文本作答；编辑文本时清空上次判分，允许重新提交。 */
+internal data class LessonExpressionBinding(
+    val loading: Boolean,
+    val task: ExpressionTask?,
+    val answer: String,
+    val grade: ExpressionGrade?,
+    val error: String,
+    val onAnswerChange: (String) -> Unit,
+    val onSubmit: () -> Unit,
 )
 
 internal fun LessonFlowState.afterSentenceScore(
@@ -180,8 +202,12 @@ internal fun LessonFlowHost(
     startRecording: () -> Boolean,
     stopRecording: () -> String?,
     evaluate: suspend (String, String, Long, Double?, Int, String) -> JSONObject,
+    comprehension: LessonComprehensionBinding,
     cloze: LessonClozeBinding,
+    expression: LessonExpressionBinding,
+    onEnterComprehension: () -> Unit,
     onEnterCloze: () -> Unit,
+    onEnterExpression: () -> Unit,
     onComplete: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -311,7 +337,9 @@ internal fun LessonFlowHost(
             LessonStage.PASSAGE -> "第二步 · 读整篇"
             LessonStage.SENTENCE -> "第三步 · 分句跟读"
             LessonStage.GRAMMAR -> "第四步 · 语法讲解"
-            LessonStage.CLOZE -> "第五步 · 完形练习"
+            LessonStage.COMPREHENSION -> "第五步 · 理解题"
+            LessonStage.CLOZE -> "第六步 · 完形练习"
+            LessonStage.EXPRESSION -> "第七步 · 说一说"
             LessonStage.FINISH -> "完成这堂课"
         },
         hint = when (state.stage) {
@@ -409,7 +437,25 @@ internal fun LessonFlowHost(
             busy = busy,
             onSpeak = speakText,
             onPlaySentence = playSentence,
-            onStartCloze = {
+            onStartComprehension = {
+                state = state.copy(stage = LessonStage.COMPREHENSION)
+                onEnterComprehension()
+            },
+        )
+
+        LessonStage.COMPREHENSION -> ComprehensionScreen(
+            items = comprehension.items,
+            loading = comprehension.loading,
+            selections = comprehension.selections,
+            grade = comprehension.grade,
+            error = comprehension.error,
+            onSelect = comprehension.onSelect,
+            onSubmit = comprehension.onSubmit,
+            onContinue = {
+                state = state.copy(stage = LessonStage.CLOZE)
+                onEnterCloze()
+            },
+            onSkip = {
                 state = state.copy(stage = LessonStage.CLOZE)
                 onEnterCloze()
             },
@@ -426,10 +472,27 @@ internal fun LessonFlowHost(
             onSelect = cloze.onSelect,
             onSubmit = cloze.onSubmit,
             onNext = cloze.onNext,
+            onContinue = {
+                state = state.copy(stage = LessonStage.EXPRESSION)
+                onEnterExpression()
+            },
+            continueLabel = "进入表达任务",
             onExit = {
                 cloze.onExit()
                 state = state.copy(stage = LessonStage.FINISH)
             },
+        )
+
+        LessonStage.EXPRESSION -> ExpressionScreen(
+            task = expression.task,
+            loading = expression.loading,
+            answer = expression.answer,
+            grade = expression.grade,
+            error = expression.error,
+            onAnswerChange = expression.onAnswerChange,
+            onSubmit = expression.onSubmit,
+            onDone = { state = state.copy(stage = LessonStage.FINISH) },
+            onSkip = { state = state.copy(stage = LessonStage.FINISH) },
         )
 
         LessonStage.FINISH -> FinishPage(
@@ -715,7 +778,7 @@ private fun GrammarPage(
     busy: Boolean,
     onSpeak: (String) -> Unit,
     onPlaySentence: (PassageSentence, Boolean) -> Unit,
-    onStartCloze: () -> Unit,
+    onStartComprehension: () -> Unit,
 ) {
     if (points.isEmpty()) {
         GrowthCard(modifier = Modifier.fillMaxWidth()) {
@@ -765,7 +828,216 @@ private fun GrammarPage(
             )
         }
     }
-    GrowthPrimaryButton("进入完形练习", onStartCloze, emoji = "✏️")
+    GrowthPrimaryButton("进入理解题", onStartComprehension, emoji = "📖")
+}
+
+/**
+ * P4-02：理解题页。
+ *
+ * 题目一次判分，不要求达到固定正确率；没准备好或接口失败时可以跳过，避免阻断
+ * 后续的完形与表达练习。
+ */
+@Composable
+internal fun ComprehensionScreen(
+    items: List<ComprehensionItem>,
+    loading: Boolean,
+    selections: Map<String, String>,
+    grade: ComprehensionGrade?,
+    error: String,
+    onSelect: (String, String) -> Unit,
+    onSubmit: () -> Unit,
+    onContinue: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.BlueWash,
+        outline = GrowthColors.Blue.copy(alpha = 0.22f),
+    ) {
+        GrowthSectionTitle("读懂课文了吗？", "📖")
+        Text(
+            "根据课文回答下面的题。提交后可以看到答案和解析。",
+            style = MaterialTheme.typography.bodySmall,
+            color = GrowthColors.InkSoft,
+        )
+
+        items.forEachIndexed { index, item ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "${index + 1}. ${item.prompt}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = GrowthColors.Ink,
+                )
+                item.options.forEach { option ->
+                    val selected = selections[item.id] == option
+                    GrowthSecondaryButton(
+                        if (selected) "✓ ${item.optionLabel(option)}" else item.optionLabel(option),
+                        { onSelect(item.id, option) },
+                        enabled = !loading && grade == null,
+                    )
+                }
+            }
+        }
+
+        if (loading) {
+            Text("正在准备理解题…", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+        }
+        if (error.isNotBlank()) {
+            Text(error, style = MaterialTheme.typography.bodySmall, color = GrowthColors.PrimaryDeep)
+        }
+        if (!loading && items.isEmpty() && error.isBlank()) {
+            Text(
+                "这一课暂时没有理解题，可以先进入完形练习。",
+                style = MaterialTheme.typography.bodySmall,
+                color = GrowthColors.InkSoft,
+            )
+        }
+
+        val result = grade
+        if (result == null) {
+            GrowthPrimaryButton(
+                "提交理解题",
+                onSubmit,
+                emoji = "✅",
+                enabled = !loading && items.isNotEmpty() && selections.size == items.size,
+                busy = loading,
+            )
+        } else {
+            Text(
+                "答对 ${result.correct}/${result.total}，正确率 ${(result.accuracy * 100).roundToInt()}%",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (result.correct == result.total) GrowthColors.MintDeep else GrowthColors.PrimaryDeep,
+            )
+            result.details.forEach { detail ->
+                val item = items.firstOrNull { it.id == detail.itemId }
+                val correctAnswer = item?.optionLabel(detail.correctAnswer) ?: detail.correctAnswer
+                Text(
+                    "${if (detail.correct) "✅" else "❌"} 正确答案：$correctAnswer",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GrowthColors.Ink,
+                )
+                if (detail.explanationZh.isNotBlank()) {
+                    Text(
+                        "   ${detail.explanationZh}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GrowthColors.InkSoft,
+                    )
+                }
+            }
+            GrowthPrimaryButton("进入完形练习", onContinue, emoji = "✏️")
+        }
+        GrowthSecondaryButton("跳过理解题", onSkip, enabled = !loading)
+    }
+}
+
+/**
+ * P4-03：角色扮演/复述页。
+ *
+ * 首版只收英文长文本，不接录音/ASR；判分后展示必用短语覆盖率和参考答案。
+ */
+@Composable
+internal fun ExpressionScreen(
+    task: ExpressionTask?,
+    loading: Boolean,
+    answer: String,
+    grade: ExpressionGrade?,
+    error: String,
+    onAnswerChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onDone: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    GrowthCard(
+        modifier = Modifier.fillMaxWidth(),
+        fill = GrowthColors.SunWash,
+        outline = GrowthColors.Sun.copy(alpha = 0.30f),
+    ) {
+        GrowthSectionTitle("说一说", "🎭")
+        if (task == null) {
+            Text(
+                if (loading) "正在准备表达任务…" else "这一课暂时没有表达任务，可以跳过。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = GrowthColors.InkSoft,
+            )
+        } else {
+            GrowthPill(task.kindLabel(), GrowthColors.SunDeep, GrowthColors.CreamDeep)
+            Text(task.title, style = MaterialTheme.typography.titleMedium, color = GrowthColors.Ink)
+            if (task.scenarioZh.isNotBlank()) {
+                Text(task.scenarioZh, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+            }
+            if (task.promptZh.isNotBlank()) {
+                Text(task.promptZh, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+            }
+            if (task.promptEn.isNotBlank()) {
+                Text(task.promptEn, style = MaterialTheme.typography.bodyLarge, color = GrowthColors.Ink)
+            }
+            if (task.requiredPhrases.isNotEmpty()) {
+                Text(
+                    "必用短语：${task.requiredPhrases.joinToString(" · ")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.PrimaryDeep,
+                )
+            }
+            GrowthTextField(
+                value = answer,
+                onValue = onAnswerChange,
+                label = "写下你的表达（英文）",
+                placeholder = "用上上面的必用短语，写 1–3 句。",
+                leadingEmoji = "✍️",
+                singleLine = false,
+                minLines = 4,
+            )
+        }
+
+        if (loading) {
+            Text("正在提交表达…", style = MaterialTheme.typography.bodySmall, color = GrowthColors.InkSoft)
+        }
+        if (error.isNotBlank()) {
+            Text(error, style = MaterialTheme.typography.bodySmall, color = GrowthColors.PrimaryDeep)
+        }
+
+        val result = grade
+        if (result != null) {
+            val phraseTotal = task?.requiredPhrases?.size
+                ?: (result.matchedPhrases.size + result.missingPhrases.size)
+            Text(
+                "用上 ${result.matchedPhrases.size}/$phraseTotal 个必用短语，覆盖率 ${(result.coverage * 100).roundToInt()}%",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (result.passed) GrowthColors.MintDeep else GrowthColors.PrimaryDeep,
+            )
+            if (result.missingPhrases.isNotEmpty()) {
+                Text(
+                    "还差：${result.missingPhrases.joinToString("、")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GrowthColors.PrimaryDeep,
+                )
+            }
+            if (result.feedbackZh.isNotBlank()) {
+                Text(result.feedbackZh, style = MaterialTheme.typography.bodyMedium, color = GrowthColors.InkSoft)
+            }
+            if (result.referenceAnswer.isNotBlank()) {
+                Text("参考答案：${result.referenceAnswer}", style = MaterialTheme.typography.bodyMedium, color = GrowthColors.Ink)
+            }
+        }
+
+        when {
+            loading -> Unit
+            result == null -> GrowthPrimaryButton(
+                "提交表达",
+                onSubmit,
+                emoji = "✅",
+                enabled = task != null && answer.isNotBlank(),
+            )
+            result.passed -> GrowthPrimaryButton("完成这堂课", onDone, emoji = "🎉")
+            else -> GrowthPrimaryButton(
+                "再提交一次",
+                onSubmit,
+                emoji = "🔁",
+                enabled = task != null && answer.isNotBlank(),
+            )
+        }
+        GrowthSecondaryButton("跳过表达，直接完成", onSkip, enabled = !loading)
+    }
 }
 
 @Composable

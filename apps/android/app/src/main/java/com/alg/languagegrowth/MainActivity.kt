@@ -268,6 +268,18 @@ private fun GrowthApp(
     var clozeSelections by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var clozeGrade by remember { mutableStateOf<ClozeGrade?>(null) }
     var clozeError by remember { mutableStateOf("") }
+    // P4-02：理解题
+    var comprehensionLoading by remember { mutableStateOf(false) }
+    var comprehensionItems by remember { mutableStateOf<List<ComprehensionItem>>(emptyList()) }
+    var comprehensionSelections by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var comprehensionGrade by remember { mutableStateOf<ComprehensionGrade?>(null) }
+    var comprehensionError by remember { mutableStateOf("") }
+    // P4-03：角色扮演/复述（文本作答）
+    var expressionLoading by remember { mutableStateOf(false) }
+    var expressionTask by remember { mutableStateOf<ExpressionTask?>(null) }
+    var expressionAnswer by remember { mutableStateOf("") }
+    var expressionGrade by remember { mutableStateOf<ExpressionGrade?>(null) }
+    var expressionError by remember { mutableStateOf("") }
     // 当前正在上的教材主题；开课后由服务端返回，完形接口用它定位单元。
     var activeTopicId by remember { mutableStateOf("") }
     // P2-06 重点词拆读：当前词、当前高亮片段、陪练轮次与错误定位
@@ -312,6 +324,7 @@ private fun GrowthApp(
         return if (value.endsWith("/api/v1")) value else "$value/api/v1"
     }
     fun token() = account.getString("token", null)
+    fun currentTopic(): String = activeTopicId.ifBlank { textbookTopicId(dashboard).orEmpty() }
 
     fun clearPassageState() {
         passagePlayingKey = ""
@@ -537,7 +550,7 @@ private fun GrowthApp(
 
     /** P3：打开语法+完形，拉当前批。 */
     fun loadCloze(batch: Int) {
-        val topic = activeTopicId.ifBlank { textbookTopicId(dashboard).orEmpty() }
+        val topic = currentTopic()
         if (topic.isBlank()) {
             clozeError = "还没有开始教材课程，先学完本课再练语法。"
             return
@@ -573,7 +586,7 @@ private fun GrowthApp(
     /** P3：提交一批；<80% 时服务端返回 nextBatchIndex。 */
     fun submitCloze() {
         if (clozeItems.isEmpty()) return
-        val topic = activeTopicId.ifBlank { textbookTopicId(dashboard).orEmpty() }
+        val topic = currentTopic()
         if (topic.isBlank()) {
             clozeError = "还没有开始教材课程，先学完本课再练语法。"
             return
@@ -597,6 +610,137 @@ private fun GrowthApp(
                 clozeError = e.message ?: "批改失败，再试一次。"
             } finally {
                 clozeLoading = false
+            }
+        }
+    }
+
+    /** P4-02：打开理解题，拉取当前单元的 2–3 道题。 */
+    fun loadComprehension() {
+        val topic = currentTopic()
+        if (topic.isBlank()) {
+            comprehensionError = "还没有开始教材课程，先学完本课再做理解题。"
+            return
+        }
+        scope.launch {
+            comprehensionLoading = true
+            comprehensionError = ""
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    http(
+                        base(),
+                        "/lessons/topics/$topic/comprehension",
+                        "GET",
+                        null,
+                        token(),
+                        mapOf("X-Learner-Id" to learnerId),
+                    )
+                }
+                comprehensionItems = parseComprehensionItems(response)
+                comprehensionSelections = emptyMap()
+                comprehensionGrade = null
+            } catch (e: Exception) {
+                comprehensionItems = emptyList()
+                comprehensionError = e.message ?: "理解题加载失败，可以跳过先做完形练习。"
+            } finally {
+                comprehensionLoading = false
+            }
+        }
+    }
+
+    /** P4-02：一次提交全部理解题；结果只在当前课堂内保留。 */
+    fun submitComprehension() {
+        if (comprehensionItems.isEmpty()) return
+        val topic = currentTopic()
+        if (topic.isBlank()) {
+            comprehensionError = "还没有开始教材课程，先学完本课再做理解题。"
+            return
+        }
+        scope.launch {
+            comprehensionLoading = true
+            comprehensionError = ""
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    http(
+                        base(),
+                        "/lessons/topics/$topic/comprehension/grade",
+                        "POST",
+                        comprehensionGradeBody(comprehensionSelections),
+                        token(),
+                        mapOf("X-Learner-Id" to learnerId),
+                    )
+                }
+                comprehensionGrade = parseComprehensionGrade(response)
+            } catch (e: Exception) {
+                comprehensionError = e.message ?: "理解题批改失败，可以跳过先做完形练习。"
+            } finally {
+                comprehensionLoading = false
+            }
+        }
+    }
+
+    /** P4-03：拉取当前单元的角色扮演/复述任务。 */
+    fun loadExpression() {
+        val topic = currentTopic()
+        if (topic.isBlank()) {
+            expressionError = "还没有开始教材课程，先学完本课再练表达。"
+            return
+        }
+        scope.launch {
+            expressionLoading = true
+            expressionError = ""
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    http(
+                        base(),
+                        "/lessons/topics/$topic/expression",
+                        "GET",
+                        null,
+                        token(),
+                        mapOf("X-Learner-Id" to learnerId),
+                    )
+                }
+                expressionTask = parseExpressionTask(response)
+                expressionAnswer = ""
+                expressionGrade = null
+                if (expressionTask == null) {
+                    expressionError = "这一课暂时没有可用的表达任务，可以跳过。"
+                }
+            } catch (e: Exception) {
+                expressionTask = null
+                expressionError = e.message ?: "表达任务加载失败，可以跳过先完成本课。"
+            } finally {
+                expressionLoading = false
+            }
+        }
+    }
+
+    /** P4-03：提交文本表达；通过后展示参考答案。 */
+    fun submitExpression() {
+        if (expressionTask == null || expressionAnswer.isBlank()) return
+        val topic = currentTopic()
+        if (topic.isBlank()) {
+            expressionError = "还没有开始教材课程，先学完本课再练表达。"
+            return
+        }
+        scope.launch {
+            expressionLoading = true
+            expressionError = ""
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    http(
+                        base(),
+                        "/lessons/topics/$topic/expression/grade",
+                        "POST",
+                        expressionGradeBody(expressionAnswer),
+                        token(),
+                        mapOf("X-Learner-Id" to learnerId),
+                    )
+                }
+                expressionGrade = parseExpressionGrade(response)
+            } catch (e: Exception) {
+                expressionError = e.message ?: "表达批改失败，再试一次或跳过。"
+            } finally {
+                expressionLoading = false
             }
         }
     }
@@ -1086,6 +1230,17 @@ private fun GrowthApp(
                                             encoded, targetText, durationMs, previousScore, attemptIndex, learningItemId,
                                         )
                                     },
+                                    comprehension = LessonComprehensionBinding(
+                                        loading = comprehensionLoading,
+                                        items = comprehensionItems,
+                                        selections = comprehensionSelections,
+                                        grade = comprehensionGrade,
+                                        error = comprehensionError,
+                                        onSelect = { itemId, answer ->
+                                            comprehensionSelections = comprehensionSelections + (itemId to answer)
+                                        },
+                                        onSubmit = { submitComprehension() },
+                                    ),
                                     cloze = LessonClozeBinding(
                                         loading = clozeLoading,
                                         grammar = clozeGrammar,
@@ -1102,10 +1257,25 @@ private fun GrowthApp(
                                             passageStatus = "语法练习完成，今天的内容就学到这里。"
                                         },
                                     ),
+                                    expression = LessonExpressionBinding(
+                                        loading = expressionLoading,
+                                        task = expressionTask,
+                                        answer = expressionAnswer,
+                                        grade = expressionGrade,
+                                        error = expressionError,
+                                        onAnswerChange = { value ->
+                                            expressionAnswer = value
+                                            // 改了文字就重新判分，避免显示旧结果误导孩子。
+                                            if (expressionGrade != null) expressionGrade = null
+                                        },
+                                        onSubmit = { submitExpression() },
+                                    ),
+                                    onEnterComprehension = { loadComprehension() },
                                     onEnterCloze = {
                                         clozeOpen = true
                                         loadCloze(0)
                                     },
+                                    onEnterExpression = { loadExpression() },
                                     onComplete = {
                                         finishCurrentLesson()
                                     },
@@ -3443,6 +3613,8 @@ internal fun ClozeScreen(
     onSubmit: () -> Unit,
     onNext: (Int) -> Unit,
     onExit: () -> Unit,
+    onContinue: (() -> Unit)? = null,
+    continueLabel: String = "完成语法练习",
 ) {
     GrowthCard(
         modifier = Modifier.fillMaxWidth(),
@@ -3542,7 +3714,7 @@ internal fun ClozeScreen(
                 }
             }
             if (result.passed) {
-                GrowthPrimaryButton("完成语法练习", onExit, emoji = "🎉")
+                GrowthPrimaryButton(continueLabel, onContinue ?: onExit, emoji = "🎉")
             } else {
                 GrowthSecondaryButton(
                     "再来一批（正确率还没到 80%）",

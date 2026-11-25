@@ -687,6 +687,8 @@ fun GrowthTextField(
     placeholder: String = "",
     password: Boolean = false,
     leadingEmoji: String = "",
+    singleLine: Boolean = true,
+    minLines: Int = 1,
 ) {
     OutlinedTextField(
         value = value,
@@ -697,7 +699,9 @@ fun GrowthTextField(
             if (placeholder.isNotBlank()) Text(placeholder, style = MaterialTheme.typography.bodyMedium)
         },
         leadingIcon = { if (leadingEmoji.isNotBlank()) Text(leadingEmoji, fontSize = 20.sp) },
-        singleLine = true,
+        singleLine = singleLine,
+        minLines = minLines,
+        maxLines = if (singleLine) 1 else 6,
         shape = GrowthShapes.Field,
         textStyle = MaterialTheme.typography.bodyLarge,
         visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
