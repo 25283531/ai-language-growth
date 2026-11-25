@@ -1086,3 +1086,22 @@ model unit_cloze_items {
   @@index([topicId])
   @@map("unit_cloze_items")
 }
+
+/// P4：教材单元的理解题。每单元 2–3 题，支持判断与单选。
+model unit_comprehension_items {
+  id               String   @id @default(uuid())
+  unitId           String
+  topicId          String
+  itemIndex        Int
+  kind             String
+  prompt           String
+  options          String[] @default([])
+  answer           String
+  explanationZh    String   @default("")
+  sourceSentenceIds String[] @default([])
+  createdAt        DateTime @default(now())
+
+  @@unique([unitId, itemIndex])
+  @@index([topicId])
+  @@map("unit_comprehension_items")
+}

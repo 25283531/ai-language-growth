@@ -19,6 +19,7 @@ import { SpeechQuotaService } from '../usage/speech-quota.service';
 import { AuthService, extractBearerToken } from '../auth/auth.service';
 import { ParentReportService } from '../reports/parent-report.service';
 import { ClozeService } from '../curriculum/cloze.service';
+import { ComprehensionService } from '../curriculum/comprehension.service';
 
 @Controller('api/v1/lessons')
 export class LessonsController {
@@ -29,6 +30,7 @@ export class LessonsController {
     @Inject(SpeechQuotaService) private readonly quota: SpeechQuotaService,
     @Inject(AuthService) private readonly auth: AuthService,
     @Optional() @Inject(ClozeService) private readonly cloze?: ClozeService,
+    @Optional() @Inject(ComprehensionService) private readonly comprehension?: ComprehensionService,
   ) {}
 
   @Post('start')
@@ -156,6 +158,28 @@ export class LessonsController {
       : [];
     if (!answers.length) throw new HttpException('answers 不能为空', 400);
     return this.cloze.grade(topicId, batchIndex, answers);
+  }
+
+  /** P4-02：当前教材单元的理解题（2–3 题）。 */
+  @Get('topics/:topicId/comprehension')
+  async comprehensionBatch(@Param('topicId') topicId: string) {
+    if (!this.comprehension) throw new HttpException('理解题服务未启用', 503);
+    return this.comprehension.payload(topicId);
+  }
+
+  /** P4-02：一次批改本单元理解题。 */
+  @Post('topics/:topicId/comprehension/grade')
+  async comprehensionGrade(@Param('topicId') topicId: string, @Body() body: unknown) {
+    if (!this.comprehension) throw new HttpException('理解题服务未启用', 503);
+    const input = (body ?? {}) as { answers?: unknown };
+    const answers = Array.isArray(input.answers)
+      ? input.answers
+          .map((entry) => entry as { itemId?: unknown; answer?: unknown })
+          .filter((entry) => typeof entry.itemId === 'string' && typeof entry.answer === 'string')
+          .map((entry) => ({ itemId: String(entry.itemId), answer: String(entry.answer) }))
+      : [];
+    if (!answers.length) throw new HttpException('answers 不能为空', 400);
+    return this.comprehension.grade(topicId, answers);
   }
 
   @Get(':id')
