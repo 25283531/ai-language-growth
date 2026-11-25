@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { lexiconDatasetSchema, type LexiconEntry } from '@alg/shared-contracts';
+import { extractMetadataWords, normalizeTextbookWord } from '../src/curriculum/textbook-word-injection';
 
 /**
  * 把 packages/vocabulary/data/lexicon.json 导入 lexicon_entries。
@@ -112,7 +113,7 @@ async function importTextbookWords(): Promise<{ linked: number; added: number }>
           { variants: { hasSome: batch.map((entry) => entry.word) } },
         ],
       },
-      select: { word: true, variants: true, textbookUnitIds: true },
+      select: { word: true, variants: true, textbookUnitIds: true, source: true, meaningZh: true, childSafe: true },
     });
     // 教材写的是 running / cats 时，优先挂到已有词族 run / cat，
     // 不要另建一个没有音标和释义的同形条目。
@@ -125,7 +126,7 @@ async function importTextbookWords(): Promise<{ linked: number; added: number }>
     }
     // 同一批里可能同时出现 cat / cats；它们映射到同一个词族，必须合并后再更新，
     // 否则后一次 update 会覆盖前一次教材单元标记。
-    const updates = new Map<string, { word: string; unitIds: Set<string>; count: number }>();
+    const updates = new Map<string, { word: string; unitIds: Set<string>; count: number; childSafe: boolean }>();
     const creates: TextbookWord[] = [];
     for (const entry of batch) {
       const current = byWord.get(entry.word);
@@ -142,6 +143,9 @@ async function importTextbookWords(): Promise<{ linked: number; added: number }>
           word: current.word,
           unitIds: new Set([...current.textbookUnitIds, ...entry.unitIds]),
           count: 1,
+          // 旧版本导入的教材新词可能带着 childSafe=true 但没有释义；
+          // 重新扫描时保守降为 false，避免未经审核的词继续进入儿童课程。
+          childSafe: current.source === 'textbook' && !current.meaningZh ? false : current.childSafe,
         });
       }
     }
@@ -150,7 +154,7 @@ async function importTextbookWords(): Promise<{ linked: number; added: number }>
     await prisma.$transaction([
       ...[...updates.values()].map((item) => prisma.lexicon_entries.update({
         where: { word: item.word },
-        data: { textbookUnitIds: [...item.unitIds].sort() },
+        data: { textbookUnitIds: [...item.unitIds].sort(), childSafe: item.childSafe },
       })),
       ...creates.map((entry) => prisma.lexicon_entries.create({
         data: {
@@ -167,7 +171,8 @@ async function importTextbookWords(): Promise<{ linked: number; added: number }>
           examples: [] as Prisma.InputJsonValue,
           source: 'textbook',
           license: 'textbook',
-          childSafe: true,
+          // 新教材词没有经过词库安全判定；先保守标 false，待补齐释义/审核后再放行。
+          childSafe: false,
           isCore: false,
           isFunctionWord: false,
           textbookUnitIds: [...entry.unitIds].sort(),
@@ -176,31 +181,6 @@ async function importTextbookWords(): Promise<{ linked: number; added: number }>
     ]);
   }
   return { linked, added };
-}
-
-export function extractMetadataWords(metadata: unknown): unknown[] {
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
-  const record = metadata as Record<string, unknown>;
-  const output: unknown[] = [];
-  for (const key of ['words', 'wordList', 'vocabulary', 'keyWords']) {
-    const value = record[key];
-    if (!Array.isArray(value)) continue;
-    output.push(...value.map((item) => (
-      typeof item === 'string' ? item
-        : item && typeof item === 'object' && !Array.isArray(item)
-          ? (item as Record<string, unknown>).word
-          : undefined
-    )));
-  }
-  return output;
-}
-
-export function normalizeTextbookWord(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const word = value.trim().toLowerCase();
-  if (!word || word.length > 100) return '';
-  if (!/^[a-z][a-z' -]*$/.test(word)) return '';
-  return word;
 }
 
 main()

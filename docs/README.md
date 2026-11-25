@@ -15,6 +15,7 @@
 
 - [本地数据库与词库导入](./本地数据库与词库导入.md) — PostgreSQL `15433` 启动、Prisma 迁移、ECDICT 导入、seed、M1 集成测试与停止命令
 - [教材词表 → 完整课程 / CEFR 预置课程](./curriculum-generation.md)
+- [词库扩容覆盖报告](./lexicon-coverage.md) — 3,000 核心 → 5,000 族的教材/课标优先词覆盖对比与缺口
 - [课程生成器](./curriculum-generator.md)
 - [Curriculum Operations](./curriculum/README.md) — 管理端课程导入、词库、教材目录与发布/回滚操作
 - [课程相关文档目录](./curriculum/)

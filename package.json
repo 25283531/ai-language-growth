@@ -25,6 +25,7 @@
     "prisma:seed": "npm run prisma:seed --workspace @alg/backend",
     "lexicon:build": "npm run build:lexicon --workspace @alg/vocabulary",
     "lexicon:import": "npm run lexicon:import --workspace @alg/backend",
+    "lexicon:coverage": "npm run coverage:report --workspace @alg/vocabulary",
     "lexicon:import:dry": "npm run lexicon:import:dry --workspace @alg/backend",
     "lexicon:import:global": "npm run lexicon:import:global --workspace @alg/backend"
   },

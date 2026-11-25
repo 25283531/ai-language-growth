@@ -117,4 +117,12 @@ describe('P3-05 核心词儿童例句', () => {
     assert.equal(byWord.get('steal'), undefined);
   });
 
+  it('P3-06 扩展层不批量写入低置信模板句', () => {
+    const dataset = JSON.parse(readFileSync(resolve(__dirname, '../data/lexicon.json'), 'utf8')) as {
+      entries: LexiconRecord[];
+    };
+    const extension = dataset.entries.filter((entry) => !entry.isCore);
+    assert.equal(extension.length, 2000);
+    assert.equal(extension.filter((entry) => entry.examples.length > 0).length, 0);
+  });
 });

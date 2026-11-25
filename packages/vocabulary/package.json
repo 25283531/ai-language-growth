@@ -11,7 +11,8 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "build:lexicon": "tsx scripts/build-lexicon.ts"
+    "build:lexicon": "tsx scripts/build-lexicon.ts",
+    "coverage:report": "tsx scripts/coverage-report.ts"
   },
   "dependencies": {
     "@alg/shared-contracts": "*"
