@@ -631,6 +631,30 @@ export function TextbookUnitPanel({
     }
   }
 
+  async function downloadLessonPlan() {
+    if (!unit) return;
+    setBusy(true);
+    try {
+      const result = await adminFetch<{ filename: string; markdown: string }>(
+        `/curriculum/textbook/units/${unit.id}/lesson-plan`,
+      );
+      const blob = new Blob([result.markdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.filename || 'lesson-plan.md';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      notify('教案已下载（Markdown）。');
+    } catch (error) {
+      applyError(error, '导出教案失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveEditor() {
     if (!editor || !unit) return;
     setBusy(true);
@@ -811,6 +835,11 @@ export function TextbookUnitPanel({
     <div className="row-actions">
       <button disabled={busy || !entry.textbookId} onClick={() => void saveEntry()}>保存教材单元</button>
       <button className="secondary" disabled={busy || !unit} onClick={() => void generate()}>生成资源包并自动校验</button>
+      <button
+        className="secondary"
+        disabled={busy || !unit || (!unit.content && !unit.publishedUnitId)}
+        onClick={() => void downloadLessonPlan()}
+      >下载教案（Markdown）</button>
     </div>
 
     {!unit && <p className="muted" style={{ marginTop: 14 }}>选择或保存一个教材单元后，可生成资源包并逐句编辑。</p>}
