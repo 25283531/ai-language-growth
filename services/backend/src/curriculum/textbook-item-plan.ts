@@ -12,7 +12,7 @@ import type { TextbookUnitContent } from '@alg/shared-contracts';
 import { selectFocusWords } from './curriculum-audio-plan';
 import type { PublishableActivity } from './curriculum-publish';
 
-type ExistingActivity = { skillNodeIds?: string[] };
+type ExistingActivity = { skillNodeIds?: string[]; taskType?: string };
 
 /** 与句子 id 使用同一套单元编码归一化（空格转连字符、去特殊字符）。 */
 function unitKey(code: string): string {
@@ -77,6 +77,8 @@ export function buildFocusWordActivities(
     taskType: 'pronunciation_drill',
     scenario: 'story_scene',
     difficulty: 1,
+    // P4-06：与原场景的同一重点词配对，供跨场景迁移证据使用。
+    transferScenarioKey: wordTransferKey(focus.word),
     reviewMode: 'read_aloud' as const,
     skillNodeIds: [skill],
     targetWords: [focus.word],
@@ -98,8 +100,103 @@ export function derivedTextbookActivities(
   content: TextbookUnitContent,
   existing: ReadonlyArray<ExistingActivity>,
 ): PublishableActivity[] {
+  const focusActivities = buildFocusWordActivities(content, existing);
   return [
     ...buildPassageSentenceActivities(content, existing),
-    ...buildFocusWordActivities(content, existing),
+    ...focusActivities,
+    ...buildTransferActivities(content, [...existing, ...focusActivities]),
   ];
+}
+
+function wordTransferKey(word: string): string {
+  return `tw-${word.trim().toLowerCase()}`.slice(0, 80);
+}
+
+/**
+ * P4-06：跨场景迁移变体。
+ *
+ * 掌握规则 R4 要求同一关键项在「至少两个不同场景」独立使用；如果教材单元
+ * 的所有跟读都落在 story_scene，孩子即使每次都读对，也永远拿不到迁移证据。
+ *
+ * 这里只补两个场景变体，不新增词、不改变原活动：
+ *  - 重点词换到图片场景再读一次（word_mimicry）；
+ *  - 首个语法点换到商店场景再用一次（sentence_pattern）。
+ *
+ * 变体与原文共享 `transferScenarioKey`，场景不同、目标词不变；目标文本仍来自
+ * 本单元课文/词表，模型不参与编词。
+ */
+export function buildTransferActivities(
+  content: TextbookUnitContent,
+  existing: ReadonlyArray<ExistingActivity>,
+): PublishableActivity[] {
+  const focusWords = selectFocusWords({
+    passage: content.passage,
+    vocabulary: content.vocabulary,
+    activities: content.activities,
+  }).slice(0, 2);
+  if (!focusWords.length) return [];
+
+  const unitKeyValue = unitKey(content.unit.code);
+  const wordSkills = existing.find((activity) => activity.taskType === 'pronunciation_drill')?.skillNodeIds
+    ?? [firstSkill(existing)];
+  const patternSkills = existing.find((activity) => activity.taskType === 'sentence_pattern')?.skillNodeIds
+    ?? [firstSkill(existing)];
+  const activities: PublishableActivity[] = [];
+
+  const grammar = content.grammarPoints[0];
+  if (grammar) {
+    const example = grammar.examples[0]?.en?.trim() || content.passage.paragraphs[0]?.sentences[0]?.en || '';
+    // 没有例句就没有可判定的目标文本，宁可不生成，也不下发空卡。
+    if (example) {
+      const teacher = `在商店里看到 ${focusWords[0]!.word}，试着用“${grammar.pattern.slice(0, 80)}”说一句。`;
+      activities.push({
+        id: `${unitKeyValue}-x01`,
+        title: `换个场景说：${grammar.titleZh}`,
+        taskType: 'sentence_pattern',
+        scenario: 'object_shop_scene',
+        difficulty: 2,
+        transferScenarioKey: `tp-${grammar.id}`.slice(0, 80),
+        skillNodeIds: patternSkills,
+        targetWords: [focusWords[0]!.word],
+        teacherUtteranceZh: teacher,
+        demonstrationText: example,
+        requiresPronunciationAssessment: false,
+        requiresAsr: true,
+        evidenceKind: 'transfer',
+        assessment: {
+          openResponse: false,
+          acceptedTexts: [example],
+          requiredPhrases: [],
+          acceptedImageIds: [],
+        },
+      });
+    }
+  }
+
+  focusWords.forEach((focus, index) => {
+    const teacher = `在图片里看到 ${focus.word}，再读一遍。`;
+    activities.push({
+      id: `${unitKeyValue}-x${String(index + 2).padStart(2, '0')}`,
+      title: `换个场景读：${focus.word}`,
+      taskType: 'word_mimicry',
+      scenario: 'object_pic_scene',
+      difficulty: 1,
+      transferScenarioKey: wordTransferKey(focus.word),
+      skillNodeIds: wordSkills,
+      targetWords: [focus.word],
+      teacherUtteranceZh: teacher,
+      demonstrationText: focus.word,
+      requiresPronunciationAssessment: true,
+      requiresAsr: true,
+      evidenceKind: 'transfer',
+      assessment: {
+        openResponse: false,
+        acceptedTexts: [focus.word],
+        requiredPhrases: [],
+        acceptedImageIds: [],
+      },
+    });
+  });
+
+  return activities;
 }

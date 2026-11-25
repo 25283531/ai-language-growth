@@ -92,6 +92,14 @@ export const cefrLessonSchema = z.object({
    * 不按“无提示回忆”清空 targetWords，否则客户端会只剩空卡片。
    */
   reviewMode: z.enum(['read_aloud']).optional(),
+  /**
+   * 跨场景迁移键（P4-06）。
+   *
+   * 同一个词/句型在不同场景的两次活动必须带同一个键；掌握规则 R4 要求
+   * 「至少两个不同场景独立使用」，没有这个键就无法解释两次活动是同一个关键项。
+   * 该键只用于内容组织与质检，不参与掌握判定。
+   */
+  transferScenarioKey: z.string().trim().min(1).max(80).optional(),
   assessment: z.object({
     acceptedImageIds: z.array(z.string().max(200)).max(100).default([]),
     acceptedTexts: z.array(z.string().max(1000)).max(100).default([]),

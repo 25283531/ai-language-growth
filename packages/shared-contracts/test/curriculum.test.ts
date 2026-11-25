@@ -151,3 +151,19 @@ test('teachingDirectiveSchema 的 evidenceKind 默认 none，避免无证据活�
   assert.equal(parsed.evidenceKind, 'none');
   assert.equal(teachingDirectiveSchema.parse({ ...parsed, evidenceKind: 'reading_comprehension' }).evidenceKind, 'reading_comprehension');
 });
+
+test('活动契约接受跨场景迁移键，空串被拒绝', () => {
+  const parsed = textbookUnitContentSchema.parse({
+    ...unit,
+    activities: [{
+      ...lesson,
+      evidenceKind: 'transfer',
+      transferScenarioKey: 'tw-family',
+    }],
+  });
+  assert.equal(parsed.activities[0]!.transferScenarioKey, 'tw-family');
+  assert.equal(parsed.activities[0]!.evidenceKind, 'transfer');
+
+  const empty = { ...unit, activities: [{ ...lesson, transferScenarioKey: '' }] };
+  assert.equal(textbookUnitContentSchema.safeParse(empty).success, false);
+});

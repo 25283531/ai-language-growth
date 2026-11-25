@@ -928,6 +928,8 @@ export class TextbookUnitService {
         scenario: 'story_scene',
         skillNodeIds: ['LA.SPEAK.simple_sentences', 'LA.GRAM.basic_pattern'],
         targetWords,
+        // P4-06：与商店场景的同一句型变体配对，形成两个不同场景。
+        transferScenarioKey: `tp-${firstGrammar.id}`.slice(0, 80),
         teacherUtteranceZh: `试着用“${clip(firstGrammar.pattern, 80)}”说一句自己的话，先说慢一点。`,
         demonstrationText: example,
         requiresPronunciationAssessment: false,

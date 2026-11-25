@@ -34,6 +34,8 @@ export type PublishableActivity = {
   scenario?: string;
   difficulty?: number;
   order?: number;
+  evidenceKind?: string;
+  transferScenarioKey?: string;
   /** 课文跟读活动在复习轮保留目标文本。 */
   reviewMode?: 'read_aloud';
   skillNodeIds: string[];
