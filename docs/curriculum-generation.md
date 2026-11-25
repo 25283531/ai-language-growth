@@ -1,7 +1,7 @@
 # 教材词表 → 完整课程 / CEFR 预置课程
 
-> 更新时间：2026-11-12  
-> 目标：学校教材只需输入课本单词表，服务端自动补全词汇、句型、逐词活动、评估规则和媒体需求；CEFR 全量课程以纯 JSON 预置；图片与语音只在学习者到达对应级别后预热。
+> 更新时间：2026-11-25
+> 目标：学校教材只需输入课本单词表或单元课文，服务端自动补全词汇、句型、逐词活动、评估规则和媒体需求；CEFR 全量课程以纯 JSON 预置；图片与语音只在学习者到达对应级别后预热；教案可从同一份资源包导出。
 
 ## 1. 内容分层
 
@@ -376,6 +376,8 @@ active / disabled ──回滚──> 原 availability 不变，version+1（目�
 ```bash
 # 从仓库根目录的 ecdict.csv 重新生成 JSON（MIT）
 npm run lexicon:build
+# 生成 3,000 → 5,000 覆盖率对比（不写数据库）
+npm run lexicon:coverage
 # 先校验 JSON，不写数据库
 npm run lexicon:import:dry
 # 写入 lexicon_entries；教材单元 metadata 中的词会标记 textbookUnitIds
@@ -384,7 +386,33 @@ npm run lexicon:import
 npm run lexicon:import:global
 ```
 
-当前构建结果：扫描 770,611 行，候选 56,992 词族，保留 5,000 族；核心 3,000 族中 2,992 个有音标、3,000 个有中文释义。
+当前构建结果：扫描 770,611 行，候选 56,993 词族，保留 5,000 族（3,000 核心 + 2,000 扩展）；全量音标 4,966/5,000、中文释义 5,000/5,000、词性 5,000/5,000。核心领域标签 984/3,000（`zk` 词 48.1%、`gk` 词 37.2%），抽象/功能词允许没有领域。核心 `childSafe=false` 39 个；扩展层 `childSafe=false` 16 个，全量共 55 个。构建保留这些词供管理端复核，但儿童课程查询与教材词卡会过滤。
+
+扩展层字段已完成：2,000 个扩展词的释义、词性均为 2,000/2,000，音标 1,975/2,000；扩展层领域 451/2,000。为补 `zk` 高频教材词，扩展层优先加入 65 个教材词（第一批 30 个、第二批 35 个，含 `blackboard`、`schoolbag`、`crayon` 等），从扩展层尾部移除同等数量低排名词，并保护既有的 `zk`/`gk` 标签词族；3,000 核心层逐词不变。`deadline`、`tuna` 等误判词已修正，`bacteria` / `uh` 的空词性已补齐。扩展层不批量生成低置信例句：任务书 9.3 只强制要求每个核心词有例句，P3-06 不把模板句硬塞进儿童课程。
+
+**例句现状（P3-05 已完成）**：核心 3,000 词中全部 2,961 个 `childSafe=true` 的词都有儿童安全例句 + 中文（`coreExamples=2961/3000`）；39 个 `childSafe=false` 的核心风险词保持 `examples=[]`，不进入儿童课程。扩展层 2,000 词不批量生成低置信模板句，`examples=[]`；这是有意的质量边界，不是漏跑。生成逻辑在 `packages/vocabulary/src/examples.ts`：
+
+1. 功能词、ECDICT 首义项不可靠的词和高风险抽象词走人工覆盖；
+2. 其余词按词性、中文释义、可数性和领域使用受控模板；数字词使用中文数字，名词按人物/地点/食物/动物/具体物/抽象词分层，抽象名词使用“We talk about...”句式而不是硬套 `I see the...`，也不把量词模板套到不可数名词上；
+3. 先修正高频词的词性/首义（如 `can` 从“装罐”改为 `aux. 能；可以`、`plane` 从“平面”改为“飞机”、`medical` 从“医生”改为形容词），再重算领域与儿童安全，避免“释义是 A、例句是 B”；
+4. 构建默认 `LEXICON_EXAMPLE_LIMIT=3000`；设为 `0` 关闭例句生成。`collocations` 仍保持空数组：ECDICT 没有可靠的搭配字段，未用模板伪造；任务书 9.3 的硬性要求是例句，搭配留待有授权数据源时补充。
+
+全量校验覆盖：目标词出现、中文含汉字且无拉丁字母、句末标点、`childSafe=true`、每个核心词至多 1 条例句、全部安全核心词均非空、风险词为空；`packages/vocabulary/test/examples.test.ts`。
+
+### 7.1 词库扩容覆盖报告（P3-06）
+
+`npm run lexicon:coverage` 读取 `data/lexicon.json` 与 `ecdict.csv`，输出 `data/lexicon-coverage.json` 和 `docs/lexicon-coverage.md`。报告固定对比 `isCore=true` 的 3,000 核心层与全部 5,000 族，并按 `word`/`variants` 命中；同一目标词只计一次。
+
+教材/课标优先词使用 ECDICT 公开标签作为代理，避免把出版社教材原文写入仓库：
+
+| 目标词表 | 3,000 覆盖 | 5,000 覆盖 | 新增 | 提升 |
+|---|---:|---:|---:|---:|
+| `zk` 课标/教材优先词 | 1,285/1,514（84.9%） | 1,477/1,514（97.6%） | +192 | +12.7pp |
+| `gk` 课标/阅读扩展词 | 2,221/3,478（63.9%） | 2,907/3,478（83.6%） | +686 | +19.7pp |
+| `zk ∪ gk` | 2,246/3,519（63.8%） | 2,939/3,519（83.5%） | +693 | +19.7pp |
+| `TEXTBOOK_PRIORITY_WORDS` | 166/166（100%） | 166/166（100%） | 0 | 0 |
+
+`zk` 剩余缺口和完整缺口清单在报告第 4 节与 JSON 中，可直接作为下一批教材词注入/待补词来源。出版社教材单元的实际覆盖率仍由 `GET /api/v1/admin/curriculum/textbook/units/:unitId/lexicon-coverage` 按册/单元计算；静态 JSON 的 `textbookUnitIds` 为空，是因为仓库没有预置授权教材原文。
 
 优先级从高到低：
 
@@ -392,16 +420,18 @@ npm run lexicon:import:global
 2. `lexicon_entries` 中 `textbookUnitIds` 非空的词族；
 3. 全局 ECDICT 词族，仅填补空音标、空释义、空词性、空搭配/例句。
 
+儿童课程入口通过 `LexiconService.lookupMany(..., { childSafeOnly: true })` 或调用方检查 `entry.childSafe` 过滤风险词；管理端 `lexicon/lookup` 默认保留全量条目。教材单元生成时，`childSafe=false` 的词会从词卡移除并写入 `unsafe_word` 质检问题；新注入的教材词默认 `childSafe=false`，待补齐释义/人工审核后再放行。
+
 查询与运维接口：
 
 - `GET /api/v1/admin/curriculum/lexicon/lookup?word=cat&textbookUnitId=...`；
-- `GET /api/v1/admin/curriculum/lexicon/stats`；
+- `GET /api/v1/admin/curriculum/lexicon/stats`（含核心/扩展音标、释义、词性、领域与 `childSafe=false` 数量）；
 - `GET /api/v1/admin/curriculum/textbook/units/:unitId/lexicon-coverage`；
 - `POST /api/v1/admin/curriculum/units/:unitId/rollback`，body `{ "version": 1, "reason": "..." }`；
 - `POST /api/v1/admin/curriculum/units/:unitId/disable`；
 - `POST /api/v1/admin/curriculum/units/:unitId/enable`。
 
-### 7.1 教材单元词库覆盖率（P1-10）
+### 7.2 教材单元词库覆盖率（P1-10）
 
 `/curriculum` 的教材单元面板会调用 `textbook/units/:unitId/lexicon-coverage` 展示覆盖率卡片。统计口径固定如下：
 
@@ -467,6 +497,7 @@ npm run lexicon:import:global
 
 - `GET /api/v1/learners/:id/stages`：家长端，要求登录且只能读取当前账号名下的学习者。
 - `GET /api/v1/admin/curriculum/learners/:learnerId/stages`：管理端，要求管理员会话。
+- `GET /api/v1/user/dashboard`：在原有 dashboard 响应中增量返回 `stageProfile`（同一形状）。Android 账户页复用这次请求，不再单独请求 `/stages`；旧客户端忽略该字段即可。画像计算失败时只把 `stageProfile` 降级为 `null`，不影响 dashboard 其它字段。
 
 返回示例：
 
@@ -480,7 +511,7 @@ npm run lexicon:import:global
 }
 ```
 
-管理端 `/stages` 页面按学习者 ID 查询，显示七条独立阶段条；不自动列全部学习者，避免枚举儿童档案。家长端接口已提供，家长 Web 与 Android 的展示尚未接入。
+管理端 `/stages` 页面按学习者 ID 查询，显示七条独立阶段条；不自动列全部学习者，避免枚举儿童档案。Android 账户页在周报卡下方显示七领域阶段卡：每行一个领域，展示「尚未开始 / 阶段 N」、6 段进度条、当前阶段能力节点数与累计证据数；卡片明确标注「每条线独立计算，不是总等级」「不作为课程解锁门槛」。家长 Web 当前没有独立前端，接口保留。
 
 ## 10. 逐句双速、重点词拆读与课文下发（P2-01 ~ P2-04）
 
@@ -585,3 +616,82 @@ npx tsx --test test/curriculum-audio.integration.test.ts
 - `difficultPhonemes` 与音节切分是启发式结果，预置 JSON 已标注；自动校验应标红可疑项，管理员可随时修正。
 - 媒体预热每次默认最多 24 张图、30 条活动旁白语音和 120 条课程逐句/拆读片段；大级别可分多次触发，已缓存资源不会重复计费。
 - 预置课程导入后同样经自动校验直接发布；不会自动把 1197 个活动直接推给孩子，管理员可随时下架/回滚。
+
+## 12. 教材跨场景迁移变体（P4-06）
+
+任务书 §7.1 要求「同一词/句型至少在两个场景复现」，掌握规则 R4（`packages/skill-graph/src/mastery.ts`）据此判定 `transferred`。教材单元原本只在 `story_scene` 生成跟读，孩子每次读对也只能得到一个场景的证据，迁移链是断的。
+
+发布时由 `buildTransferActivities()`（`services/backend/src/curriculum/textbook-item-plan.ts`）自动追加：
+
+| 变体 | 活动类型 | 场景 | 目标文本 |
+|---|---|---|---|
+| 句型换场景 | `sentence_pattern` | `object_shop_scene` | 首个语法点的首个例句 + 首个重点词 |
+| 重点词换场景 | `word_mimicry` | `object_pic_scene` | 最多 2 个重点词，逐个生成 |
+
+约束：
+
+1. 变体与原文共享 `transferScenarioKey`（句型 `tp-<grammarId>`、词 `tw-<word>`），策略与原文一致；该键只用于内容组织与解释，不参与掌握判定。
+2. 只使用本单元 `passage` / `vocabulary` 中已有的词，不调用模型编词，不新增生词。
+3. 变体追加在「逐句跟读 → 重点词」之后、人工活动之前，按 `order` 顺序推进；管理端生成的 `content.activities` 不包含这些条目，它们在发布/编辑/回滚时由 `derivedTextbookActivities()` 统一重建，避免重复落库。
+4. 变体是增量可选字段：旧客户端忽略 `transferScenarioKey`，仍按普通词卡/句型卡渲染。
+5. 只为关键项生成，不覆盖所有句子；控制 TTS 与课堂时长。
+
+回归：
+
+```powershell
+cd services/backend
+npx tsx --test test/textbook-transfer-variants.test.ts
+```
+
+测试锁定：同一键下至少两个不同场景、变体不引入词表外的词、活动 id 唯一、无语法点时仍生成重点词变体。
+
+## 13. 教师用教案导出（P4-05）
+
+任务书 §7.1 要求每个单元能导出一份教师用教案（目标、课时、重点句、易错点）。实现为只读的确定性转换，不调用模型、不读取学习者数据、不改变课程状态。
+
+### 13.1 接口
+
+`GET /api/v1/admin/curriculum/textbook/units/:unitId/lesson-plan`
+
+| 参数 | 说明 |
+|---|---|
+| `format` 缺省 / `json` | 返回 `{ unitId, filename, plan, markdown }`；`plan` 为结构化对象，`markdown` 为完整正文 |
+| `format=md` | 直接返回 `text/markdown` 附件，文件名按「教材+年级+册次+单元」生成并做路径字符过滤 |
+
+内容优先取已启用 `curriculum_units.content`，没有发布记录时回退到单元 `metadata.content`（已生成但未启用）。两者都没有返回 404；资源包不符合 `textbookUnitContentSchema` 返回 400，并带可定位 `issues`。
+
+### 13.2 教案内容
+
+`buildLessonPlanExport()`（`services/backend/src/curriculum/lesson-plan.ts`）输出：
+
+- 教学目标、重点句（英/中/关键词）、重点词（IPA、释义、音节、易错音、例句）、语法点（句型、讲解、例句、常见错误）、语言轨与学校轨活动；
+- 易错点同时来自语法 `commonErrorZh` 与重点词 `difficultPhonemes`；
+- 课后练习建议只使用本单元课文/词表/句型，不生成新词；
+- 自动质检摘要（结论、阻断项数、警告数、`needsReview`），不作为发布门禁。
+
+课时按 15 分钟/课时估算：每课时最多 8 句课文或 6 个活动，取较大值并封顶 6 课时；该数字只作排课参考，不是学习门槛。
+
+### 13.3 管理端与回归
+
+教材单元面板在「生成资源包并自动校验」旁提供「下载教案（Markdown）」；未生成内容时按钮禁用。回归：
+
+```powershell
+cd services/backend
+npx tsx --test test/lesson-plan.test.ts
+```
+
+测试锁定：目标/课时/重点句/词汇/语法/活动/易错点齐全、同内容重复导出正文一致、课时估算边界、文件名过滤、未生成内容 404、`format=md` 附件响应头。
+
+## 14. 阶段与词汇覆盖回归（P3-07）
+
+`services/backend/test/stage-lexicon-regression.test.ts` 固定两类验收：
+
+1. **阶段画像独立**：发音只有 `encountered`、听力已有 `forming` 时，听力仍取自身最高成长阶段；七领域互不拉低，没有状态时全部为 0，不返回总等级。
+2. **词库数据验收**：仓库内 `lexicon.json` 必须保持 5,000 族（3,000 核心 + 2,000 扩展）、核心 IPA ≥99%、核心释义/词性 100%、扩展 IPA ≥98%；`lexicon-coverage.json` 必须保留 `zk ≥97%`、`gk ≥83%` 与教材优先词 100% 覆盖。
+
+回归：
+
+```powershell
+cd services/backend
+npx tsx --test test/stage-lexicon-regression.test.ts
+```
