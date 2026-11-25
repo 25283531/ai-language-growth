@@ -17,6 +17,7 @@ import { LexiconService } from './lexicon.service';
 import { LexiconProofreadService } from './lexicon-proofread.service';
 import { TextbookUnitService } from './textbook-unit.service';
 import { TextbookUnitPublisherService } from './textbook-unit-publisher.service';
+import { buildLessonPlanExport } from './lesson-plan';
 import {
   TEXTBOOK_MAPPING_SOURCES,
   inferTextbookUnitMapping,
@@ -812,6 +813,72 @@ export class CurriculumAdminController {
       },
     });
     return toTextbookUnitView(unit, publishedUnit);
+  }
+
+  /**
+   * 教师用教案导出（P4-05）。
+   *
+   * 默认返回 JSON（含结构化 `plan` 与 `markdown` 正文）；`format=md` 直接返回
+   * Markdown 附件。只读已启用内容或已保存资源包，不触发模型，不改变课程状态。
+   */
+  @Get('textbook/units/:unitId/lesson-plan')
+  async getTextbookUnitLessonPlan(
+    @Headers('cookie') cookie: string | undefined,
+    @Param('unitId') unitId: string,
+    @Query('format') format: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    this.authorize(cookie);
+    if (!z.string().uuid().safeParse(unitId).success) throw new BadRequestException('unitId 格式不正确');
+    const unit = await this.prisma.textbook_units.findUnique({
+      where: { id: unitId },
+      include: { textbook: true },
+    });
+    if (!unit) throw new NotFoundException('教材单元不存在');
+    const publishedUnit = await this.prisma.curriculum_units.findFirst({
+      where: { textbookUnitId: unit.id },
+      orderBy: { publishedAt: 'desc' },
+      select: {
+        id: true,
+        content: true,
+        currentVersion: true,
+        contentVersion: true,
+        availability: true,
+      },
+    });
+    const metadata = asRecord(unit.metadata);
+    const rawContent = publishedUnit?.content ?? metadata.content ?? null;
+    if (!rawContent) {
+      throw new NotFoundException('该单元尚未生成资源包，请先生成或保存资源包后再导出教案。');
+    }
+    const parsed = textbookUnitContentSchema.safeParse(rawContent);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        message: '单元资源包不符合教材单元契约，暂时无法导出教案。',
+        issues: parsed.error.issues,
+      });
+    }
+    const exported = buildLessonPlanExport({
+      unitId: unit.id,
+      content: parsed.data,
+      currentVersion: publishedUnit?.currentVersion ?? null,
+      contentVersion: publishedUnit?.contentVersion ?? null,
+      availability: publishedUnit?.availability ?? null,
+    });
+    if (format === 'md' || format === 'markdown') {
+      response?.setHeader('content-type', 'text/markdown; charset=utf-8');
+      response?.setHeader(
+        'content-disposition',
+        `attachment; filename="lesson-plan.md"; filename*=UTF-8''${encodeURIComponent(exported.filename)}`,
+      );
+      return exported.markdown;
+    }
+    return {
+      unitId: unit.id,
+      filename: exported.filename,
+      plan: exported.plan,
+      markdown: exported.markdown,
+    };
   }
 
   /**
