@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { buildLexiconFromRows, cleanMeaningZh, parseForms, TEXTBOOK_PRIORITY_WORDS } from '../src/lexicon';
+import { assessChildSafety, buildLexiconFromRows, cleanMeaningZh, detectDomains, parseForms, TEXTBOOK_PRIORITY_WORDS } from '../src/lexicon';
 import type { EcdictRow } from '../src/types';
 
 function ecdict(word: string, overrides: Partial<EcdictRow> = {}): EcdictRow {
@@ -53,6 +53,45 @@ describe('ECDICT 词族构建', () => {
     assert.equal(cleanMeaningZh('n. 狗, 坏蛋\\nvt. 跟踪, 尾随'), '狗');
   });
 
+
+
+  it('领域标签覆盖教材优先词，抽象词允许为空', () => {
+    assert.ok(detectDomains('aunt', '阿姨').includes('self_family'));
+    assert.ok(detectDomains('gray', '灰色').includes('colors_numbers'));
+    assert.ok(detectDomains('pear', '梨').includes('food'));
+    assert.ok(detectDomains('plane', '飞机').includes('community_transport'));
+    assert.ok(detectDomains('yesterday', '昨天').includes('weather_time'));
+    assert.ok(detectDomains('think', '想；考虑').includes('actions'));
+    assert.deepEqual(detectDomains('good', '好的'), []);
+  });
+
+  it('儿童安全判定覆盖屈折/派生形式和中文风险义项', () => {
+    for (const word of ['dead', 'death', 'die', 'killing', 'killer', 'sexual', 'wine', 'cancer', 'war', 'knife', 'pregnant']) {
+      assert.equal(assessChildSafety(word, ''), false, word);
+    }
+    for (const word of ['apple', 'happy', 'doctor', 'police', 'family']) {
+      assert.equal(assessChildSafety(word, ''), true, word);
+    }
+    assert.equal(assessChildSafety('ghost', '鬼；灵魂'), false);
+    assert.equal(assessChildSafety('safe', '安全的'), true);
+    // deadline 含 dead 词形、tuna 的中文“金枪鱼”含“枪”，但都不是儿童风险词。
+    assert.equal(assessChildSafety('deadline', '最后期限；截止期限'), true);
+    assert.equal(assessChildSafety('tuna', '金枪鱼；金枪鱼肉'), true);
+  });
+
+  it('构建时把可保留的风险词标为 childSafe=false', () => {
+    const dataset = buildLexiconFromRows([
+      ecdict('dead', { frq: '1', translation: 'a. 死的；不活泼的' }),
+      ecdict('apple', { frq: '2', translation: 'n. 苹果' }),
+      ecdict('killing', { frq: '3', translation: 'n. 杀戮' }),
+    ], { maxFamilies: 10, coreFamilies: 5 });
+    const byWord = new Map(dataset.entries.map((entry) => [entry.word, entry]));
+    assert.equal(byWord.get('dead')?.childSafe, false);
+    assert.equal(byWord.get('killing')?.childSafe, false);
+    assert.equal(byWord.get('apple')?.childSafe, true);
+    assert.ok(byWord.get('apple')?.domains.includes('food'));
+  });
+
   it('教材首册高频词全部有音标和中文释义', () => {
     const dataset = JSON.parse(readFileSync(resolve(__dirname, '../data/lexicon.json'), 'utf8')) as {
       entries: Array<{ word: string; variants: string[]; phonetic: string; meaningZh: string }>;
@@ -69,19 +108,33 @@ describe('ECDICT 词族构建', () => {
     assert.deepEqual(missing, []);
   });
 
-  it('生成数据达到 3,000 核心 + 5,000 词族，核心音标覆盖 ≥99%', () => {
+  it('生成数据达到 3,000 核心词族，字段可导入', () => {
     const dataset = JSON.parse(readFileSync(resolve(__dirname, '../data/lexicon.json'), 'utf8')) as {
       totalFamilies: number;
       coreFamilies: number;
-      entries: Array<{ word: string; isCore: boolean; phonetic: string; meaningZh: string }>;
+      entries: Array<{
+        word: string;
+        variants: string[];
+        isCore: boolean;
+        phonetic: string;
+        pos: string;
+        meaningZh: string;
+        childSafe: boolean;
+        domains: string[];
+        examples: Array<{ en: string; zh: string }>;
+      }>;
     };
-    assert.equal(dataset.totalFamilies, 5000);
+    assert.equal(dataset.totalFamilies, 3000);
     assert.equal(dataset.coreFamilies, 3000);
-    assert.equal(dataset.entries.length, 5000);
+    assert.equal(dataset.entries.length, 3000);
     const core = dataset.entries.filter((entry) => entry.isCore);
     assert.equal(core.length, 3000);
     assert.ok(core.filter((entry) => entry.phonetic).length / core.length >= 0.99);
     assert.equal(core.filter((entry) => entry.meaningZh).length, core.length);
+    assert.equal(core.filter((entry) => entry.pos).length, core.length);
+    assert.ok(core.filter((entry) => entry.domains.length > 0).length > 900);
+    assert.ok(core.filter((entry) => entry.examples.length > 0).length / core.length >= 0.95);
+    assert.equal(core.filter((entry) => !entry.childSafe).length, 39);
     assert.equal(dataset.entries.find((entry) => entry.word === 'cat')?.meaningZh, '猫');
     assert.ok(dataset.entries.some((entry) => entry.word === 'hello' && entry.phonetic && entry.meaningZh));
     assert.ok(dataset.entries.some((entry) => entry.word === 'goodbye' && entry.phonetic && entry.meaningZh));

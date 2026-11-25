@@ -161,19 +161,21 @@ export class CurriculumGeneratorService {
         ...level,
         units: level.units.map((unit) => ({
           ...unit,
-          vocabulary: unit.vocabulary.map((item) => {
-            const entry = entries.get(item.word.toLowerCase());
-            const itemMeaning = hasChinese(item.meaningZh) ? item.meaningZh : '';
-            const meaningZh = itemMeaning || (entry?.meaningZh && hasChinese(entry.meaningZh) ? entry.meaningZh : '');
-            return {
-              ...item,
-              phonetic: item.phonetic || entry?.phonetic || '',
-              meaningZh,
-              exampleSentences: item.exampleSentences.length
-                ? item.exampleSentences
-                : (entry?.examples.length ? entry.examples : item.exampleSentences),
-            };
-          }),
+          vocabulary: unit.vocabulary
+            .filter((item) => entries.get(item.word.toLowerCase())?.childSafe !== false)
+            .map((item) => {
+              const entry = entries.get(item.word.toLowerCase());
+              const itemMeaning = hasChinese(item.meaningZh) ? item.meaningZh : '';
+              const meaningZh = itemMeaning || (entry?.meaningZh && hasChinese(entry.meaningZh) ? entry.meaningZh : '');
+              return {
+                ...item,
+                phonetic: item.phonetic || entry?.phonetic || '',
+                meaningZh,
+                exampleSentences: item.exampleSentences.length
+                  ? item.exampleSentences
+                  : (entry?.examples.length ? entry.examples : item.exampleSentences),
+              };
+            }),
         })),
       })),
     };

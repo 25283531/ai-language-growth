@@ -734,7 +734,23 @@ export class TextbookUnitService {
       : new Map<string, LexiconLookupEntry>();
     const aiByWord = new Map(aiWords.map((item) => [normalizeWord(item.word), item]));
 
-    return words.map((word) => {
+    // 教材词可以无条件入库，但不能绕过儿童安全标记进入课文词卡。
+    // 未命中词库的词仍交给 AI/空字段补齐，避免把“未知”误判为不安全。
+    const safeWords = words.filter((word) => {
+      const normalized = normalizeWord(word);
+      const entry = lookup.get(normalized);
+      if (entry && !entry.childSafe) {
+        issues.push({
+          code: 'unsafe_word',
+          message: `词条 ${normalized} 被儿童安全过滤，已从本单元词卡移除。`,
+          path: `vocabulary.${normalized}`,
+        });
+        return false;
+      }
+      return true;
+    });
+
+    return safeWords.map((word) => {
       const normalized = normalizeWord(word);
       const entry = lookup.get(normalized);
       const ai = aiByWord.get(normalized);

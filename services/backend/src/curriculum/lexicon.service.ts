@@ -42,6 +42,8 @@ export type LexiconLookupOptions = {
   textbookUnitId?: string;
   /** 词表入口本身来自教材；即使还没写入 textbook_units.metadata，也按教材词优先。 */
   textbookWords?: string[];
+  /** 儿童课程入口传 true：跳过 childSafe=false 的词；管理端默认 false 以保留全量审核视图。 */
+  childSafeOnly?: boolean;
 };
 
 type CoverageRow = {
@@ -156,6 +158,9 @@ export class LexiconService {
       const textbook = textbookEntries.get(input);
       const fromTextbook = Boolean(textbook || textbookWords.has(input) || (global?.textbookUnitIds.length ?? 0) > 0);
       if (!global && !textbook && !textbookWords.has(input)) continue;
+      // 儿童课程入口只看安全词；教材 metadata 本身没有安全标记时，
+      // 仍以词库全局条目的 childSafe 为准。
+      if (options.childSafeOnly && global && !global.childSafe) continue;
       output.set(input, toLookupEntry({
         input,
         row: global,
@@ -301,22 +306,52 @@ export class LexiconService {
     };
   }
 
-  /** 管理端词库概览：核心/扩展、教材词、音标与中文覆盖。 */
+  /** 管理端词库概览：核心/扩展、教材词、音标/中文/词性/领域覆盖与儿童安全标记。 */
   async stats() {
-    const [total, core, textbook, phoneticCore, meaningCore] = await Promise.all([
+    const [
+      total, core, textbook,
+      phoneticCore, meaningCore, posCore, domainCore, unsafeCore,
+      phoneticTotal, meaningTotal, posTotal, domainTotal, unsafeTotal,
+    ] = await Promise.all([
       this.prisma.lexicon_entries.count(),
       this.prisma.lexicon_entries.count({ where: { isCore: true } }),
       this.prisma.lexicon_entries.count({ where: { textbookUnitIds: { isEmpty: false } } }),
       this.prisma.lexicon_entries.count({ where: { isCore: true, phonetic: { not: '' } } }),
       this.prisma.lexicon_entries.count({ where: { isCore: true, meaningZh: { not: '' } } }),
+      this.prisma.lexicon_entries.count({ where: { isCore: true, pos: { not: '' } } }),
+      this.prisma.lexicon_entries.count({ where: { isCore: true, domains: { isEmpty: false } } }),
+      this.prisma.lexicon_entries.count({ where: { isCore: true, childSafe: false } }),
+      this.prisma.lexicon_entries.count({ where: { phonetic: { not: '' } } }),
+      this.prisma.lexicon_entries.count({ where: { meaningZh: { not: '' } } }),
+      this.prisma.lexicon_entries.count({ where: { pos: { not: '' } } }),
+      this.prisma.lexicon_entries.count({ where: { domains: { isEmpty: false } } }),
+      this.prisma.lexicon_entries.count({ where: { childSafe: false } }),
     ]);
+    const extension = Math.max(0, total - core);
+    const ratio = (covered: number, population: number) => population ? covered / population : 0;
     return {
       total,
       core,
-      extension: Math.max(0, total - core),
+      extension,
       textbook,
-      corePhoneticCoverage: core ? phoneticCore / core : 0,
-      coreMeaningCoverage: core ? meaningCore / core : 0,
+      corePhoneticCoverage: ratio(phoneticCore, core),
+      coreMeaningCoverage: ratio(meaningCore, core),
+      corePosCoverage: ratio(posCore, core),
+      coreDomainCoverage: ratio(domainCore, core),
+      coreChildSafeFalse: unsafeCore,
+      coreChildSafeCoverage: ratio(core - unsafeCore, core),
+      extensionPhoneticCoverage: ratio(phoneticTotal - phoneticCore, extension),
+      extensionMeaningCoverage: ratio(meaningTotal - meaningCore, extension),
+      extensionPosCoverage: ratio(posTotal - posCore, extension),
+      extensionDomainCoverage: ratio(domainTotal - domainCore, extension),
+      extensionChildSafeFalse: Math.max(0, unsafeTotal - unsafeCore),
+      extensionChildSafeCoverage: ratio(extension - Math.max(0, unsafeTotal - unsafeCore), extension),
+      totalPhoneticCoverage: ratio(phoneticTotal, total),
+      totalMeaningCoverage: ratio(meaningTotal, total),
+      totalPosCoverage: ratio(posTotal, total),
+      totalDomainCoverage: ratio(domainTotal, total),
+      totalChildSafeFalse: unsafeTotal,
+      totalChildSafeCoverage: ratio(total - unsafeTotal, total),
     };
   }
 }
