@@ -39,6 +39,11 @@ import { UsageAdminController } from './usage/usage-admin.controller';
 import { UsageBudgetService } from './usage/usage-budget.service';
 import { UsageBudgetAdminController } from './usage/usage-budget-admin.controller';
 import { MemoryAdminController } from './memory/memory-admin.controller';
+import { MemoryArchitectureAdminController } from './memory/memory-architecture-admin.controller';
+import { WorkingMemoryService } from './memory/working-memory.service';
+import { Mem0Client } from './memory/mem0.client';
+import { EmbeddingService } from './memory/embedding.service';
+import { CurriculumKnowledgeService } from './memory/curriculum-knowledge.service';
 import { SpeechQuotaService } from './usage/speech-quota.service';
 import { RoutingConfigController } from './routing/routing-config.controller';
 import { RoutingConfigService } from './routing/routing-config.service';
@@ -87,6 +92,7 @@ import { ReplayModule } from './replay/replay.module';
     MediaController,
     ProviderConfigController,
     MemoryAdminController,
+    MemoryArchitectureAdminController,
     RoutingConfigController,
     MembershipAdminController,
     CurriculumAdminController,
@@ -132,6 +138,10 @@ import { ReplayModule } from './replay/replay.module';
     BackupService,
     GrowthMentorService,
     MemoryManagerService,
+    WorkingMemoryService,
+    Mem0Client,
+    EmbeddingService,
+    CurriculumKnowledgeService,
     PersonalityEngineService,
     PronunciationCoachService,
     {

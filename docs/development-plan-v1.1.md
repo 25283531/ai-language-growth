@@ -2,7 +2,7 @@
 
 > 依据：`docs/ai-language-growth-v1-1-design.pdf`、`../docs/taskbook-v1.1-extracted.txt`、`DECISIONS.md`。
 > 本文件只记录“设计承诺”和“当前代码事实”的差距，不把待办写成已完成。
-> 更新时间：2026-11-14（状态校正；上一版 2026-11-12）。
+> 更新时间：2026-11-26（补充 L1/L3/L5；上一版 2026-11-14）。
 
 ## 1. 本轮已关闭的差距
 
@@ -29,6 +29,9 @@
 | TTS 供应商与音色（2026-11-14） | 接入腾讯云 TTS 并设为优先；音色由 101001（16k 基础音色）改为 601009 大模型音色 24k（用户试听后确认 B>C>A）；讯飞 TTS 保留为备选 | 真机课堂走 `tts.dynamic_teaching | L2 | tencent-tts`，24k 音频（34 字符 84,672 字节）；讯飞同句 p50 336ms vs 腾讯 1,124ms（近 2 天真实账本） |
 | 慢速教学只作用于英语（2026-11-14） | 新增 `packages/ai-provider-sdk/src/language-speed.ts`：按书写系统切段，英语段用慢速档位（腾讯档位 / 讯飞 0—100），中文段固定自然语速；腾讯 Speed 由近似公式改为档位映射 | `services/backend/test/tts-language-speed.test.ts` 6/6 通过；纯英文/纯中文仍是单段单次调用 |
 | 成本熔断不能被单条未计价调用整天打死（2026-11-14） | 腾讯 TTS 配置走 SQL 直插时绕过了 `syncModelCatalog`，缺 provider/model 行 → 用量行 `modelId` 为空 → 计入未计价 → 路由器整天降级 mock。已补齐目录与 `per_1000_chars` 价格并回填历史用量 | 账本恢复 `tencent-tts` L2 计费（0.00096 元/次），未计价计数归零 |
+| L1 Redis 工作记忆（2026-11-26） | 新增 `WorkingMemoryService`：`alg:l1:lesson:{lessonSessionId}`，默认 TTL 6 小时，最近 8 轮、单轮 240 字，结课清理；Redis 未配置/超时/断连静默回落 PostgreSQL 会话；读取校验 lessonSessionId，拒绝串课 | `working-memory.test.ts` 3/3 通过；`@alg/backend` typecheck/build 通过 |
+| L3 Mem0 交互记忆（2026-11-26） | 新增可替换 REST 适配器与 `MEM0_*` 配置；结课后把 LLM 提取的偏好写 PostgreSQL 并尽力写 Mem0；检索只接受带 `local_memory_id` 且能回指本地未过期行的命中，外部残留/旧文本不能进入课堂；失败熔断 60 秒并回落关系表；管理员修正/删除先尽力同步 Mem0 | `mem0-client.test.ts` 7/7 通过；`@alg/backend` typecheck 通过 |
+| L5 课程知识 RAG（2026-11-26） | 新增 `curriculum_knowledge_chunks`（`sourceType+sourceId` 唯一）与 `CurriculumKnowledgeService`：索引已发布课程单元/课文句/词汇/句型/音素及 `childSafe` 词库；词法预筛 + 可选 Embedding 余弦混合召回；未配置/失败只走词法；按全文扫描清理失效块；无 pgvector 依赖 | `curriculum-knowledge.test.ts` 9/9 通过；`@alg/backend` typecheck/build 通过 |
 
 ## 2. 仍未关闭的差距（按优先级）
 
@@ -87,10 +90,13 @@
 3. **P1-3/P1-4**：家长报告与家长门；家庭内测最小闭环。
 4. **P1-7**：运行准入 Benchmark 与 live 生产门禁已完成；成本与模型切换治理继续按后续任务推进。
 5. 真实发音校准按用户决定，只在真实使用中观察，不作为本轮开发前置。
+6. L1/L3/L5 代码链路已关闭；下一步用真实 Mem0/Embedding 账号做写入、检索、更新、删除、隔离和重建验收，详见 `docs/memory-architecture.md`。
 
 ## 4. 本轮不做的事情（明确边界）
 
 - 不实现监护人 consent/授权流程：当前只在小范围亲属家庭使用，合规项按用户决定忽略；隐私政策只做事实说明。
+- 不执行 staging 验证与生产迁移：用户明确取消本次执行；`docs/deployment/staging-migration-checklist.md` 保持检查清单，不伪造执行记录。
 - 不做支付/订阅：没有真实收费场景。
 - 不把 Web 做成孩子学习端：Web 只保留评估与联调。
 - 不把录音写到服务端磁盘、对象存储或数据库；服务端只做请求内转发。
+- 不把 L1/L3/L5 说成真实供应商已验证：真实 Mem0、Embedding、儿童课堂效果仍属后续验收，详见 `docs/memory-architecture.md`。

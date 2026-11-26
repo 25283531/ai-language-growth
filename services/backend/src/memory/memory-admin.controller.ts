@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Headers, Param, Put
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProviderConfigService } from '../providers/provider-config.service';
+import { MemoryManagerService } from '../agents/memory-manager.service';
 
 const memoryInput = z.object({
   memoryType: z.enum(['learning_preference', 'encouragement_preference', 'lesson_learning_summary', 'caregiver_note']),
@@ -26,7 +27,11 @@ const defaultAdjustable = { tone: 'gentle', encouragement: 'balanced', correctio
 /** Management APIs for learner memories and the bounded teacher persona. */
 @Controller('api/v1/admin/learning')
 export class MemoryAdminController {
-  constructor(private readonly prisma: PrismaService, private readonly configs: ProviderConfigService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configs: ProviderConfigService,
+    private readonly memoryManager: MemoryManagerService,
+  ) {}
   private authorize(token?: string) { this.configs.assertAdminToken(token); }
 
   @Get('learners/:learnerId/memories')
@@ -40,19 +45,29 @@ export class MemoryAdminController {
     this.authorize(token);
     const parsed = memoryInput.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    const existing = await this.prisma.interaction_memories.findFirst({ where: { id: memoryId, learnerId }, select: { id: true } });
-    if (!existing) throw new BadRequestException('学习记忆不存在');
-    return this.prisma.interaction_memories.update({
-      where: { id: memoryId },
-      data: { ...parsed.data, expiresAt: parsed.data.expiresAt === undefined ? undefined : parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null, source: 'admin_corrected' },
+    const updated = await this.memoryManager.updateMemory({
+      learnerId,
+      memoryId,
+      data: {
+        memoryType: parsed.data.memoryType,
+        content: parsed.data.content,
+        importance: parsed.data.importance,
+        expiresAt: parsed.data.expiresAt === undefined
+          ? undefined
+          : parsed.data.expiresAt
+            ? new Date(parsed.data.expiresAt)
+            : null,
+      },
     });
+    if (!updated) throw new BadRequestException('学习记忆不存在');
+    return updated;
   }
 
   @Delete('learners/:learnerId/memories/:memoryId')
   async deleteMemory(@Headers('x-admin-token') token: string | undefined, @Param('learnerId') learnerId: string, @Param('memoryId') memoryId: string) {
     this.authorize(token);
-    const result = await this.prisma.interaction_memories.deleteMany({ where: { id: memoryId, learnerId } });
-    if (!result.count) throw new BadRequestException('学习记忆不存在');
+    const deleted = await this.memoryManager.deleteMemory({ learnerId, memoryId });
+    if (!deleted) throw new BadRequestException('学习记忆不存在');
     return { deleted: true, memoryId };
   }
 

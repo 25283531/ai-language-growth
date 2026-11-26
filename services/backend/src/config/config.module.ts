@@ -10,6 +10,16 @@ export interface AppConfig {
   port: number;
   databaseUrl: string;
   redisUrl: string;
+  workingMemoryTtlSeconds: number;
+  mem0: {
+    baseUrl?: string;
+    apiKey?: string;
+    addPath: string;
+    searchPath: string;
+    updatePath: string;
+    deletePath: string;
+    timeoutMs: number;
+  };
   queueRedisUrl: string;
   queueAllowSharedRedis: boolean;
   aiGatewayMode: 'mock' | 'live';
@@ -17,6 +27,7 @@ export interface AppConfig {
   tts: { apiKey?: string; baseUrl?: string; model?: string };
   asr: { apiKey?: string; baseUrl?: string; model?: string };
   pronunciation: { apiKey?: string; baseUrl?: string; model?: string };
+  embedding: { apiKey?: string; baseUrl?: string; model?: string };
   mail: {
     host?: string;
     port: number;
@@ -36,12 +47,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     baseUrl: env[`${prefix}_BASE_URL`] || undefined,
     model: env[`${prefix}_MODEL`] || undefined,
   });
+  const positiveNumber = (value: string | undefined, fallback: number): number => {
+    const parsed = Number(value ?? fallback);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  };
 
   return {
     nodeEnv: env.NODE_ENV ?? 'development',
     port: Number(env.PORT ?? 3100),
     databaseUrl: env.DATABASE_URL ?? '',
     redisUrl: env.REDIS_URL ?? '',
+    workingMemoryTtlSeconds: positiveNumber(env.WORKING_MEMORY_TTL_SECONDS, 21600),
+    mem0: {
+      baseUrl: env.MEM0_BASE_URL || undefined,
+      apiKey: env.MEM0_API_KEY || undefined,
+      addPath: env.MEM0_ADD_PATH || '/v1/memories/',
+      searchPath: env.MEM0_SEARCH_PATH || '/v1/memories/search/',
+      updatePath: env.MEM0_UPDATE_PATH || '/v1/memories/{id}/',
+      deletePath: env.MEM0_DELETE_PATH || '/v1/memories/{id}/',
+      timeoutMs: Math.max(500, Math.min(15000, positiveNumber(env.MEM0_TIMEOUT_MS, 5000))),
+    },
     queueRedisUrl: env.QUEUE_REDIS_URL ?? '',
     queueAllowSharedRedis: (env.QUEUE_ALLOW_SHARED_REDIS ?? '').toLowerCase() === 'true',
     aiGatewayMode: (env.AI_GATEWAY_MODE ?? 'mock') as 'mock' | 'live',
@@ -49,6 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     tts: pick('TTS'),
     asr: pick('ASR'),
     pronunciation: pick('PRONUNCIATION'),
+    embedding: pick('EMBEDDING'),
     mail: {
       host: env.MAIL_HOST || undefined,
       port: Number(env.MAIL_PORT ?? 587),

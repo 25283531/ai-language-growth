@@ -65,7 +65,7 @@ export function evaluateRuntimeReadiness(input: {
       score: 0,
       sampleCount: 0,
       passed: false,
-      notes: 'Embedding 尚未接入教学调用链，不能生成运行准入结果；请先完成检索链路后再评估。',
+      notes: 'Embedding 调用尚未写入用量账本，不能生成运行准入结果；请先补齐计量后再评估。',
     };
   }
 
@@ -124,7 +124,7 @@ export class ProviderBenchmarkService {
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const { serviceKind, configId } = parsed.data;
     if (serviceKind === 'embedding') {
-      throw new BadRequestException('Embedding 尚未接入教学调用链，暂不支持运行准入 Benchmark。');
+      throw new BadRequestException('Embedding 调用尚未写入用量账本，暂不支持运行准入 Benchmark。');
     }
     const config = await this.configs.getRuntimeConfigForBenchmark(serviceKind, configId);
     const since = new Date(Date.now() - LOOKBACK_MS);

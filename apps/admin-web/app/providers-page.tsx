@@ -90,7 +90,7 @@ const services: Array<{ id: ServiceKind; title: string; help: string }> = [
   { id: 'tts', title: '语音合成 TTS', help: '把教师文本合成为播放音频' },
   { id: 'asr', title: '普通语音识别 ASR', help: '只转写“说了什么”，不评判发音对错' },
   { id: 'pronunciation', title: '音素级发音评测', help: '对照目标文本评估单词、音节或音素发音；需要支持评测的专用服务' },
-  { id: 'embedding', title: '向量 Embedding', help: '为交互记忆和课程知识库生成向量；当前仅配置接入，检索链路尚未启用' },
+  { id: 'embedding', title: '向量 Embedding', help: '为交互记忆语义检索和课程知识库 RAG 生成向量；未启用或失败时回落词法检索' },
 ];
 const priceFields: Record<ServiceKind, Array<{ type: PriceType; label: string }>> = {
   llm: [
@@ -445,7 +445,7 @@ export default function AdminPage() {
       });
       if (mountedRef.current) setPricing(Object.fromEntries((Array.isArray(body) ? body : []).map((row) => [row.priceType, String(row.unitPrice)])));
       notify(active === 'embedding'
-        ? 'Embedding 参考单价已保存；接入检索调用链后才能纳入实际成本核算。'
+        ? 'Embedding 参考单价已保存；向量调用目前只登记价格，尚未纳入用量账本。'
         : '模型单价已保存；后续用量将按实际 Token、字符或时长估算成本。', 'success');
     } catch (error) {
       notify(error instanceof Error ? error.message : '保存模型单价失败', 'error');
@@ -499,7 +499,7 @@ export default function AdminPage() {
       notify(current.id
         ? '已更新该模型配置；密钥留空时保留原有凭据。'
         : (active === 'embedding'
-          ? '新配置已加密保存。当前尚未接入语义检索调用链，不会发送向量请求。'
+          ? '新配置已加密保存。启用后，交互记忆检索与知识库重建会使用该向量模型；调用失败自动回落词法检索。'
           : '新配置已加密保存并应用；后续调用会自动记录运行速度分。'), 'success');
     } catch (error) {
       const text = error instanceof Error ? error.message : '保存失败';
@@ -633,8 +633,8 @@ export default function AdminPage() {
         <button type="button" disabled={busy || deleting || pendingDelete.enabledPrimary.length > 0} onClick={() => void confirmDelete()}>{deleting ? '删除中…' : '确认删除'}</button>
       </div>
     </section>}
-    <><section className="notice"><strong>{active === 'embedding' ? '语义检索模型配置' : '两类语音能力分开配置'}</strong><span>{active === 'embedding' ? 'Embedding 是 Mem0 语义记忆与课程 RAG 的基础能力。当前先保存服务商和模型配置，检索链路接入并验证前不会调用该模型。' : '普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。启用配置后按优先级自动调用并故障切换。'}</span></section>
-    <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{serverConfigs[item.id].some((config) => config.enabled) ? item.id === 'embedding' ? '已配置' : '已启用' : '未启用'}</i></button>)}</nav>
+    <><section className="notice"><strong>{active === 'embedding' ? '语义检索模型配置' : '两类语音能力分开配置'}</strong><span>{active === 'embedding' ? 'Embedding 是 Mem0 语义记忆与课程 RAG 的基础能力。启用后用于交互记忆检索与知识库重建；未配置、未启用或调用失败时，系统回落 PostgreSQL 词法检索，不伪造向量。' : '普通 ASR 只返回转写文本；音素级发音评测会对照目标文本评估发音，不会用转写结果代替评分。启用配置后按优先级自动调用并故障切换。'}</span></section>
+    <div className="workspace"><nav className="services">{services.map((item) => <button key={item.id} className={active === item.id ? 'service active' : 'service'} onClick={() => setActive(item.id)}><span>{item.title}</span><small>{item.help}</small><i>{serverConfigs[item.id].some((config) => config.enabled) ? '已启用' : '未启用'}</i></button>)}</nav>
       <section className="panel"><div className="panel-head"><div><p className="eyebrow">{service.id.toUpperCase()}</p><h2>{service.title}</h2><p className="muted">{service.help}</p></div></div>
         {loadingConfigs && <p className="status">正在读取已保存的模型配置…</p>}
         {!loadingConfigs && !configs[active].length && <p className="helper">该服务尚未保存任何模型配置。点击「新增模型配置」，或直接选择预置平台开始填写第一条记录。</p>}
@@ -691,7 +691,7 @@ export default function AdminPage() {
           {current.providerPresetId === 'ollama' && active === 'asr' && <p className="helper">模型名称填写已在 Ollama 安装的语音识别模型。后端容器必须能访问此地址；若 Ollama 运行在另一台设备，请修改 localhost 为该设备的内网地址。</p>}
           {current.providerPresetId === 'ollama' && active === 'embedding' && <p className="helper">模型名称填写已在 Ollama 安装的向量模型。后端容器必须能访问此地址；容器中的 localhost 指向容器自身。</p>}
           {current.providerPresetId === 'baidu-qianfan' && active === 'tts' && <label>音色 ID<input value={String(current.options.voiceId ?? '5003')} onChange={(event) => updateCurrent({ ...current, options: { ...current.options, voiceId: event.target.value } })}/></label>}
-          <p className="helper">{active === 'pronunciation' ? '发音评测会将音频与目标文本一起发送。讯飞 ISE 需 16kHz 单声道音频；腾讯 SOE 使用签名 WebSocket；Azure 通过区域 Speech endpoint 评测。需先在对应控制台开通服务。' : active === 'asr' ? '此项只配置普通转写服务。音素级能力请在左侧单独配置。' : active === 'embedding' ? 'Embedding 用于后续的 Mem0 交互记忆语义检索和课程知识库 RAG。当前页面只保存平台、模型、接入点和密钥，尚未把未验证的向量检索结果用于教学决策。' : '填写平台账号凭据即可；接入地址可以编辑，以适应区域域名或供应商 API 地址变更。凭据在服务端使用 AES-256-GCM 加密后入库，页面不会回显已保存的密钥。'}</p>
+          <p className="helper">{active === 'pronunciation' ? '发音评测会将音频与目标文本一起发送。讯飞 ISE 需 16kHz 单声道音频；腾讯 SOE 使用签名 WebSocket；Azure 通过区域 Speech endpoint 评测。需先在对应控制台开通服务。' : active === 'asr' ? '此项只配置普通转写服务。音素级能力请在左侧单独配置。' : active === 'embedding' ? 'Embedding 用于 Mem0 交互记忆语义检索和课程知识库 RAG。启用后按此接入点与模型生成向量；未配置或调用失败时自动回落词法检索。凭据加密保存，页面不回显。' : '填写平台账号凭据即可；接入地址可以编辑，以适应区域域名或供应商 API 地址变更。凭据在服务端使用 AES-256-GCM 加密后入库，页面不会回显已保存的密钥。'}</p>
           {(catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl) && <a className="doclink" href={catalog.find((item) => item.id === current.providerPresetId)?.documentationUrls?.[active] ?? catalog.find((item) => item.id === current.providerPresetId)?.documentationUrl ?? ''} target="_blank" rel="noreferrer">打开此服务的官方接入文档 ↗</a>}
           {active !== 'embedding' && <section className="benchmark">
             <h3>运行准入 Benchmark</h3>
@@ -718,7 +718,7 @@ export default function AdminPage() {
           </section>}
           <section className="benchmark">
             <h3>模型计价</h3>
-            <p className="helper">按供应商账单填写人民币单价。空白表示尚未配置；明确免费的项目填 0。{active === 'embedding' ? 'Embedding 单价目前只作登记，语义检索链路接入后再纳入用量账本。' : 'Token 单价按每个 Token 填写，成本会写入用量账本。'}</p>
+            <p className="helper">按供应商账单填写人民币单价。空白表示尚未配置；明确免费的项目填 0。{active === 'embedding' ? 'Embedding 单价目前只作登记，向量调用尚未纳入用量账本。' : 'Token 单价按每个 Token 填写，成本会写入用量账本。'}</p>
             <div className="fields">{priceFields[active].map(({ type, label }) => <label key={type}>{label}<input type="number" min="0" step="any" value={pricing[type] ?? ''} onChange={(event) => setPricing((old) => ({ ...old, [type]: event.target.value }))}/></label>)}</div>
             <button className="secondary" disabled={!current.modelAlias || busy} onClick={() => void savePrices()}>{busy ? '保存中…' : '保存模型单价'}</button>
           </section>

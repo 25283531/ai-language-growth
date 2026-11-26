@@ -787,6 +787,9 @@ model interaction_memories {
   content          String
   importance       Float     @default(0.5)
   source           String    @default("batch_extract")
+  // L3 Mem0 外部记忆 ID；未配置或调用失败时为空，PostgreSQL 行仍是可审计副本。
+  externalId       String?
+  externalProvider String?
   expiresAt        DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -796,7 +799,30 @@ model interaction_memories {
   sourceSession  lesson_sessions?  @relation(fields: [sourceSessionId], references: [id], onDelete: Cascade)
 
   @@index([learnerId])
+  @@index([externalId])
   @@map("interaction_memories")
+}
+
+/// L5 课程知识库 RAG 分块。embedding 为可空 JSON 数组：
+/// 未配置 Embedding 时保留文本与词法检索，配置后写入向量做语义召回。
+model curriculum_knowledge_chunks {
+  id             String   @id @default(uuid())
+  sourceType     String   // lexicon | curriculum_unit | passage_sentence | vocabulary | sentence_pattern | phoneme
+  sourceId       String
+  topicId        String?
+  title          String
+  content        String
+  metadata       Json     @default("{}")
+  embedding      Json?
+  embeddingModel String?
+  contentHash    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([sourceType, sourceId])
+  @@index([topicId])
+  @@index([updatedAt])
+  @@map("curriculum_knowledge_chunks")
 }
 
 model learner_growth_snapshots {

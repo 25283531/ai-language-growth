@@ -44,7 +44,7 @@ A patient AI teacher that teaches word by word, like an adult teaching a child t
 - **Clients:** Android Kotlin + Jetpack Compose is the learner client; internal Web evaluation console (Next.js) is read-only by default.
 - **Backend:** NestJS modular monolith, PostgreSQL + Redis, unified AI Gateway, BullMQ, S3-compatible storage + CDN, Docker, OpenTelemetry.
 - **AI:** 4 teacher roles (planner / teacher / assessor / mentor) via one LLM with different prompts and tools. Multi-model routing L0 local / L1 light / L2 mid / L3 premium, LLM / ASR / TTS routed independently. ASR is not pronunciation assessment. TTS uses a unified voice identity + abstract `teacher_speed` (e.g. 0.65), not raw vendor speed.
-- **Memory & persona:** learning memory (self-built, PostgreSQL), interaction memory (Mem0, batched at lesson end), teacher persona (self-built Personality Engine; fixed: patient, gentle, encouraging, no mocking, no rushing, honest AI identity). Full long-term memory and controlled adaptation land in M2; M1 uses a fixed persona + session memory only.
+- **Memory & persona:** learning memory (self-built, PostgreSQL), interaction memory (Mem0 REST adapter with PostgreSQL audit fallback, batched at lesson end), Redis L1 working memory (bounded recent turns, DB fallback), curriculum knowledge RAG (PostgreSQL chunks + optional embedding, lexical fallback), teacher persona (self-built Personality Engine; fixed: patient, gentle, encouraging, no mocking, no rushing, honest AI identity). See [`docs/memory-architecture.md`](docs/memory-architecture.md); real Mem0/embedding vendor validation remains pending.
 
 ## Monorepo layout
 

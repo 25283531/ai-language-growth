@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { Mem0Client } from '../memory/mem0.client';
 
 const memoriesSchema = z.object({
   memories: z.array(z.object({
@@ -22,6 +23,7 @@ export class MemoryManagerService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ModelRouterImpl) private readonly router: ModelRouterImpl,
     @Inject(AiGatewayService) private readonly gateway: AiGatewayService,
+    @Inject(Mem0Client) private readonly mem0: Mem0Client,
   ) {}
 
   /** Extract only explicit, reusable preferences after a lesson; never persist raw dialogue. */
@@ -38,8 +40,12 @@ export class MemoryManagerService {
       take: 30,
     });
     const explicitSignals = events.flatMap((event) => {
-      const request = event.input as { text?: unknown; freeUtterance?: unknown };
-      const response = event.output as { directive?: { teacherUtterance?: unknown } };
+      const request = event.input && typeof event.input === 'object'
+        ? event.input as { text?: unknown; freeUtterance?: unknown }
+        : {};
+      const response = event.output && typeof event.output === 'object'
+        ? event.output as { directive?: { teacherUtterance?: unknown } }
+        : {};
       const childText = [request.text, request.freeUtterance]
         .find((value): value is string => typeof value === 'string');
       if (!childText) return [];
@@ -111,29 +117,199 @@ export class MemoryManagerService {
     for (const memory of input.memories) {
       const existing = await this.prisma.interaction_memories.findFirst({
         where: { learnerId: input.learnerId, memoryType: memory.memoryType, content: memory.content },
-        select: { id: true },
+        select: { id: true, externalId: true },
       });
+      let memoryId = existing?.id;
+      let externalId = existing?.externalId ?? null;
       if (existing) {
         await this.prisma.interaction_memories.update({
           where: { id: existing.id },
           data: { importance: memory.importance, expiresAt: new Date(Date.now() + 180 * 86400000), source: 'batch_extract' },
         });
-        continue;
+      } else {
+        const created = await this.prisma.interaction_memories.create({
+          data: {
+            learnerId: input.learnerId,
+            sourceSessionId: input.lessonSessionId,
+            memoryType: memory.memoryType,
+            content: memory.content,
+            importance: memory.importance,
+            source: 'batch_extract',
+            expiresAt: new Date(Date.now() + 180 * 86400000),
+          },
+          select: { id: true },
+        });
+        memoryId = created.id;
       }
-      await this.prisma.interaction_memories.create({
-        data: {
+
+      // L3：Mem0 只作为语义检索层；失败不阻断结课，PostgreSQL 行仍可审计、可删除。
+      if (memoryId && !externalId && this.mem0.isConfigured()) {
+        const added = await this.mem0.add({
           learnerId: input.learnerId,
-          sourceSessionId: input.lessonSessionId,
-          memoryType: memory.memoryType,
+          localMemoryId: memoryId,
           content: memory.content,
+          memoryType: memory.memoryType,
           importance: memory.importance,
-          source: 'batch_extract',
-          expiresAt: new Date(Date.now() + 180 * 86400000),
-        },
-      });
+          sourceSessionId: input.lessonSessionId,
+        });
+        if (added.id) {
+          externalId = added.id;
+          await this.prisma.interaction_memories.update({
+            where: { id: memoryId },
+            data: { externalId: added.id, externalProvider: 'mem0' },
+          });
+        }
+      }
     }
-    await this.prisma.interaction_memories.deleteMany({
-      where: { learnerId: input.learnerId, expiresAt: { lt: new Date() } },
+    const expired = await this.prisma.interaction_memories.findMany({
+      where: {
+        learnerId: input.learnerId,
+        expiresAt: { lt: new Date() },
+      },
+      select: { id: true, externalId: true },
+      take: 100,
     });
+    if (expired.length) {
+      await this.prisma.interaction_memories.deleteMany({
+        where: { id: { in: expired.map((row) => row.id) }, learnerId: input.learnerId },
+      });
+      // 本地过期即不再可被检索；外部副本尽力清理，失败也不会通过本地回指校验进入课堂。
+      for (const row of expired) {
+        if (row.externalId) await this.mem0.delete(row.externalId);
+      }
+    }
+  }
+
+  /**
+   * 读取与当前教学上下文最相关的交互记忆。
+   * Mem0 可用时做语义召回，失败或无结果时回落到 PostgreSQL 的确定性排序。
+   */
+  async retrieveRelevantMemories(input: {
+    learnerId: string;
+    query: string;
+    limit: number;
+  }): Promise<Array<{ content: string; memoryType: string; importance: number }>> {
+    const limit = Math.max(1, Math.min(10, input.limit));
+    if (this.mem0.isConfigured() && input.query.trim()) {
+      const hits = await this.mem0.search({
+        learnerId: input.learnerId,
+        query: input.query,
+        limit,
+      });
+      if (hits.length) {
+        // Mem0 只是索引：只接受能回指本地可审计行的命中，外部残留/过期内容不得进入课堂。
+        const localIds = hits
+          .map((hit) => hit.metadata.local_memory_id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        if (localIds.length) {
+          const localRows = await this.prisma.interaction_memories.findMany({
+            where: {
+              id: { in: localIds },
+              learnerId: input.learnerId,
+              memoryType: { in: ['learning_preference', 'encouragement_preference'] },
+              OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            },
+            select: { id: true, content: true, memoryType: true, importance: true },
+          });
+          const byId = new Map(localRows.map((row) => [row.id, row]));
+          const trusted = hits
+            .map((hit) => {
+              const localId = hit.metadata.local_memory_id;
+              return typeof localId === 'string' ? byId.get(localId) : undefined;
+            })
+            .filter((row): row is NonNullable<typeof row> => Boolean(row))
+            .slice(0, limit);
+          if (trusted.length) {
+            return trusted.map((row) => ({
+              content: row.content,
+              memoryType: row.memoryType,
+              importance: row.importance,
+            }));
+          }
+        }
+      }
+    }
+    return this.prisma.interaction_memories.findMany({
+      where: {
+        learnerId: input.learnerId,
+        memoryType: { in: ['learning_preference', 'encouragement_preference'] },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+      orderBy: [{ importance: 'desc' }, { updatedAt: 'desc' }],
+      take: limit,
+      select: { content: true, memoryType: true, importance: true },
+    });
+  }
+
+  /** 管理员修正本地记忆；外部索引只做尽力同步，命中仍回指本地可审计行。 */
+  async updateMemory(input: {
+    learnerId: string;
+    memoryId: string;
+    data: {
+      memoryType: string;
+      content: string;
+      importance: number;
+      expiresAt: Date | null | undefined;
+    };
+  }): Promise<{
+    id: string;
+    learnerId: string;
+    memoryType: string;
+    content: string;
+    importance: number;
+    expiresAt: Date | null;
+    source: string;
+    updatedAt: Date;
+  } | null> {
+    const existing = await this.prisma.interaction_memories.findFirst({
+      where: { id: input.memoryId, learnerId: input.learnerId },
+      select: { id: true, externalId: true },
+    });
+    if (!existing) return null;
+    const updated = await this.prisma.interaction_memories.update({
+      where: { id: existing.id },
+      data: {
+        memoryType: input.data.memoryType,
+        content: input.data.content,
+        importance: input.data.importance,
+        expiresAt: input.data.expiresAt,
+        source: 'admin_corrected',
+      },
+    });
+    if (existing.externalId && this.mem0.isConfigured()) {
+      const synced = await this.mem0.update(existing.externalId, {
+        localMemoryId: existing.id,
+        content: input.data.content,
+        memoryType: input.data.memoryType,
+        importance: input.data.importance,
+      });
+      if (!synced) {
+        this.logger.warn(`L3 外部记忆修正未同步，保留本地权威副本：memory=${existing.id}`);
+      }
+    }
+    return {
+      id: updated.id,
+      learnerId: updated.learnerId,
+      memoryType: updated.memoryType,
+      content: updated.content,
+      importance: updated.importance,
+      expiresAt: updated.expiresAt,
+      source: updated.source,
+      updatedAt: updated.updatedAt,
+    };
+  }
+
+  /** 删除单条交互记忆：先尝试外部 Mem0，再删除本地可审计副本。 */
+  async deleteMemory(input: { learnerId: string; memoryId: string }): Promise<boolean> {
+    const existing = await this.prisma.interaction_memories.findFirst({
+      where: { id: input.memoryId, learnerId: input.learnerId },
+      select: { id: true, externalId: true },
+    });
+    if (!existing) return false;
+    if (existing.externalId) {
+      await this.mem0.delete(existing.externalId);
+    }
+    await this.prisma.interaction_memories.delete({ where: { id: existing.id } });
+    return true;
   }
 }

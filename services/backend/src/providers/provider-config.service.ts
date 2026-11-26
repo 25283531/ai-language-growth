@@ -140,7 +140,7 @@ export class ProviderConfigService {
     });
   }
 
-  async getEnabledRuntimeConfig(serviceKind: ServiceKind): Promise<RuntimeProviderConfig | undefined> {
+  async getEnabledRuntimeConfig(serviceKind: ProviderServiceKind): Promise<RuntimeProviderConfig | undefined> {
     const row = await this.prisma.ai_provider_configs.findFirst({
       where: { serviceKind, enabled: true },
       orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
@@ -149,7 +149,7 @@ export class ProviderConfigService {
     const config = this.toPublic(row);
     return {
       ...config,
-      serviceKind,
+      serviceKind: serviceKind as ServiceKind,
       credentials: row.credentialsCiphertext ? this.decrypt(row.credentialsCiphertext) : {},
     };
   }

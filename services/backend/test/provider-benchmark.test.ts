@@ -93,7 +93,7 @@ describe('P1-7 运行准入 Benchmark', () => {
     assert.match(result.notes, /尚未保存平台凭据/);
   });
 
-  it('Embedding 尚未接入调用链时不生成可伪造的通过结果', () => {
+  it('Embedding 未写入用量账本时不生成可伪造的通过结果', () => {
     const result = evaluateRuntimeReadiness({
       serviceKind: 'embedding',
       config: llmConfig,
@@ -102,7 +102,7 @@ describe('P1-7 运行准入 Benchmark', () => {
 
     assert.equal(result.score, 0);
     assert.equal(result.passed, false);
-    assert.match(result.notes, /尚未接入教学调用链/);
+    assert.match(result.notes, /尚未写入用量账本/);
   });
 
   it('TTS 使用独立的 3 次样本门槛', () => {

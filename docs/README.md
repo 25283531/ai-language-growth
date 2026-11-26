@@ -8,6 +8,7 @@
 - [开发任务书：教材课文与教学资源 v1.1](./开发任务书-教材课文与教学资源-v1.1.md)
 - [开发任务书：教材课文与教学资源 v1.0（历史版本）](./开发任务书-教材课文与教学资源-v1.0.md)
 - [开发计划 v1.1](./development-plan-v1.1.md)
+- [L1/L3/L5 记忆与知识检索实现](./memory-architecture.md) — Redis 工作记忆、Mem0 交互记忆、PostgreSQL 课程知识 RAG 与降级边界
 - [开发要点](./development-key-points.md)
 - [任务书第 1—5 节审计](./taskbook-sections-1-5-audit.md)
 
