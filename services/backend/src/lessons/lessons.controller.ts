@@ -148,8 +148,17 @@ export class LessonsController {
 
   /** P3：批改一批完形；正确率 <80% 时返回下一批索引。 */
   @Post('topics/:topicId/cloze/grade')
-  async clozeGrade(@Param('topicId') topicId: string, @Body() body: unknown) {
+  async clozeGrade(
+    @Param('topicId') topicId: string,
+    @Body() body: unknown,
+    @Headers('authorization') authorization?: string,
+    @Headers('cookie') cookie?: string,
+    @Headers('x-learner-id') learnerIdHeader?: string,
+  ) {
     if (!this.cloze) throw new HttpException('完形服务未启用', 503);
+    const learnerId = String(learnerIdHeader ?? '').trim();
+    if (!learnerId) throw new HttpException('完形批改缺少学习者标识', 400);
+    await this.auth.assertLearnerOwnership(extractBearerToken(authorization, cookie), learnerId);
     const input = (body ?? {}) as { batchIndex?: unknown; answers?: unknown };
     const batchIndex = Math.max(0, Number.parseInt(String(input.batchIndex ?? 0), 10) || 0);
     const answers = Array.isArray(input.answers)
@@ -159,7 +168,7 @@ export class LessonsController {
           .map((entry) => ({ itemId: String(entry.itemId), answer: String(entry.answer) }))
       : [];
     if (!answers.length) throw new HttpException('answers 不能为空', 400);
-    return this.cloze.grade(topicId, batchIndex, answers);
+    return this.cloze.grade(topicId, batchIndex, answers, learnerId);
   }
 
   /** P4-02：当前教材单元的理解题（2–3 题）。 */

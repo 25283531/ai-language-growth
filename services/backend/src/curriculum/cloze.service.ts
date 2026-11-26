@@ -1,8 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import { textbookUnitContentSchema, type GrammarPoint } from '@alg/shared-contracts';
 import { ModelRouterImpl } from '@alg/model-router';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
+import { LearnerModelService } from '../learner-model/learner-model.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const CLOZE_BATCH_SIZE = 5;
@@ -42,6 +43,7 @@ export class ClozeService {
     private readonly prisma: PrismaService,
     private readonly gateway: AiGatewayService,
     private readonly router: ModelRouterImpl,
+    @Inject(LearnerModelService) private readonly learnerModel: LearnerModelService,
   ) {}
 
   async payload(topicId: string, batchIndex = 0): Promise<{
@@ -77,6 +79,8 @@ export class ClozeService {
     topicId: string,
     batchIndex: number,
     answers: Array<{ itemId: string; answer: string }>,
+    /** 由受鉴权的批改路由传入；缺失时只判分，不写学习证据（兼容旧调用）。 */
+    learnerId?: string,
   ): Promise<{
     correct: number;
     total: number;
@@ -111,6 +115,15 @@ export class ClozeService {
       // 批改必须快速返回；下一批生成交给后台预热，客户端随后取题时会等同一个任务。
       void this.ensureItems(unit.id, topicId, unit.content, (batchIndex + 2) * CLOZE_BATCH_SIZE)
         .catch((error: unknown) => this.logger.warn(`完形续批失败：${error instanceof Error ? error.message : String(error)}`));
+    } else if (learnerId) {
+      await this.recordGrammarEvidence({
+        learnerId,
+        topicId,
+        unitId: unit.id,
+        batchIndex,
+        accuracy,
+        grammarPointIds: [...new Set(rows.map((row) => row.grammarPointId).filter(Boolean))],
+      });
     }
     return {
       correct,
@@ -120,6 +133,44 @@ export class ClozeService {
       details,
       nextBatchIndex: passed ? null : batchIndex + 1,
     };
+  }
+
+  /**
+   * 完形通过后写入语法域证据。
+   *
+   * 证据与掌握状态分离：这里只追加 task_result 证据，不直接把某个语法点标成掌握；
+   * 状态仍由 LearnerModelService 按 D-005 的多证据与阈值规则重算。
+   */
+  private async recordGrammarEvidence(input: {
+    learnerId: string;
+    topicId: string;
+    unitId: string;
+    batchIndex: number;
+    accuracy: number;
+    grammarPointIds: string[];
+  }): Promise<void> {
+    const grammarPointIds = [...new Set(input.grammarPointIds.filter(Boolean))];
+    await this.learnerModel.appendEvidence({
+      learnerId: input.learnerId,
+      lessonSessionId: null,
+      skillNodeId: 'LA.GRAM.basic_pattern',
+      learningItemId: null,
+      abilityCategory: 'grammar',
+      vocabularyDimension: null,
+      source: 'task_result',
+      // 证据枚举没有 cloze；完形判的是句型/语法结构，归到 sentence_pattern。
+      taskType: 'sentence_pattern',
+      prompted: false,
+      independent: true,
+      scenario: 'story_scene',
+      succeeded: true,
+      score: Math.round(input.accuracy * 100),
+      errorUnits: [],
+      note: `完形通过：topic=${input.topicId} unit=${input.unitId} 第 ${input.batchIndex + 1} 批${grammarPointIds.length ? `，语法点 ${grammarPointIds.join(',')}` : ''}`,
+      thresholdVersion: null,
+      ruleVersion: 'R1-R7',
+      occurredAt: new Date(),
+    });
   }
 
   private async loadUnit(topicId: string) {

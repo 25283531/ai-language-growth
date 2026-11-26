@@ -143,6 +143,19 @@ function fakePrisma(initial: ClozeRow[] = [], options: { unitMissing?: boolean }
   return { prisma, rows, calls };
 }
 
+function fakeLearnerModel() {
+  const evidence: Array<Record<string, unknown>> = [];
+  return {
+    evidence,
+    model: {
+      appendEvidence: async (input: Record<string, unknown>) => {
+        evidence.push(input);
+        return `evidence-${evidence.length}`;
+      },
+    },
+  };
+}
+
 function fakeGateway(options: { fail?: boolean; payload?: unknown } = {}) {
   let calls = 0;
   return {
@@ -162,9 +175,10 @@ function fakeGateway(options: { fail?: boolean; payload?: unknown } = {}) {
 function service(
   prisma: ReturnType<typeof fakePrisma>['prisma'],
   gateway: ReturnType<typeof fakeGateway>['gateway'],
+  learnerModel: ReturnType<typeof fakeLearnerModel>['model'] = fakeLearnerModel().model,
 ) {
   const router = { route: async () => ({ serviceKind: 'llm', level: 'L2', providerAlias: 'mock', modelAlias: 'mock' }) };
-  return new ClozeService(prisma as never, gateway as never, router as never);
+  return new ClozeService(prisma as never, gateway as never, router as never, learnerModel as never);
 }
 
 async function flushBackground() {
@@ -284,6 +298,53 @@ describe('P4-01/P4-04 完形判分与兜底', () => {
       state.rows.filter((item) => item.itemIndex >= 5).map((item) => item.itemIndex).sort((a, b) => a - b),
       [5, 6, 7, 8, 9],
     );
+  });
+
+  it('通过时写一条语法域学习证据，不直接改掌握状态', async () => {
+    const seeded = Array.from({ length: 5 }, (_, index) => row(index));
+    const state = fakePrisma(seeded);
+    const learner = fakeLearnerModel();
+    const cloze = service(state.prisma, fakeGateway({ fail: true }).gateway, learner.model);
+
+    const result = await cloze.grade(topicId, 0, seeded.map((item) => ({
+      itemId: item.id,
+      answer: item.answer,
+    })), 'learner-1');
+
+    assert.equal(result.passed, true);
+    assert.equal(learner.evidence.length, 1);
+    const evidence = learner.evidence[0]!;
+    assert.equal(evidence.learnerId, 'learner-1');
+    assert.equal(evidence.lessonSessionId, null);
+    assert.equal(evidence.skillNodeId, 'LA.GRAM.basic_pattern');
+    assert.equal(evidence.abilityCategory, 'grammar');
+    assert.equal(evidence.source, 'task_result');
+    assert.equal(evidence.taskType, 'sentence_pattern');
+    assert.equal(evidence.scenario, 'story_scene');
+    assert.equal(evidence.prompted, false);
+    assert.equal(evidence.independent, true);
+    assert.equal(evidence.succeeded, true);
+    assert.equal(evidence.score, 100);
+    assert.match(String(evidence.note), /语法点 g01/);
+  });
+
+  it('未通过时不写语法域学习证据', async () => {
+    const seeded = Array.from({ length: 5 }, (_, index) => row(index));
+    const state = fakePrisma(seeded);
+    const learner = fakeLearnerModel();
+    const cloze = service(state.prisma, fakeGateway({ fail: true }).gateway, learner.model);
+
+    const result = await cloze.grade(topicId, 0, [
+      { itemId: 'row-0', answer: 'like' },
+      { itemId: 'row-1', answer: 'like' },
+      { itemId: 'row-2', answer: 'like' },
+      { itemId: 'row-3', answer: 'wrong' },
+      { itemId: 'row-4', answer: 'wrong' },
+    ], 'learner-1');
+
+    assert.equal(result.passed, false);
+    assert.equal(learner.evidence.length, 0);
+    await flushBackground();
   });
 
   it('判分忽略大小写与首尾空格', async () => {
