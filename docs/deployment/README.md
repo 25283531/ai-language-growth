@@ -6,6 +6,14 @@
 
 每次生产迁移前，按 [Staging 迁移检查清单](staging-migration-checklist.md) 在独立 staging 完成版本、备份恢复、`migrate status` 与只读健康检查，并归档证据。该清单依据 `DECISIONS.md` D-033，禁止在 staging 执行 seed 和集成测试。
 
+## Docker 镜像发布门禁
+
+`publish-docker.yml` 由 `CI` 完成事件触发。由于 `workflow_run` 不支持 `paths` 过滤，发布前会先执行 `classify`：
+
+- 仅当本次 push 只有一个提交、其 parent 是上一个成功 CI 的提交、上一次 Docker 工作流也是针对该 parent 成功运行，且该提交的改动全部位于 `docs/` 时，跳过 `publish`。
+- 多提交 push、merge commit、无成功基线、上一次 Docker 失败/取消/进行中、查询失败或改动文件达到 GitHub API 300 条上限时，继续构建。
+- 手动 `workflow_dispatch` 始终发布。
+
 ## 必需环境变量
 
 管理员账号通过部署服务器的 `.env` 中 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 设置，Compose 启动时将其注入后端。管理员在管理页面登录后获得有效期 8 小时的 HttpOnly 会话 Cookie；所有管理 API 都由后端校验会话。请使用强随机密码并妥善保管 `.env`，不要提交到 GitHub。模型供应商凭据由管理后台加密写入数据库，`MODEL_CONFIG_ENCRYPTION_KEY` 更换后旧凭据无法解密。SMTP 也在后台“系统设置”页面配置并加密保存，不再要求把 SMTP 密码写入 Compose 环境变量。
