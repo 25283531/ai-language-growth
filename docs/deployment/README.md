@@ -10,7 +10,7 @@
 
 `publish-docker.yml` 由 `CI` 完成事件触发。由于 `workflow_run` 不支持 `paths` 过滤，发布前会先执行 `classify`：
 
-- 仅当本次 push 只有一个提交、其 parent 是上一个成功 CI 的提交、上一次 Docker 工作流也是针对该 parent 成功运行，且该提交的改动全部位于 `docs/` 时，跳过 `publish`。
+- 仅当本次 push 只有一个提交、其 parent 是上一个成功 CI 的提交、上一次 Docker 工作流也是针对该 parent 成功运行，且该提交的改动全部位于 `docs/` 或为 Markdown 文档（`.md`/`.mdx`）时，跳过 `publish`。
 - 多提交 push、merge commit、无成功基线、上一次 Docker 失败/取消/进行中、查询失败或改动文件达到 GitHub API 300 条上限时，继续构建。
 - 手动 `workflow_dispatch` 始终发布。
 
