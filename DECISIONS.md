@@ -89,6 +89,8 @@
 | D-031 | 每日重听与巩固 | 课首重听最近几天、课尾重听当天；重听是重新呈现输入，不是考试 |
 | D-032 | 开课主题解析 | 参数 > 档案一次性指定 > 上一课主题；档案指定开课即消费，不做长期锁定 |
 | D-033 | staging 迁移验证 | 同生产大版本、独立库与账号、先备份再 migrate deploy；禁止 seed 和集成测试 |
+| D-034 | 教材课程线首版口径 | 慢速 0.65、阈值 fallback 80、完形证据与双轨映射统一首版口径 |
+| D-035 | Docker 发布门禁 | 纯 docs/ 单提交跳过镜像发布；多提交、merge、无基线或查询失败保守构建 |
 
 
 ## 产品与教学体系
@@ -659,6 +661,35 @@ Rerank 暂不加入模型接入页。当前课程与交互记忆规模较小，�
 
 **影响：** 第 20 章与本条成为同一口径；实现改动若触及慢速档、阈值、语法证据或双轨顺序，需同步修改两处并补回归。完形证据落库已补齐；验收可声称完形批改通过会写入语法域 `learning_evidence`，但不得声称单次完形直接改变掌握状态。
 
+### D-035 Docker 发布门禁：纯 docs/ 单提交跳过镜像发布
+
+**日期：** 2026-11-26
+
+**决定：** `publish-docker.yml` 继续由 `CI` 的 `workflow_run` 完成事件触发；由于 `workflow_run` 不支持 `paths` 过滤，新增独立 `classify` job 作为发布门禁。只有以下条件同时成立时，`publish` 才跳过：
+
+1. 当前 commit 是单父提交，且其 parent 就是上一个成功 CI 的 head；等价于本次 push 自上一个成功 CI 后只有一个 commit。
+2. 上一次 Docker 工作流成功，且其 `head_sha` 正是该 parent；失败、取消、进行中或无记录都不跳过。
+3. 当前 commit 的改动文件全部位于 `docs/`；重命名同时检查 `previous_filename`，从代码目录移入 `docs/` 仍按代码变更处理。
+
+不满足任一条件时继续构建，包括多 commit push、merge commit、无成功 CI 基线、上一次 Docker 未成功、GitHub API 查询失败、文件列表为空，以及 commit API 达到 300 文件上限。手动 `workflow_dispatch` 始终发布。CI 成功但 `classify` 失败或异常跳过时，`publish` 采用 fail-open（`always() && !cancelled()`）继续构建；CI 失败或取消仍不发布。工作流增加 `actions: read` 权限用于查询 CI/Docker workflow runs。
+
+**原因：** 纯文档提交不需要重建并推送四套镜像，但 `workflow_run` 没有 `paths` 过滤。只检查 head commit 会在“代码+文档一次 push、docs 在最后”时误跳过，导致代码镜像漏发；以“上一个成功 CI 的 parent”为基线并要求上一次 Docker 针对同一基线成功，可以同时避免多 commit push 和失败发布后的误跳过。分类器查询失败时保守构建，避免因 GitHub API 异常阻断正常发布。
+
+**被放弃的方案：** 在 `workflow_run` 上直接配置 `paths`（不支持）；只查 head commit 的文件列表；按提交信息 `docs:` 前缀判断；只检查 `workflow_run.conclusion == success` 而不核对实际发布基线；把 `classify` 设为硬门禁，分类器故障时阻断发布。
+
+**影响：** 纯 docs 提交不再触发四套镜像重建；非 docs 提交、multi-commit push、merge、无基线或分类器异常时仍按原路径构建。门禁依赖 GitHub API 与 `actions: read` 权限；GitHub API 行为或 300 文件上限变化时需复核。`docs/deployment/README.md` 已同步门禁说明；后续修改条件需同时更新本条、工作流和该文档，并重新做真实运行验证。
+
+**实测验证（2026-11-26）：**
+
+| 提交 | 变更范围 | CI | Docker | 结论 |
+| --- | --- | --- | --- | --- |
+| `9e478a0` | `.github/workflows/publish-docker.yml`，非 docs | `45771444452` success | `45771743811` success；classify success；app/backend/admin-web/web 四个 publish success | 非 docs 提交未被跳过，四套镜像正常构建 |
+| `516b7e0` | 仅 `docs/deployment/README.md` | `45772242682` success | `45772580495` success；classify success；`Classify changed files` step success；publish skipped | 门禁判定 `docs_only=true`，publish 被跳过，未构建该提交镜像 |
+
+`publish` 的跳过条件只有 CI 成功 + `classify` 成功 + `docs_only=true`。`516b7e0` 同时满足 CI success、classify success、publish skipped，因此可确认本次 `docs_only=true`；Docker 工作流整体仍为 success，原因是仅 `publish` 被跳过。`9e478a0` 的四个 publish job 均 success，确认非 docs 路径未被误跳过。验证时 `origin/main` 为 `516b7e0`。
+
+本地补充验证：`publish-docker.yml` YAML 解析通过，提取的 classify shell 脚本 `bash -n` 通过；13/13 场景通过（docs-only、代码、rename、multi-commit、merge、上一次 Docker 失败、API 失败、300 文件上限等）。
+
 ## 尚未决定事项
 
 以下事项在讨论中明确为未定或待实测，不得当作已定结论执行。确定后按本文件修改规则补入正文。
@@ -702,3 +733,4 @@ Rerank 暂不加入模型接入页。当前课程与交互记忆规模较小，�
 | 2026-11-18 | D-014 追加条款 | 明确教材课文逐句双速/重点词拆读是独立学习对象，不属于“教师一轮话语”；允许按课文句子边界合成，但禁止拼成教师发言；片段缓存键含课程、句子/词身份、版本与语速，不按纯文本哈希跨课程复用。 |
 | 2026-11-26 | D-034（新增）；D-014/D-022/D-024 交叉引用；未定事项表更新 | 同步任务书第 20 章首版口径：课文慢速 0.65、不新增 0.55；跟读阈值未配置 fallback 80、原型 85 不硬编码；语法证据由 `production`/`transfer` 承担，完形证据已落库；双轨映射 `schoolModules` 优先、无映射 A→E；教材授权、`childSafe`、ZIP 与映射维护一并收口。 |
 | 2026-11-26 | D-034 场景基线补充 | `scenarios` 的 8 个基础场景改由迁移 `20261126120000_baseline_scenarios` 幂等保证，不再只依赖 seed；新增只读 `check:scenario-baseline`，在 CI `migrate` 后、`seed` 前校验，避免完形证据因 `story_scene` 外键失败。 |
+| 2026-11-26 | D-035（新增） | 登记 Docker 发布门禁：纯 docs/ 单提交跳过 `publish`，以成功 CI 基线、上一次 Docker 成功和文件全在 `docs/` 为条件；多 commit、merge、无基线或查询失败保守构建；记录 `9e478a0` 正常构建、`516b7e0` 判定 `docs_only=true` 且 `publish` skipped 的实测结论。 |
