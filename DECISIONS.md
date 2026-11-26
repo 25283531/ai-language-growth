@@ -691,8 +691,9 @@ Rerank 暂不加入模型接入页。当前课程与交互记忆规模较小，�
 | `516b7e0` | 仅 `docs/deployment/README.md` | `45772242682` success | `45772580495` success；classify success；`Classify changed files` step success；publish skipped | 门禁判定 `docs_only=true`，publish 被跳过，未构建该提交镜像 |
 | `e12208c` | 仅根级 `DECISIONS.md` | `45774039022` success | `45774305719` success；classify success；四个 publish success | 初版只认 `docs/`，判定 `docs_only=false`；暴露“纯文档”与“docs/ 目录”口径差，促使本修订 |
 | `fe48eb4` | `.github/workflows/publish-docker.yml`，非 docs | `45779961556` success | `45780260111` success；classify success；四个 publish success | 扩展规则后非文档路径仍正常构建 |
+| `5ecf41f` | 仅 `DECISIONS.md`、`docs/deployment/README.md` | `45781094889` success | `45781431536` success；classify success；publish skipped | 扩展规则后 docs-only 提交判定 `docs_only=true`，publish 被跳过 |
 
-`publish` 的跳过条件只有 CI 成功 + `classify` 成功 + `docs_only=true`。`516b7e0` 同时满足 CI success、classify success、publish skipped，因此可确认本次 `docs_only=true`；Docker 工作流整体仍为 success，原因是仅 `publish` 被跳过。`9e478a0` 的四个 publish job 均 success，确认非 docs 路径未被误跳过。`e12208c` 证明初版只匹配 `docs/` 的边界不足；`fe48eb4` 为修正后的非文档路径构建验证；随后以一个仅改 `DECISIONS.md` 和部署文档的 docs-only 提交验证新规则的跳过路径。
+`publish` 的跳过条件只有 CI 成功 + `classify` 成功 + `docs_only=true`。`516b7e0` 同时满足 CI success、classify success、publish skipped，因此可确认本次 `docs_only=true`；Docker 工作流整体仍为 success，原因是仅 `publish` 被跳过。`9e478a0` 的四个 publish job 均 success，确认非 docs 路径未被误跳过。`e12208c` 证明初版只匹配 `docs/` 的边界不足；`fe48eb4` 为修正后的非文档路径构建验证；`5ecf41f` 仅改 `DECISIONS.md` 与部署文档，CI success、classify success、publish skipped，确认扩展规则后的 doc-only 跳过路径有效。
 
 本地补充验证：`publish-docker.yml` YAML 解析通过，提取的 classify shell 脚本 `bash -n` 通过；19/19 场景通过（docs-only、Markdown 文档、代码、rename、multi-commit、merge、上一次 Docker 失败、API 失败、300 文件上限等）。
 
@@ -741,3 +742,4 @@ Rerank 暂不加入模型接入页。当前课程与交互记忆规模较小，�
 | 2026-11-26 | D-034 场景基线补充 | `scenarios` 的 8 个基础场景改由迁移 `20261126120000_baseline_scenarios` 幂等保证，不再只依赖 seed；新增只读 `check:scenario-baseline`，在 CI `migrate` 后、`seed` 前校验，避免完形证据因 `story_scene` 外键失败。 |
 | 2026-11-26 | D-035（新增） | 登记 Docker 发布门禁：纯 docs/ 单提交跳过 `publish`，以成功 CI 基线、上一次 Docker 成功和文件全在 `docs/` 为条件；多 commit、merge、无基线或查询失败保守构建；记录 `9e478a0` 正常构建、`516b7e0` 判定 `docs_only=true` 且 `publish` skipped 的实测结论。 |
 | 2026-11-26 | D-035 修订 | 文档范围由仅 `docs/` 扩展为 `docs/` 或 Markdown 文档（`.md`/`.mdx`）；记录 `e12208c` 仅改根级 `DECISIONS.md` 却因旧规则判定 `docs_only=false`、四套 publish 正常构建，以及 `fe48eb4` 修正后非文档路径仍正常构建。 |
+| 2026-11-26 | D-035 验证补充 | `5ecf41f` 仅改 `DECISIONS.md` 与 `docs/deployment/README.md`，CI `45781094889` success、Docker `45781431536` success、classify success、publish skipped，确认扩展规则后的 docs-only 跳过路径有效。 |
