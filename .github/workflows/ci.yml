@@ -80,10 +80,16 @@ jobs:
           npm run build --workspace @alg/skill-graph
           npm run build --workspace @alg/backend
 
-      - name: Apply schema and seed reviewed prototype curriculum
-        run: |
-          npm run prisma:migrate --workspace @alg/backend
-          npm run prisma:seed --workspace @alg/backend
+      - name: Apply schema migrations
+        run: npm run prisma:migrate --workspace @alg/backend
+
+      # 必须在 seed 之前跑：证明 scenarios 由迁移而不是 seed 保证。
+      # 缺口会让完形通过证据写 learning_evidence.scenario='story_scene' 时外键失败。
+      - name: Verify scenario baseline from migrations
+        run: npm run check:scenario-baseline
+
+      - name: Seed reviewed prototype curriculum
+        run: npm run prisma:seed --workspace @alg/backend
 
       - name: Build web workbench
         run: npm run build --workspace @alg/web
@@ -131,6 +137,8 @@ jobs:
             services/backend/test/tts-pregeneration.test.ts \
             services/backend/test/pronunciation-coach.test.ts \
             services/backend/test/passage-practice.test.ts \
+            services/backend/test/cloze.service.test.ts \
+            services/backend/test/scenario-baseline.test.ts \
             services/backend/test/planner-review-renderable.test.ts \
             services/backend/test/textbook-item-plan-review.test.ts \
             services/backend/test/curriculum-audio-service.test.ts \

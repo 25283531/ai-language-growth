@@ -88,6 +88,7 @@ npx prisma migrate deploy --schema services/backend/prisma/schema.prisma
 - [ ] 已保存执行后 `migrate status`，显示无 pending / failed：`__________`。
 - [ ] 已核对目标表、列、索引、约束存在：`__________`。
 - [ ] 已核对关键表行数在预期范围内：`__________`。
+- [ ] 已执行只读场景基线校验 `npm run check:scenario-baseline`，输出 `OK：8/8，含 story_scene`：`__________`。
 - [ ] 应用使用新镜像启动成功，启动日志无 schema/查询错误：`__________`。
 
 **迁移结论：** ☐ 通过　☐ 不通过  

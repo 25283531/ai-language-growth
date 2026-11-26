@@ -16,6 +16,7 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:push": "prisma db push",
     "prisma:seed": "tsx prisma/seed.ts",
+    "check:scenario-baseline": "tsx scripts/check-scenario-baseline.ts",
     "lexicon:import": "tsx scripts/import-lexicon.ts",
     "lexicon:import:dry": "tsx scripts/import-lexicon.ts --dry-run",
     "lexicon:import:global": "tsx scripts/import-lexicon.ts --skip-textbook"

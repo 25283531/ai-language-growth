@@ -648,7 +648,7 @@ Rerank 暂不加入模型接入页。当前课程与交互记忆规模较小，�
 | --- | --- | --- |
 | 慢速档位 | 教材课文逐句和重点词保持正常 1.0、慢速 0.65 两档；不新增全局 0.55 档。音素/音节定向练习由 `method_phoneme_focus` / `method_syllable_split` 的方法阶梯与片段重复实现，中文保持自然语速。 | 0.65 是平台抽象档位，不是 TTS 厂商 speed 原值；厂商下限仍按 D-014。 |
 | 跟读阈值 | 首版未配置时 `passScore` fallback 80；阈值由 `assessment_thresholds` 配置，不硬编码原型 85。 | 80 是运行默认值，不是已校准的儿童达标结论；真实儿童样本后继续校准并留痕（D-025）。 |
-| 完形证据 | 语法点进入掌握证据由句型产出（`evidenceKind=production`）和跨场景迁移（`transfer`）承担；完形批改通过时以 `task_result` 写入语法域 `learning_evidence`（技能节点 `LA.GRAM.basic_pattern`，`taskType=sentence_pattern`）；理解题仍只作课堂达标。 | 2026-11-26 已落库；只追加证据，不直接改掌握状态，单次成绩仍按 D-005 多证据与阈值判定。 |
+| 完形证据 | 语法点进入掌握证据由句型产出（`evidenceKind=production`）和跨场景迁移（`transfer`）承担；完形批改通过时以 `task_result` 写入语法域 `learning_evidence`（技能节点 `LA.GRAM.basic_pattern`，`taskType=sentence_pattern`）；理解题仍只作课堂达标。 | 2026-11-26 已落库；只追加证据，不直接改掌握状态，单次成绩仍按 D-005 多证据与阈值判定。目标库 `scenarios` 的 8 个场景由迁移 `20261126120000_baseline_scenarios` 幂等保证；`check:scenario-baseline` 在 CI `migrate` 后、`seed` 前只读校验，`story_scene` 缺失即失败。 |
 | 双轨映射 | 学校英语模块顺序以 `textbook_unit_mappings.schoolModules` 显式映射为准；无映射时按能力节点、metadata 与语法点推导，按 A→B→C→D→E 生成；不预设 A/B 先行，也不强制每单元全模块。每个已声明模块至少一个可评估活动。 | 映射由内容运营/教研维护，保存时校验能力节点、模块与来源；映射不是发布门禁，每册上线前抽检（D-022）。 |
 
 **其余第 20 章口径：** 教材文本只录入自有版权或已取得书面授权的内容，未授权不发布；儿童安全以构建期 `childSafe` 为唯一过滤源，39 个核心风险词不生成例句，无法确认时默认 `false`；整本书 ZIP 批量导入本期不做；教材映射维护责任与校验按上表执行。上述与 D-022、D-023 及任务书第 20 章一致。
@@ -701,3 +701,4 @@ Rerank 暂不加入模型接入页。当前课程与交互记忆规模较小，�
 | 2026-11-18 | D-033（新增） | 规定生产迁移前必须有 staging 验证：与生产同大版本 PostgreSQL、独立数据库和账号、先备份再 `migrate deploy`；禁止 `prisma:seed` 和集成测试；同步任务书 18.5 与本地数据库文档。 |
 | 2026-11-18 | D-014 追加条款 | 明确教材课文逐句双速/重点词拆读是独立学习对象，不属于“教师一轮话语”；允许按课文句子边界合成，但禁止拼成教师发言；片段缓存键含课程、句子/词身份、版本与语速，不按纯文本哈希跨课程复用。 |
 | 2026-11-26 | D-034（新增）；D-014/D-022/D-024 交叉引用；未定事项表更新 | 同步任务书第 20 章首版口径：课文慢速 0.65、不新增 0.55；跟读阈值未配置 fallback 80、原型 85 不硬编码；语法证据由 `production`/`transfer` 承担，完形证据已落库；双轨映射 `schoolModules` 优先、无映射 A→E；教材授权、`childSafe`、ZIP 与映射维护一并收口。 |
+| 2026-11-26 | D-034 场景基线补充 | `scenarios` 的 8 个基础场景改由迁移 `20261126120000_baseline_scenarios` 幂等保证，不再只依赖 seed；新增只读 `check:scenario-baseline`，在 CI `migrate` 后、`seed` 前校验，避免完形证据因 `story_scene` 外键失败。 |

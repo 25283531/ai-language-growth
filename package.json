@@ -23,6 +23,7 @@
     "prisma:generate": "npm run prisma:generate --workspace @alg/backend",
     "prisma:migrate": "npm run prisma:migrate --workspace @alg/backend",
     "prisma:seed": "npm run prisma:seed --workspace @alg/backend",
+    "check:scenario-baseline": "npm run check:scenario-baseline --workspace @alg/backend",
     "lexicon:build": "npm run build:lexicon --workspace @alg/vocabulary",
     "lexicon:import": "npm run lexicon:import --workspace @alg/backend",
     "lexicon:coverage": "npm run coverage:report --workspace @alg/vocabulary",
