@@ -13,12 +13,121 @@ on:
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
 jobs:
-  publish:
-    # CI 失败 / 取消时不推镜像；手动 dispatch 保留人工放行通道。
+  classify:
+    # workflow_run 不支持 paths 过滤。只有以下条件同时成立才跳过发布：
+    # 1) 当前 commit 是单父提交，且 parent 就是上一个成功 CI 的提交；
+    # 2) 上一次 Docker 工作流成功，且运行的正是该 parent；
+    # 3) 当前 commit 的改动文件全部位于 docs/。
+    # 多 commit push、合并提交、无基线、查询失败或文件达到 API 上限时，一律保守构建。
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.dispatch.outputs.docs_only || steps.classify.outputs.docs_only }}
+    steps:
+      - name: Manual dispatch always publishes
+        id: dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "docs_only=false" >> "$GITHUB_OUTPUT"
+
+      - name: Classify changed files
+        id: classify
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          mark_build() {
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          if ! commit=$(gh api "repos/$REPO/commits/$SHA"); then
+            echo "::warning::无法读取当前 commit，保守构建"
+            mark_build
+          fi
+
+          if ! parent_count=$(printf '%s' "$commit" | jq -r '.parents | length'); then
+            echo "::warning::无法解析 commit parents，保守构建"
+            mark_build
+          fi
+          if [ "$parent_count" -ne 1 ]; then
+            echo "::notice::当前 commit 不是单父提交，保守构建"
+            mark_build
+          fi
+          parent=$(printf '%s' "$commit" | jq -r '.parents[0].sha // empty') || mark_build
+          if [ -z "$parent" ]; then
+            echo "::warning::无法确定当前 commit 的 parent，保守构建"
+            mark_build
+          fi
+
+          # 用“上一个成功 CI 的提交”作为基线，而不是只看 head 的 parent；
+          # 一次 push 多个 commit 时 base != parent，直接保守构建。
+          if ! base=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50" \
+            --jq "[.workflow_runs[] | select(.id < $CI_RUN_ID and .head_sha != \"$SHA\")][0].head_sha // empty"); then
+            echo "::warning::无法查询上一成功 CI，保守构建"
+            mark_build
+          fi
+          if [ -z "$base" ]; then
+            echo "::notice::没有上一成功 CI 基线，保守构建"
+            mark_build
+          fi
+          if [ "$base" != "$parent" ]; then
+            echo "::notice::当前 push 含多个 commit（基线 $base != parent $parent），保守构建"
+            mark_build
+          fi
+
+          # 上一次 Docker 工作流必须成功且针对同一基线；失败、取消、进行中都不能跳过。
+          if ! previous=$(gh api "repos/$REPO/actions/workflows/publish-docker.yml/runs?branch=main&per_page=20" \
+            --jq "[.workflow_runs[] | select(.id < $RUN_ID)][0] | {head_sha: .head_sha, conclusion: .conclusion} | @json"); then
+            echo "::warning::无法读取上一次 Docker 工作流结果，保守构建"
+            mark_build
+          fi
+          previous_head=$(printf '%s' "$previous" | jq -r '.head_sha // empty') || mark_build
+          previous_conclusion=$(printf '%s' "$previous" | jq -r '.conclusion // empty') || mark_build
+          if [ "$previous_conclusion" != "success" ] || [ "$previous_head" != "$base" ]; then
+            echo "::notice::上一次 Docker 工作流不是针对基线 $base 的成功运行，保守构建"
+            mark_build
+          fi
+
+          # commit API 的 files 最多 300 条；达到上限时无法证明只有 docs/ 变更，保守构建。
+          if ! file_count=$(printf '%s' "$commit" | jq -r '.files | length'); then
+            echo "::warning::无法解析改动文件数量，保守构建"
+            mark_build
+          fi
+          if [ "${file_count:-0}" -ge 300 ]; then
+            echo "::warning::改动文件达到 GitHub API 上限，保守构建"
+            mark_build
+          fi
+          files=$(printf '%s' "$commit" | jq -r '.files[] | .filename, (.previous_filename // empty)') || mark_build
+          if [ -z "$files" ]; then
+            echo "::notice::没有可判定的改动文件，保守构建"
+            mark_build
+          fi
+          if printf '%s\n' "$files" | grep -qv '^docs/'; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: classify
+    # CI 失败 / 取消时不推镜像；仅 docs/ 变更时跳过；手动 dispatch 保留人工放行通道。
+    # classify 失败时也继续构建，避免分类器故障阻断发布。
+    if: |
+      always() &&
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.workflow_run.conclusion == 'success') &&
+      (needs.classify.result != 'success' || needs.classify.outputs.docs_only != 'true')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
