@@ -338,6 +338,22 @@ describe('教材单元生成管线', () => {
     assert.equal(result.needsReview, true);
   });
 
+  it('自动词表排除对话人名和语气词，但保留教师录入词', async () => {
+    const record = unit({ words: ['family'] });
+    record.passageSource = 'Sam: Mm... I like apples. Amy: Tom and Lingling like cakes.';
+    const { gateway } = scriptedGateway();
+    const { service } = serviceFor(record, gateway);
+
+    const result = await service.generate(unitId);
+    const words = result.content.vocabulary.map((item) => item.word);
+
+    assert.ok(words.includes('family'));
+    assert.ok(words.includes('apples'));
+    for (const blocked of ['sam', 'amy', 'tom', 'lingling', 'mm']) {
+      assert.equal(words.includes(blocked), false, `不应自动收录 ${blocked}`);
+    }
+  });
+
   it('缺少单元或课文原文时拒绝生成且不写库', async () => {
     const empty = fakePrisma(null);
     const router = fakeRouter();

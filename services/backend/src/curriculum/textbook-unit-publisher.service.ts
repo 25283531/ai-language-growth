@@ -918,21 +918,30 @@ function textbookContentHash(content: TextbookUnitContent): string {
   return contentHash(stable);
 }
 
-function stageForContent(content: TextbookUnitContent, level: string): number {
-  if (typeof content.stageHint === 'number') return content.stageHint;
-  const index = STAGE_LEVELS.indexOf(level as typeof STAGE_LEVELS[number]);
-  return index >= 0 ? index : 1;
-}
-
-function levelForContent(content: TextbookUnitContent, grade?: string | null): string {
-  if (typeof content.stageHint === 'number' && content.stageHint >= 0 && content.stageHint <= 6) {
-    return STAGE_LEVELS[content.stageHint] ?? 'A1';
-  }
+/** 年级决定教材单元的最低 CEFR；AI stageHint 只能在此基础上上调。 */
+export function minimumLevelForGrade(grade?: string | null): string | null {
   const text = grade ?? '';
   if (/一|二|1|2/.test(text)) return 'pre-A1';
   if (/三|四|3|4/.test(text)) return 'A1';
   if (/五|六|5|6/.test(text)) return 'A2';
-  return 'A1';
+  return null;
+}
+
+/** 发布阶段必须和校准后的 level 一致，不能继续沿用偏低的 AI stageHint。 */
+function stageForContent(_content: TextbookUnitContent, level: string): number {
+  const index = STAGE_LEVELS.indexOf(level as typeof STAGE_LEVELS[number]);
+  return index >= 0 ? index : 1;
+}
+
+export function levelForContent(content: TextbookUnitContent, grade?: string | null): string {
+  const floor = minimumLevelForGrade(grade);
+  const floorIndex = floor ? STAGE_LEVELS.indexOf(floor as typeof STAGE_LEVELS[number]) : -1;
+  const aiIndex = typeof content.stageHint === 'number' && content.stageHint >= 0 && content.stageHint <= 6
+    ? content.stageHint
+    : -1;
+  const resolved = Math.max(aiIndex, floorIndex);
+  if (resolved >= 0) return STAGE_LEVELS[resolved] ?? floor ?? 'A1';
+  return floor ?? 'A1';
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

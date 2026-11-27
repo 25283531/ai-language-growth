@@ -245,6 +245,9 @@ const FUNCTION_WORDS = new Set([
   'on', 'at', 'for', 'from', 'with', 'by', 'about', 'into', 'over', 'after', 'before',
   'here', 'there', 'where', 'when', 'what', 'who', 'whom', 'whose', 'which', 'how',
   'very', 'too', 'also', 'just', 'please', 'hello', 'hi', 'ok', 'okay',
+  // 语气词不进入自动词表；教师明确录入的词仍按教材词保留。
+  'mm', 'm', 'err', 'um', 'umm', 'uh', 'oh', 'ah', 'wow', 'hmm', 'huh', 'ha',
+  'hey', 'well', 'hooray', 'ouch', 'oops', 'sh', 'shh', 'eh', 'aha',
 ]);
 
 /**
@@ -724,7 +727,11 @@ export class TextbookUnitService {
     sentences: PlannedSentence[],
     issues: QcIssue[],
   ): Promise<TextbookUnitContent['vocabulary']> {
-    const words = seedWords.length ? seedWords : extractPassageWords(sentences.map((sentence) => sentence.en).join(' '));
+    const passageText = sentences.map((sentence) => sentence.en).join(' ');
+    const blocked = autoVocabularyBlocked(passageText);
+    const words = seedWords.length
+      ? seedWords
+      : extractPassageWords(passageText).filter((word) => !blocked.has(word));
     if (!words.length) return [];
     const lookup: Map<string, LexiconLookupEntry> = this.lexicon
       ? await this.lexicon.lookupMany(words, {
@@ -1426,9 +1433,16 @@ function buildSeedWords(
   previous: PreviousSentence[],
 ): string[] {
   const fromMetadata = toStringArray(metadata.words);
-  const fromPrevious = previous.flatMap((sentence) => sentence.keyWords ?? []);
-  // 教材词优先；再补充课文里出现、但教师没有手填的内容词。
-  const source = [...fromMetadata, ...fromPrevious, ...extractPassageWords(passage)];
+  const blocked = autoVocabularyBlocked(passage);
+  const fromPrevious = previous
+    .flatMap((sentence) => sentence.keyWords ?? [])
+    .filter((word) => !blocked.has(normalizeWord(word)));
+  // 教材词优先；自动补充时排除人名、称呼和语气词，避免把对话角色当成学习词。
+  const source = [
+    ...fromMetadata,
+    ...fromPrevious,
+    ...extractPassageWords(passage).filter((word) => !blocked.has(word)),
+  ];
   const seen = new Set<string>();
   const output: string[] = [];
   for (const item of source) {
@@ -1441,6 +1455,23 @@ function buildSeedWords(
     }
   }
   return output;
+}
+
+/** 自动词表屏蔽：对话标签、句中大写专名和语气词。教师手填的教材词不受影响。 */
+function autoVocabularyBlocked(text: string): Set<string> {
+  const blocked = new Set<string>();
+  for (const match of text.matchAll(/\b([A-Z][A-Za-z'’-]+)\s*:/g)) {
+    const name = match[1];
+    if (name) blocked.add(name.toLowerCase());
+  }
+  for (const match of text.matchAll(/\b([A-Z][A-Za-z'’-]+)\b/g)) {
+    const name = match[1];
+    if (!name) continue;
+    const index = match.index ?? 0;
+    const prefix = text.slice(0, index).trimEnd();
+    if (prefix && !/[.!?]$/.test(prefix)) blocked.add(name.toLowerCase());
+  }
+  return blocked;
 }
 
 function extractPassageWords(text: string): string[] {
