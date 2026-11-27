@@ -525,8 +525,11 @@ export class TextbookUnitService {
         sentences: splits,
         words: seedWords,
       },
-      maxTokens: 2400,
-      useSmall: true,
+      // 教材单元一次要返回逐句译文和整单元词条；Qwen 小模型在 30s 生产超时内
+      // 经常无法完成，导致整篇占位译文。富化改用主模型并给足输出预算；
+      // 小模型仍保留给记忆抽取等短任务。
+      maxTokens: 4096,
+      useSmall: false,
       responseSchema: {
         type: 'object',
         properties: {
