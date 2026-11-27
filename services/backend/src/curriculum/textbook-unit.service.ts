@@ -753,7 +753,7 @@ export class TextbookUnitService {
       return true;
     });
 
-    return safeWords.map((word) => {
+    const vocabulary = safeWords.map((word) => {
       const normalized = normalizeWord(word);
       const entry = lookup.get(normalized);
       const ai = aiByWord.get(normalized);
@@ -762,20 +762,6 @@ export class TextbookUnitService {
         || cleanChineseText(entry?.meaningZh)
         || FUNCTION_WORD_MEANINGS[normalized]
         || '';
-      if (!phonetic) {
-        issues.push({
-          code: 'missing_phonetic',
-          message: `词条 ${normalized} 缺少音标。`,
-          path: `vocabulary.${normalized}.phonetic`,
-        });
-      }
-      if (!meaningZh) {
-        issues.push({
-          code: 'missing_meaning',
-          message: `词条 ${normalized} 缺少中文释义。`,
-          path: `vocabulary.${normalized}.meaningZh`,
-        });
-      }
       const examples = [
         ...(entry?.examples ?? []).slice(0, 3).map((example) => ({
           en: example.en,
@@ -813,6 +799,72 @@ export class TextbookUnitService {
           .map((example) => ({ en: example.en, zh: example.zh })),
       };
     });
+
+    await this.repairVocabularyGaps(unit, vocabulary, sentences);
+    for (const item of vocabulary) {
+      if (!item.phonetic.trim()) {
+        issues.push({
+          code: 'missing_phonetic',
+          message: `词条 ${item.word} 缺少音标。`,
+          path: `vocabulary.${item.word}.phonetic`,
+        });
+      }
+      if (!item.meaningZh.trim()) {
+        issues.push({
+          code: 'missing_meaning',
+          message: `词条 ${item.word} 缺少中文释义。`,
+          path: `vocabulary.${item.word}.meaningZh`,
+        });
+      }
+    }
+    return vocabulary;
+  }
+
+  /**
+   * 富化模型偶尔会漏掉多词短语或人名的音标/释义。这里只针对缺失字段做一次
+   * 小批量补全；仍拿不到就保留空字段，让 QC 明确失败，不能编造。
+   */
+  private async repairVocabularyGaps(
+    unit: TextbookUnitRecord,
+    vocabulary: TextbookUnitContent['vocabulary'],
+    sentences: PlannedSentence[],
+  ): Promise<void> {
+    const missing = vocabulary.filter((item) => !item.phonetic.trim() || !item.meaningZh.trim());
+    if (!missing.length) return;
+    const context = sentences
+      .map((sentence) => sentence.en)
+      .filter((sentence) => missing.some((item) => isWordInSentence(item.word, sentence)))
+      .slice(0, 6);
+    const response = await this.callJson({
+      taskRoute: TASK_ROUTE.enrich,
+      promptKey: 'curriculum.textbook_unit_vocabulary_repair',
+      system: [
+        '你是儿童英语词典编辑。只补全给定词的英式 IPA 和本单元语境中的中文释义。',
+        '多词短语给整体音标，人名按常见音译给中文名；不确定的字段留空，不要编造。',
+        '只输出 JSON：{"words":[{"word":"...","phonetic":"/.../","meaningZh":"..."}]}。',
+      ].join(''),
+      payload: {
+        unitCode: unit.unitCode,
+        title: unit.title,
+        words: missing.map((item) => item.word),
+        context,
+      },
+      maxTokens: 1200,
+      useSmall: false,
+    }).catch((error: unknown) => {
+      this.logger.warn(`词条补全失败，保留空字段：${error instanceof Error ? error.message : String(error)}`);
+      return { json: null, tier: '' };
+    });
+    if (!response.json) return;
+    const parsed = z.object({ words: z.array(aiWordSchema).max(100) }).passthrough().safeParse(response.json);
+    if (!parsed.success) return;
+    const fixed = new Map(parsed.data.words.map((item) => [normalizeWord(item.word), item]));
+    for (const item of vocabulary) {
+      const candidate = fixed.get(normalizeWord(item.word));
+      if (!candidate) continue;
+      if (!item.phonetic.trim()) item.phonetic = cleanPhonetic(candidate.phonetic) || '';
+      if (!item.meaningZh.trim()) item.meaningZh = cleanChineseText(candidate.meaningZh) || '';
+    }
   }
 
   private mergeGrammar(
