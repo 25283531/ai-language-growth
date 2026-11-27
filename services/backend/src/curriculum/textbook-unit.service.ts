@@ -234,6 +234,12 @@ const TASK_TYPE_SET = new Set<string>(TASK_TYPES);
 const SCENARIO_SET = new Set<string>(EVIDENCE_SCENARIOS);
 const MODULE_SET = new Set<string>(['A', 'B', 'C', 'D', 'E']);
 
+/** 语气词不进入自动词表；教师明确录入的教材词仍按原样保留。 */
+const INTERJECTION_WORDS = new Set([
+  'mm', 'm', 'err', 'um', 'umm', 'uh', 'oh', 'ah', 'wow', 'hmm', 'huh', 'ha',
+  'hey', 'well', 'hooray', 'ouch', 'oops', 'sh', 'shh', 'eh', 'aha',
+]);
+
 /** 仅用于抽取“有内容”的词；功能词不进入重点词表。 */
 const FUNCTION_WORDS = new Set([
   'a', 'an', 'the', 'and', 'or', 'but', 'if', 'so', 'because', 'as', 'than', 'then',
@@ -245,9 +251,7 @@ const FUNCTION_WORDS = new Set([
   'on', 'at', 'for', 'from', 'with', 'by', 'about', 'into', 'over', 'after', 'before',
   'here', 'there', 'where', 'when', 'what', 'who', 'whom', 'whose', 'which', 'how',
   'very', 'too', 'also', 'just', 'please', 'hello', 'hi', 'ok', 'okay',
-  // 语气词不进入自动词表；教师明确录入的词仍按教材词保留。
-  'mm', 'm', 'err', 'um', 'umm', 'uh', 'oh', 'ah', 'wow', 'hmm', 'huh', 'ha',
-  'hey', 'well', 'hooray', 'ouch', 'oops', 'sh', 'shh', 'eh', 'aha',
+  ...INTERJECTION_WORDS,
 ]);
 
 /**
@@ -1459,7 +1463,7 @@ function buildSeedWords(
 
 /** 自动词表屏蔽：对话标签、句中大写专名和语气词。教师手填的教材词不受影响。 */
 function autoVocabularyBlocked(text: string): Set<string> {
-  const blocked = new Set<string>();
+  const blocked = new Set<string>(INTERJECTION_WORDS);
   for (const match of text.matchAll(/\b([A-Z][A-Za-z'’-]+)\s*:/g)) {
     const name = match[1];
     if (name) blocked.add(name.toLowerCase());
