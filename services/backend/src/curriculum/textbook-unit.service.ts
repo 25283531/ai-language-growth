@@ -898,6 +898,8 @@ export class TextbookUnitService {
     };
 
     const firstGrammar = grammarPoints[0];
+    const readingTeacher = '先听老师读一遍课文，再跟着一句一句读，遇到不会的词可以慢一点。';
+    const readingSpeech = fitSpeechPair(readingTeacher, passageText || (sentences[0]?.en ?? ''));
     push({
       id: `${unitKey}-a01`,
       title: `朗读课文：${unit.title}`,
@@ -905,8 +907,8 @@ export class TextbookUnitService {
       scenario: 'story_scene',
       skillNodeIds: [...new Set([...mappedLanguageNodes, 'LA.LISTEN.word_recognition', 'SE.SCHOOL.reading'])],
       targetWords,
-      teacherUtteranceZh: '先听老师读一遍课文，再跟着一句一句读，遇到不会的词可以慢一点。',
-      demonstrationText: passageText || (sentences[0]?.en ?? ''),
+      teacherUtteranceZh: readingSpeech.teacher,
+      demonstrationText: readingSpeech.demonstration,
       requiresPronunciationAssessment: false,
       requiresAsr: false,
       // 确定性骨架没有理解题答案，按纯被动听读处理；不伪造理解证据。
@@ -917,13 +919,15 @@ export class TextbookUnitService {
       imageRequirements: [],
       media: {
         speechKey: `${unitKey}-a01`,
-        speechText: buildSpeech('先听老师读一遍课文，再跟着一句一句读，遇到不会的词可以慢一点。', passageText || (sentences[0]?.en ?? '')),
+        speechText: buildSpeech(readingSpeech.teacher, readingSpeech.demonstration),
         imageKeys: [],
       },
     });
 
     if (firstGrammar) {
       const example = firstGrammar.examples[0]?.en ?? sentences[0]?.en ?? '';
+      const grammarTeacher = `试着用“${clip(firstGrammar.pattern, 80)}”说一句自己的话，先说慢一点。`;
+      const grammarSpeech = fitSpeechPair(grammarTeacher, example);
       push({
         id: `${unitKey}-a02`,
         title: `句型练习：${firstGrammar.titleZh}`,
@@ -933,8 +937,8 @@ export class TextbookUnitService {
         targetWords,
         // P4-06：与商店场景的同一句型变体配对，形成两个不同场景。
         transferScenarioKey: `tp-${firstGrammar.id}`.slice(0, 80),
-        teacherUtteranceZh: `试着用“${clip(firstGrammar.pattern, 80)}”说一句自己的话，先说慢一点。`,
-        demonstrationText: example,
+        teacherUtteranceZh: grammarSpeech.teacher,
+        demonstrationText: grammarSpeech.demonstration,
         requiresPronunciationAssessment: false,
         requiresAsr: true,
         evidenceKind: 'production',
@@ -943,7 +947,7 @@ export class TextbookUnitService {
         imageRequirements: [],
         media: {
           speechKey: `${unitKey}-a02`,
-          speechText: buildSpeech(`试着用“${clip(firstGrammar.pattern, 80)}”说一句自己的话，先说慢一点。`, example),
+          speechText: buildSpeech(grammarSpeech.teacher, grammarSpeech.demonstration),
           imageKeys: [],
         },
       });
@@ -952,6 +956,7 @@ export class TextbookUnitService {
     for (const [index, item] of vocabulary.slice(0, 2).entries()) {
       const id = `${unitKey}-a${String(activities.length + 1).padStart(2, '0')}`;
       const teacher = `先听单词 ${item.word} 的发音，再慢慢跟读。`;
+      const wordSpeech = fitSpeechPair(teacher, item.word);
       push({
         id,
         title: `重点词跟读：${item.word}`,
@@ -959,8 +964,8 @@ export class TextbookUnitService {
         scenario: 'review_scene',
         skillNodeIds: ['LA.PRON.phonemes', 'LA.SPEAK.imitation'],
         targetWords: [item.word],
-        teacherUtteranceZh: teacher,
-        demonstrationText: item.word,
+        teacherUtteranceZh: wordSpeech.teacher,
+        demonstrationText: wordSpeech.demonstration,
         requiresPronunciationAssessment: true,
         requiresAsr: false,
         evidenceKind: 'pronunciation',
@@ -969,7 +974,7 @@ export class TextbookUnitService {
         imageRequirements: [],
         media: {
           speechKey: id,
-          speechText: buildSpeech(teacher, item.word),
+          speechText: buildSpeech(wordSpeech.teacher, wordSpeech.demonstration),
           imageKeys: [],
         },
       });
@@ -1141,19 +1146,20 @@ export class TextbookUnitService {
       activity.targetWords.some((word) => normalizeWord(word) === normalizeWord(demonstration))
       || sentences.some((sentence) => normalizeSentence(sentence.en) === normalizeSentence(demonstration))
     );
-    const nextTeacher = teacher ? limitCjk(clip(teacher, 500), 150) : activity.teacherUtteranceZh;
-    const nextDemonstration = demonstration && demonstrationInPassage
+    const teacherText = teacher ? limitCjk(clip(teacher, 500), 150) : activity.teacherUtteranceZh;
+    const demonstrationText = demonstration && demonstrationInPassage
       ? clip(demonstration, 500)
       : activity.demonstrationText;
+    const nextSpeech = fitSpeechPair(teacherText, demonstrationText);
     return {
       ...activity,
       ...(brief.title?.trim() ? { title: clip(brief.title.trim(), 200) } : {}),
       ...(SCENARIO_SET.has(brief.scenario ?? '') ? { scenario: brief.scenario as typeof activity.scenario } : {}),
-      teacherUtteranceZh: nextTeacher,
-      demonstrationText: nextDemonstration,
+      teacherUtteranceZh: nextSpeech.teacher,
+      demonstrationText: nextSpeech.demonstration,
       media: {
         ...activity.media,
-        speechText: buildSpeech(nextTeacher, nextDemonstration),
+        speechText: buildSpeech(nextSpeech.teacher, nextSpeech.demonstration),
       },
     };
   }
@@ -1300,8 +1306,33 @@ function limitCjk(value: string, max: number): string {
   return output.trim();
 }
 
+function isCjkChar(char: string): boolean {
+  return /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/.test(char);
+}
+
+/** 同时约束教师话语与示范文本，保证两者拼接后不超过单次 TTS 上限。 */
+function fitSpeechPair(teacher: string, demonstration: string): { teacher: string; demonstration: string } {
+  const limitedTeacher = limitCjk(teacher, 150);
+  const teacherChars = Array.from(limitedTeacher);
+  let cjkCount = teacherChars.filter(isCjkChar).length;
+  const separator = teacherChars.length && demonstration ? 1 : 0;
+  const budget = Math.max(0, 500 - teacherChars.length - separator);
+  let demonstrationChars = '';
+  let demonstrationLength = 0;
+  for (const char of Array.from(demonstration)) {
+    if (demonstrationLength >= budget) break;
+    if (isCjkChar(char)) {
+      if (cjkCount >= 150) break;
+      cjkCount += 1;
+    }
+    demonstrationChars += char;
+    demonstrationLength += 1;
+  }
+  return { teacher: limitedTeacher, demonstration: demonstrationChars.trimEnd() };
+}
+
 function buildSpeech(teacher: string, demonstration: string): string {
-  return clip(`${limitCjk(teacher, 150)} ${demonstration}`.trim(), 500);
+  return [teacher, demonstration].filter(Boolean).join(' ').trim();
 }
 
 function placeholderTranslation(index: number): string {
