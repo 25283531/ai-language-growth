@@ -149,12 +149,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             var childTheme by remember { mutableStateOf(appearance.getBoolean("childTheme", true)) }
             GrowthTheme(childTheme) {
-                GrowthApp(
-                    this@MainActivity,
-                    account,
-                    childTheme,
-                    { childTheme = it; appearance.edit().putBoolean("childTheme", it).apply() },
-                )
+                AppUpdateGate(this@MainActivity) {
+                    GrowthApp(
+                        this@MainActivity,
+                        account,
+                        childTheme,
+                        { childTheme = it; appearance.edit().putBoolean("childTheme", it).apply() },
+                    )
+                }
             }
         }
     }
