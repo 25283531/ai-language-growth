@@ -60,6 +60,11 @@ const BASELINE_PATH_LITERALS = [
   '"/user/profile"',
   '"/user/textbook"',
 ];
+/** 应用内更新通道的固定目录；OpenList 直链前缀变更必须经过评审。 */
+const UPDATE_PATH_LITERALS = [
+  '"/Language_Growth/app"',
+  '"/p/file/Language_Growth/app/"',
+];
 /** 正式课堂 + 教师语音链路新增的必需端点，一项都不能少。 */
 const CLASSROOM_PATH_LITERALS = [
   '"/api/v1/media/audio/"',
@@ -186,7 +191,7 @@ describe('Android：功能锚点零回归（静态）', () => {
     // 允许视觉重构把代码拆到同包新 .kt；但功能锚点集合一项都不能少、也不能多。
     assert.deepEqual(
       collect(androidSources, /"\/[a-zA-Z0-9_/-]+"/g),
-      [...BASELINE_PATH_LITERALS, ...CLASSROOM_PATH_LITERALS].sort(),
+      [...BASELINE_PATH_LITERALS, ...CLASSROOM_PATH_LITERALS, ...UPDATE_PATH_LITERALS].sort(),
       'API 路径集合必须等于「基线 + 课堂/教师语音端点」，不得丢失或静默新增',
     );
     assert.match(

@@ -63,7 +63,7 @@ const content = {
   }],
 };
 
-function fixture(options: { providerAlias?: string } = {}) {
+function fixture(options: { providerAlias?: string; smallLlmGate?: Promise<void> } = {}) {
   const rows = new Map<string, Row>();
   const unit = {
     id: 'unit-1',
@@ -131,7 +131,13 @@ function fixture(options: { providerAlias?: string } = {}) {
     },
   };
   let ttsCalls = 0;
+  let smallLlmCalls = 0;
   const gateway = {
+    smallLlm: async () => {
+      smallLlmCalls += 1;
+      if (options.smallLlmGate) await options.smallLlmGate;
+      return { content: '{"words":[]}', providerAlias: 'test', modelAlias: 'test-small' };
+    },
     ttsWithResult: async (request: { text: string; voice: { teacherSpeed: number } }) => {
       ttsCalls += 1;
       return {
@@ -160,6 +166,7 @@ function fixture(options: { providerAlias?: string } = {}) {
     rows,
     unit,
     get ttsCalls() { return ttsCalls; },
+    get smallLlmCalls() { return smallLlmCalls; },
     get findFirstWhere() { return findFirstWhere; },
   };
 }
@@ -243,6 +250,23 @@ describe('CurriculumAudioService', () => {
     assert.equal(passage.audioReady, false);
     assert.equal(passage.paragraphs[0]!.sentences[0]!.audio?.normalRef, undefined);
     assert.match(passage.paragraphs[0]!.sentences[0]!.audio?.normalKey ?? '', /sentence:Unit-3-s01/);
+  });
+
+  it('缺词音标补全在后台进行，不阻塞课文装配', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const f = fixture({ smallLlmGate: gate });
+    const outcome = await Promise.race([
+      f.service.passageForTopic('topic-textbook-1').then((passage) => passage ? 'passage' : 'null'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+    ]);
+    try {
+      assert.equal(outcome, 'passage', '开课装配不得等待词形音标模型');
+    } finally {
+      release();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(f.smallLlmCalls, 1);
   });
 
   it('课文查询只匹配已发布且 active 的课程单元', async () => {

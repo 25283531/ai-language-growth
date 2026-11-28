@@ -82,6 +82,8 @@ function allowedFormSuffixes(pos: string): string[] {
 @Injectable()
 export class CurriculumAudioService {
   private readonly logger = new Logger(CurriculumAudioService.name);
+  /** 同一批缺词的音标补全只跑一次；结果写入词库，下一次开课直接命中。 */
+  private readonly wordFormEnrichments = new Map<string, Promise<void>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -422,11 +424,9 @@ export class CurriculumAudioService {
         if (partOfSpeech) pos.set(form, partOfSpeech);
       }
     }
-    await this.enrichWordForms(words.filter((word) => !resolved.has(word)), table, pos).catch(
-      (error: unknown) => {
-        this.logger.warn(`词形音标补充跳过：${error instanceof Error ? error.message : String(error)}`);
-      },
-    );
+    // 开课是延迟敏感路径：缺词补全放到后台，本次先下发已有音标。
+    // 之前这里同步等待小模型，供应商超时 20s 时会把 /lessons/start 拖过网关 30s 上限。
+    this.scheduleWordFormEnrichment(words.filter((word) => !resolved.has(word)), table, pos);
     // 重点词变形：取词库同族 variants（复数/过去式/比较级等），供词卡「变形」一栏使用。
     const forms = new Map<string, string[]>();
     for (const item of content.vocabulary) {
@@ -453,6 +453,31 @@ export class CurriculumAudioService {
       if (variants.length) forms.set(key, variants);
     }
     return { phonetic: table, pos, forms };
+  }
+
+  /**
+   * 后台补全缺词音标。相同缺词集合复用同一个 Promise，避免每次开课都重复请求模型。
+   * 传入副本，后台写入不会影响本次已经装配好的课文。
+   */
+  private scheduleWordFormEnrichment(
+    missing: string[],
+    table: Map<string, string>,
+    pos: Map<string, string>,
+  ): void {
+    const forms = [...new Set(missing.map((word) => word.trim().toLowerCase()).filter(Boolean))]
+      .sort()
+      .slice(0, 40);
+    if (!forms.length) return;
+    const key = forms.join('\u0000');
+    if (this.wordFormEnrichments.has(key)) return;
+    const task = this.enrichWordForms(forms, new Map(table), new Map(pos))
+      .catch((error: unknown) => {
+        this.logger.warn(`词形音标补充跳过：${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        this.wordFormEnrichments.delete(key);
+      });
+    this.wordFormEnrichments.set(key, task);
   }
 
   /**
@@ -490,6 +515,8 @@ export class CurriculumAudioService {
       return null;
     });
     if (!result) return;
+    // 配置的模型不可用时会回退到 mock；mock 文本不是词典结果，不能写进正式词库。
+    if (result.providerAlias.startsWith('mock') || result.modelAlias === 'mock') return;
     const payload = parseJsonPayload(result.content);
     const parsed = wordFormIpaSchema.safeParse(payload);
     if (!parsed.success) {
