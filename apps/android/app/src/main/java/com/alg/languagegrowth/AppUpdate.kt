@@ -41,7 +41,7 @@ import java.util.Locale
 /** App 在线更新通道：清单和安装包都从 Language Growth 的 OpenList 目录读取。 */
 object AppUpdateChannel {
     const val API_URL = "https://alist.250886.xyz:32123/api/fs/get"
-    const val ROOT_PATH = "/Language Growth/app"
+    const val ROOT_PATH = "/Language_Growth/app"
     const val MANIFEST_PATH = "$ROOT_PATH/latest.json"
     private const val ALLOWED_HOST = "alist.250886.xyz"
     private const val ALLOWED_PORT = 32123
@@ -242,7 +242,7 @@ object AppUpdateChannel {
         require(uri.scheme == "https") { "更新文件必须使用 HTTPS" }
         require(uri.host == ALLOWED_HOST && uri.port == ALLOWED_PORT) { "更新文件域名不合法" }
         val path = uri.path.orEmpty()
-        require(path.startsWith("/p/file/Language Growth/app/")) { "更新文件路径不合法" }
+        require(path.startsWith("/p/file/Language_Growth/app/")) { "更新文件路径不合法" }
         require(!path.contains("..")) { "更新文件路径不合法" }
     }
 

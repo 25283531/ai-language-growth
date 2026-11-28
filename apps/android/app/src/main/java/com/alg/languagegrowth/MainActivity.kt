@@ -7,6 +7,7 @@ import android.media.MediaRecorder
 import android.util.Base64
 import android.os.Bundle
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1693,8 +1694,24 @@ private fun AuthScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         AndroidView(
-                            factory = { WebView(it).apply { settings.javaScriptEnabled = false } },
-                            update = { it.loadData(Base64Svg(captchaSvg), "image/svg+xml", "UTF-8") },
+                            factory = { context ->
+                                WebView(context).apply {
+                                    settings.javaScriptEnabled = false
+                                    settings.allowFileAccess = false
+                                    settings.allowContentAccess = false
+                                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                    webViewClient = WebViewClient()
+                                }
+                            },
+                            update = { view ->
+                                // loadData 会把 SVG 颜色值中的 # 当成 URL 片段，导致 XML 被截断。
+                                // 改用 loadDataWithBaseURL 承载 HTML，并把 SVG 直接内联，避免 # 参与 URL 解析。
+                                val html = CaptchaHtml(captchaSvg)
+                                if (view.tag != html) {
+                                    view.tag = html
+                                    view.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth().height(70.dp),
                         )
                     }
@@ -1731,6 +1748,22 @@ private fun AuthScreen(
 private fun Base64Svg(value: String): String = try {
     String(android.util.Base64.decode(value, android.util.Base64.DEFAULT), Charsets.UTF_8)
 } catch (_: Exception) { "" }
+
+private fun CaptchaHtml(base64Svg: String): String {
+    val svg = Base64Svg(base64Svg).trim()
+    val safeSvg = svg.startsWith("<svg", ignoreCase = true) &&
+        svg.endsWith("</svg>", ignoreCase = true) &&
+        !Regex("<script|<foreignObject|on\\w+\\s*=", RegexOption.IGNORE_CASE).containsMatchIn(svg)
+    if (!safeSvg) {
+        return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">""" +
+            "<style>html,body{margin:0;height:100%;display:flex;align-items:center;justify-content:center;" +
+            "font-family:sans-serif;font-size:12px;color:#8a5a44;background:transparent}</style></head>" +
+            "<body>验证码暂时无法显示，请点「换一张」</body></html>"
+    }
+    return """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">""" +
+        "<style>html,body{margin:0;width:100%;height:70px;overflow:hidden;background:transparent}" +
+        "svg{width:100%;height:70px;display:block}</style></head><body>$svg</body></html>"
+}
 
 /* ------------------------------------------------------------------- 首页 */
 
